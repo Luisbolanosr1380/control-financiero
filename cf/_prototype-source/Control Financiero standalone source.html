@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Control Financiero · Sistema operativo de contabilidad</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..600;1,9..144,300..500&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="styles.css" />
+
+  <template id="__bundler_thumbnail" data-bg-color="#F4EFE3">
+    <svg viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1200" height="800" fill="#F4EFE3"/>
+      <!-- Brand mark -->
+      <rect x="500" y="280" width="200" height="200" rx="32" fill="#0E2A24"/>
+      <text x="600" y="412" text-anchor="middle" font-family="Georgia, serif" font-size="120" font-weight="500" fill="#F4EFE3">CF</text>
+      <!-- Wordmark -->
+      <text x="600" y="540" text-anchor="middle" font-family="Georgia, serif" font-style="italic" font-size="40" fill="#0E2A24">Control Financiero</text>
+      <text x="600" y="580" text-anchor="middle" font-family="ui-sans-serif, system-ui" font-size="14" letter-spacing="4" fill="#7A857F">SISTEMA OPERATIVO</text>
+      <!-- decorative line -->
+      <line x1="540" y1="608" x2="660" y2="608" stroke="#B8801C" stroke-width="2"/>
+    </svg>
+  </template>
+
+  <!-- React + Babel -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- Order matters: data + icons first, then shell + screens, then app -->
+  <script type="text/babel" src="data.jsx"></script>
+  <script type="text/babel" src="icons.jsx"></script>
+  <script type="text/babel" src="shell.jsx"></script>
+  <script type="text/babel" src="screens/dashboard.jsx"></script>
+  <script type="text/babel" src="screens/invoices.jsx"></script>
+  <script type="text/babel" src="screens/invoice-new-customer.jsx"></script>
+  <script type="text/babel" src="screens/payment-ai.jsx"></script>
+  <script type="text/babel" src="screens/misc.jsx"></script>
+  <script type="text/babel" src="app.jsx"></script>
+</body>
+</html>
