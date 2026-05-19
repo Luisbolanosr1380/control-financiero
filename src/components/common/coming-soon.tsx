@@ -24,7 +24,7 @@ export function ComingSoon({ title, subtitle, icon }: ComingSoonProps) {
           Próximamente
         </div>
         <div style={{ fontSize: 13, color: 'var(--ink-3)', maxWidth: 460, margin: '0 auto', lineHeight: 1.5 }}>
-          Este módulo estará disponible en una próxima iteración.
+          Este módulo estará disponible en una próxima iteración. Por ahora gestionalo desde Airtable mientras lo construimos.
         </div>
       </div>
     </div>
