@@ -2,7 +2,7 @@
 
 > Documento de planificación del producto. Se actualiza en cada decisión, no al final. Si una conversación produjo una decisión nueva — incluso pequeña — va acá.
 
-**Última actualización:** 2026-05-19
+**Última actualización:** 2026-05-20
 **Mantenedor:** Stark
 **Estado global:** Fase 1 ✅ · Fase 2 🟡 en curso
 
@@ -82,11 +82,15 @@ Cada feature tiene **brief, fase, status, tamaño, dependencias**. Cuando una en
 
 ### F-007 · Registrar cobro contra facturas 🔥 PRIORIDAD MÁXIMA
 - **Fase:** 3
-- **Status:** ⬜ Pendiente · **🔥 PRIORIDAD MÁXIMA**
+- **Status:** 🟡 **EN CURSO** · **🔥 PRIORIDAD MÁXIMA**
 - **Tamaño:** L
 - **Brief:** Modal que selecciona cliente → muestra sus facturas → checkboxes para aplicar el cobro a una o varias facturas (incluye líneas de una factura multi-línea). Aplicación FIFO automática o manual. Generar asiento Banco/CxC automático.
 - **Por qué máxima prioridad:** es la razón de ser del producto. El negocio cobra bien (~91%), pero **no logra registrar los cobros** en Airtable porque aplicarlos a facturas multi-línea es demasiado complejo. Resolver esto reemplaza el dolor central de la contadora.
 - **Dependencias:** F-001 (la consolidación multi-línea es lo que habilita aplicar un cobro a las líneas correctas). F-004 ayuda pero no bloquea.
+- **Progreso:**
+  - ✅ **Parte C — Identificador de cobros por monto (solo lectura)** _(2026-05-20)_ — Conciliación inversa: dado el monto de un depósito, sugiere la factura individual exacta + el cliente cuyas facturas abiertas suman ese monto. Busca contra `total` (TOTAL con IVA), tolerancia ajustable (Exacto / ±Q1 / ±Q10 / ±Q100 / ±1%). En `/cobros/identificar`. No escribe nada.
+  - ⬜ **Parte A — Registro directo (escritura)** — aplicar el cobro y persistirlo en Airtable (+ asiento Banco/CxC).
+  - ⬜ **Matching de combinaciones** (futuro) — sugerir subconjuntos de facturas que sumen el monto, no solo cliente completo o factura individual.
 
 ### F-008 · AI Chat conversacional con function calling
 - **Fase:** 4
