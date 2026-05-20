@@ -80,12 +80,13 @@ Cada feature tiene **brief, fase, status, tamaño, dependencias**. Cuando una en
 - **Brief:** Formulario para crear factura con autocomplete de cliente y editor de líneas multi-CC (NO más duplicación manual). Validación con Zod. Al guardar: escribir múltiples filas en Airtable (una por línea) o consolidar en una si Airtable lo permite con un campo MultiSelect. Generar asiento contable automático.
 - **Dependencias:** F-001, F-005
 
-### F-007 · Registrar cobro contra facturas
+### F-007 · Registrar cobro contra facturas 🔥 PRIORIDAD MÁXIMA
 - **Fase:** 3
-- **Status:** ⬜ Pendiente
+- **Status:** ⬜ Pendiente · **🔥 PRIORIDAD MÁXIMA**
 - **Tamaño:** L
-- **Brief:** Modal que selecciona cliente → muestra sus facturas con saldo → checkboxes para aplicar el cobro a una o varias facturas. Aplicación FIFO automática o manual. Generar asiento Banco/CxC automático.
-- **Dependencias:** F-004
+- **Brief:** Modal que selecciona cliente → muestra sus facturas → checkboxes para aplicar el cobro a una o varias facturas (incluye líneas de una factura multi-línea). Aplicación FIFO automática o manual. Generar asiento Banco/CxC automático.
+- **Por qué máxima prioridad:** es la razón de ser del producto. El negocio cobra bien (~91%), pero **no logra registrar los cobros** en Airtable porque aplicarlos a facturas multi-línea es demasiado complejo. Resolver esto reemplaza el dolor central de la contadora.
+- **Dependencias:** F-001 (la consolidación multi-línea es lo que habilita aplicar un cobro a las líneas correctas). F-004 ayuda pero no bloquea.
 
 ### F-008 · AI Chat conversacional con function calling
 - **Fase:** 4
@@ -137,9 +138,10 @@ Cosas que se han mencionado y queremos no olvidar. Suben a Features priorizadas 
 - **Reportes ejecutivos** mensuales auto-generados para junta
 - **Multi-empresa** si llega a haber otra entidad
 - **Dark mode**
-- **Investigar los ~Q384K en saldos negativos** — distinguir sobrepagos vs notas de crédito vs errores de captura en Airtable
-- **Alinear tasa de cobranza global del Dashboard** — hoy 41.5% (neto); decidir si pasa a ~28% (bruto) para coherencia con la cartera bruta. PENDIENTE de decisión de Stark
+- ~~Investigar los ~Q384K en saldos negativos~~ **(OBSOLETO — ya no usamos `Saldo_Por_Cobrar`)**
+- ~~Alinear tasa de cobranza global del Dashboard (neto vs bruto)~~ **(OBSOLETO — tasa real ~91% por `ESTADO`)**
 - **Mini-indicador opcional de anulaciones** (Q286K · 81 facturas) como control de proceso en el Dashboard
+- **Backfill histórico de los ~445 cobros no registrados** en `COBROS_CLIENTES` (opcional, datos pasados). Habilita conciliación y reportes históricos, pero no bloquea la operación diaria
 
 ---
 
@@ -157,10 +159,11 @@ Bitácora de decisiones de arquitectura. Cuando se toma una decisión nueva, se 
 | 2026-05-19 | No usar shadcn/ui por ahora | El prototipo trae sus propios design tokens; agregamos shadcn solo cuando necesitemos componentes complejos |
 | 2026-05-19 | Pausar deploy a Vercel hasta tener Airtable + Auth | El Hobby de Vercel tiene Deployment Protection que da problemas; mejor deployar cuando esté maduro |
 | 2026-05-19 | Modelo: factura tiene `lineas[]` (multi-línea) | Resolver duplicados de NO.FACTURA causados por necesidad de separar centros de costo |
-| 2026-05-19 | El SALDO real (`Saldo_Por_Cobrar`) manda sobre el campo `ESTADO` para clasificar cartera | El campo ESTADO no es confiable: 483 facturas con ESTADO=COBRADO tenían saldo > 0. Solo se respetan estados administrativos (ANULADO, REFACTURADO, PENDIENTE) |
-| 2026-05-19 | Dashboard reporta cartera BRUTA (Q1.99M, saldos > 0) como "Por cobrar"; los saldos negativos (~Q384K) se muestran aparte como pasivo (saldos a favor de clientes), NO se netean | El neteo escondería tanto la cartera real por cobrar como el pasivo con clientes; mostrarlos separados refleja mejor la realidad financiera |
+| 2026-05-19 | ~~El SALDO real (`Saldo_Por_Cobrar`) manda sobre el campo `ESTADO`~~ **(REVERTIDA — ver decisión FINAL abajo)** | Se creyó que ESTADO no era confiable porque 483 COBRADO tenían saldo > 0. Resultó al revés: el `Saldo_Por_Cobrar` está roto y ESTADO es la verdad |
+| 2026-05-19 | ~~Dashboard reporta cartera BRUTA (Q1.99M, saldos > 0); negativos ~Q384K aparte~~ **(REVERTIDA — ya no se usa `Saldo_Por_Cobrar`)** | Dependía del saldo roto; sin efecto tras la decisión final |
 | 2026-05-19 | "Facturado" excluye ANULADO y REFACTURADO: facturación válida = EMITIDA + PENDIENTE + COBRADO = Q2.76M. El bruto con anuladas (Q3.04M) NO se reporta como facturación | Las facturas anuladas/refacturadas no son ingreso válido; reportarlas inflaría la facturación |
 | 2026-05-19 | Los KPIs de cartera usan TOTAL con IVA (no el subtotal) | La cartera por cobrar real incluye el IVA que el cliente debe pagar |
+| 2026-05-19 | **DECISIÓN FINAL: el `ESTADO` es la fuente de verdad** (replica la fórmula de `Estatus_Cobranza`). `COBRADO` = dinero recibido. `Saldo_Por_Cobrar` NO se usa para clasificar. Balance de EMITIDA = su TOTAL completo | Stark confirmó los `COBRADO` contra el banco: el dinero entró. Los cobros no están en `COBROS_CLIENTES` porque aplicarlos en Airtable con facturas multi-línea es demasiado complejo — por eso el saldo quedó desactualizado, no porque no se haya cobrado |
 
 ---
 
@@ -169,15 +172,15 @@ Bitácora de decisiones de arquitectura. Cuando se toma una decisión nueva, se 
 Contexto del dominio que va saliendo en conversaciones y no queremos perder.
 
 - Las facturas pueden ser multi-línea para distribuir entre centros de costo. Tu contadora actualmente lo hace duplicando el NO.FACTURA en Airtable — esto se resuelve en F-001/F-006.
-- TalentTrack: el dato de "0% de cobranza" venía del mapeo viejo por campo `ESTADO` y era falso. Con saldo real su tasa es **~39%** (Q858,966 facturado / Q335,357 cobrado, 74 líneas). Sigue por debajo de Polígrafo (45.8%) pero no está en cero.
+- TalentTrack NO está en 0% de cobranza (ese dato era ruido del campo). Por `ESTADO` (la verdad), la cobranza global del negocio es **~91%**. (La cifra intermedia de "~39%" venía del `Saldo_Por_Cobrar` roto — descartada.)
 - Polígrafo lidera salud con 49.4% de cobranza — replicable a TalentTrack.
 - Top deudor: FUNDACION GENESIS EMPRESARIAL concentra Q294K, de los cuales Q246K +90 días. El contacto no responde correos desde abril.
 - 5 clientes concentran Q733K en aging +90 días.
 - Centros de costo en Airtable: "Polígrafo", "Socioeconómico", "TalentTrackAI", "Ventas" (verificar mapeo exacto).
 - Cobranza de mayo va 18% por debajo de marzo.
-- La cartera real del negocio es **Q1.99M en 592 facturas con saldo > 0**. El diagnóstico inicial era correcto; el mapeo por campo `ESTADO` la había enmascarado (clasificaba 483 facturas como cobradas pese a tener saldo pendiente).
-- Existen **~Q384K en saldos negativos** (saldos a favor de clientes / sobrepagos). Se reportan como pasivo aparte, no se netean contra la cartera por cobrar. Pendiente investigar su origen (ver Backlog).
-- **434 facturas vencidas reales** (no 37, como sugería el mapeo viejo por campo `ESTADO`). Al clasificar por saldo + días vencidos, la cartera vencida real saltó de 37 a 434. El diagnóstico inicial era correcto.
+- La cartera real por cobrar es **Q252,684** (37 vencidas + 51 por cobrar), clasificando por `ESTADO`. La cifra previa de "Q1.99M / 592 facturas / 434 vencidas" venía del `Saldo_Por_Cobrar` roto y quedó **descartada**. La tasa de cobranza real es ~91%.
+- El `Saldo_Por_Cobrar` de Airtable está desactualizado y NO se usa (ni para clasificar ni para montos). El balance de una factura EMITIDA se toma como su TOTAL completo. (Esto archiva la duda previa de los "~Q384K en saldos negativos": era un artefacto del campo roto.)
+- **APRENDIZAJE CRÍTICO — la razón de ser de la plataforma:** el problema del negocio NO es la cobranza (~91% real, el dinero entra). El problema es el **REGISTRO de cobros**: aplicar cobros en Airtable con facturas multi-línea es tan complejo que la contadora dejó de hacerlo, y por eso el saldo quedó roto. Es un problema de herramienta, no de cobranza. Resolver el registro fácil de cobros es el core del producto.
 
 ---
 
@@ -197,5 +200,5 @@ Contexto del dominio que va saliendo en conversaciones y no queremos perder.
 _Acá se mueven las features cuando llegan a Done. Sirve para tener una bitácora de qué se construyó cuándo._
 
 - **F-001 · Consolidar facturas multi-línea** _(2026-05-19)_ — Resuelto duplicados por NO.FACTURA agrupando en `Invoice.lineas[]`.
-- **Calibración de cartera** _(2026-05-19)_ — `Saldo_Por_Cobrar` manda sobre el campo `ESTADO` para clasificar cartera. Cartera real Q1.98M / 434 vencidas. Tab "Pendientes" agregado al listado. Endpoints temporales de diagnóstico removidos.
-- **F-002 · Dashboard CFO con datos reales** _(2026-05-19)_ — Validado contra Airtable: Facturado Q2,759,846 (excluye anuladas/refacturadas), Por cobrar Q1,984,152, 434 facturas vencidas. Reconciliación exacta confirmada.
+- **Calibración de cartera** _(2026-05-19)_ — Iteramos varias fórmulas de clasificación. **Conclusión final: el `ESTADO` manda** (replica `Estatus_Cobranza`); el `Saldo_Por_Cobrar` está roto y se descartó. Cartera real **Q252,684 / 37 vencidas**, cobranza ~91%. Tab "Pendientes" agregado al listado.
+- **F-002 · Dashboard CFO con datos reales** _(2026-05-19)_ — Datos reales de Airtable. Cifras finales (por `ESTADO`): Facturado Q2,759,846 (excluye anuladas/refacturadas), Cobrado Q2,507,161, Por cobrar Q252,684, 37 vencidas, tasa de cobranza 90.8%.
