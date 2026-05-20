@@ -21,6 +21,7 @@ const NAV: NavGroup[] = [
     { href: '/dashboard',    label: 'Dashboard',    icon: 'Dashboard' },
     { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: { text: '5 vencidas', kind: 'wine' } },
     { href: '/cobros',       label: 'Cobros',       icon: 'Coins' },
+    { href: '/cobros/identificar', label: 'Identificar pago', icon: 'Search' },
     { href: '/clientes',     label: 'Clientes',     icon: 'Users' },
   ]},
   { group: 'Gastos', items: [
@@ -41,6 +42,13 @@ const NAV: NavGroup[] = [
 export function Sidebar() {
   const pathname = usePathname();
 
+  // El item activo es el de href más específico que matchea (evita que
+  // /cobros y /cobros/identificar se marquen ambos a la vez).
+  const activeHref = NAV
+    .flatMap(g => g.items)
+    .filter(it => pathname === it.href || pathname?.startsWith(it.href + '/'))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -56,7 +64,7 @@ export function Sidebar() {
           <div className="nav-group-label">{grp.group}</div>
           {grp.items.map((it) => {
             const Ico = I[it.icon];
-            const active = pathname?.startsWith(it.href) ?? false;
+            const active = it.href === activeHref;
             return (
               <Link
                 key={it.href}
