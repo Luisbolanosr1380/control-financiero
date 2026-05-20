@@ -1,5 +1,5 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
-import { consolidateRecords } from './mappers';
+import { consolidateRecords, F } from './mappers';
 import { INVOICES as MOCK_INVOICES } from '../mock-data';
 import type { Invoice } from '../types';
 
@@ -42,14 +42,66 @@ export async function getFactura(id: string): Promise<Invoice | null> {
   return facturas.find(f => f.id === id) ?? null;
 }
 
-export interface NewFacturaInput {
-  custId: string;
-  lineas: { line: Invoice['line']; amount: number }[];
-  credit: number;
+export interface NewFacturaLine {
+  centroCostoId: string;
+  subtotal: number;
+  iva: number;
 }
 
-export async function createFactura(_input: NewFacturaInput): Promise<{ id: string }> {
-  throw new Error('createFactura: pendiente implementación Fase 3');
+export interface NewFacturaInput {
+  noFactura: string;
+  custId: string;
+  fechaEmision: string;
+  lineas: NewFacturaLine[];
+}
+
+export interface CreateFacturaResult {
+  noFactura: string;
+  recordsCreados: number;
+}
+
+export async function createFactura(input: NewFacturaInput): Promise<CreateFacturaResult> {
+  if (USE_MOCK || !airtable) {
+    throw new Error('createFactura: Airtable no está configurado.');
+  }
+  if (!input.noFactura?.trim()) throw new Error('NO.FACTURA es requerido.');
+  if (!input.custId)            throw new Error('Cliente es requerido.');
+  if (!input.lineas?.length)    throw new Error('Se requiere al menos una línea.');
+
+  try {
+    // Evitar duplicado silencioso: ¿ya existe ese NO.FACTURA?
+    const noFacturaEsc = input.noFactura.replace(/"/g, '\\"');
+    const existentes = await airtable(TABLES.FACTURAS)
+      .select({ filterByFormula: `{${F.NO_FACTURA}} = "${noFacturaEsc}"`, maxRecords: 1 })
+      .all();
+    if (existentes.length > 0) {
+      throw new Error(`La factura ${input.noFactura} ya existe en Airtable. No se creó para evitar un duplicado.`);
+    }
+
+    const payload = input.lineas.map(l => ({
+      fields: {
+        [F.NO_FACTURA]:    input.noFactura,
+        [F.CLIENTE]:       [input.custId],
+        [F.CENTRO_COSTO]:  [l.centroCostoId],
+        [F.FECHA_EMISION]: input.fechaEmision,
+        [F.TOTAL]:         l.subtotal + l.iva,   // SUBTOTAL es fórmula: no se escribe
+        [F.IVA]:           l.iva,
+        [F.ESTADO]:        'EMITIDA',
+      },
+    }));
+
+    // Airtable crea máximo 10 records por llamada
+    let creados = 0;
+    for (let i = 0; i < payload.length; i += 10) {
+      const lote = payload.slice(i, i + 10);
+      const res = await airtable(TABLES.FACTURAS).create(lote);
+      creados += res.length;
+    }
+
+    return { noFactura: input.noFactura, recordsCreados: creados };
+  } catch (err) {
+    throw new Error(err instanceof Error ? err.message : `Error creando factura: ${String(err)}`);
+  }
 }
 
 export async function anularFactura(_id: string): Promise<void> {
