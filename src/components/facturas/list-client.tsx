@@ -65,7 +65,7 @@ export function FacturasListClient({ facturas, clientes }: Props) {
         <div className="page-actions">
           <button className="btn btn-secondary"><I.Download size={13} /> Exportar</button>
           <button className="btn btn-secondary"><I.Mail size={13} /> Recordatorios masivos</button>
-          <button className="btn btn-primary">
+          <button className="btn btn-primary" onClick={() => router.push('/facturacion/nueva')}>
             <I.Plus size={13} /> Nueva factura <span className="kbd">⌘N</span>
           </button>
         </div>

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Fraunces, Inter_Tight, JetBrains_Mono } from 'next/font/google';
+import { Toaster } from 'sonner';
 import './globals.css';
 
 const fraunces = Fraunces({
@@ -32,7 +33,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="es" className={`${fraunces.variable} ${interTight.variable} ${jetbrainsMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        {children}
+        <Toaster position="top-right" richColors closeButton />
+      </body>
     </html>
   );
 }
