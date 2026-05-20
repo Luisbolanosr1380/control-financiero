@@ -9,3 +9,9 @@ build/
 *.log
 .vercel
 next-env.d.ts
+
+# Build artifacts y residuos
+tsconfig.tsbuildinfo
+*.bak
+*.zip
+cf/
