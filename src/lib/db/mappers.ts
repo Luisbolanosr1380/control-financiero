@@ -48,18 +48,19 @@ function ccToLineKey(cc: unknown): LineKey {
   return 'poligrafo';
 }
 
-function estadoToStatus(estado: unknown, saldo: number, diasVencidos: number): InvoiceStatus {
+// Replica la fórmula real del campo Estatus_Cobranza de Airtable.
+// El ESTADO manda; Saldo_Por_Cobrar NO es confiable y no se usa para clasificar.
+function estadoToStatus(estado: unknown, diasVencidos: number): InvoiceStatus {
   const s = String(estado ?? '').toUpperCase().trim();
 
-  // Estados administrativos: estos SÍ son fuente de verdad
+  if (s === 'COBRADO' || s === 'COBRADA')         return 'cobrado';
   if (s === 'ANULADO' || s === 'ANULADA')         return 'anulado';
   if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'anulado';
   if (s === 'PENDIENTE')                          return 'pendiente';
 
-  // Para EMITIDA/COBRADO/CONTABILIZADO: el SALDO REAL manda, no el campo ESTADO
-  if (saldo <= 0)        return 'cobrado';   // incluye sobrepagos (saldo negativo)
-  if (diasVencidos > 0)  return 'vencido';
-  return 'por_cobrar';
+  // EMITIDA y cualquier otro estado activo: se evalúa por fecha (como la fórmula)
+  if (diasVencidos > 0) return 'vencido';
+  return 'por_cobrar';   // incluye "vence hoy" y "por vencer"
 }
 
 interface RawRow {
@@ -77,7 +78,6 @@ interface RawRow {
 function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
   const f = record.fields;
   const totalRaw    = Number(f[F.TOTAL] ?? 0);
-  const saldoRaw    = Number(f[F.SALDO] ?? 0);
   const diasVencido = Number(f[F.DIAS_VENCIDOS] ?? 0);
   const noFactura   = String(f[F.NO_FACTURA] ?? record.id);
   const cc          = ccToLineKey(f[F.CENTRO_COSTO]);
@@ -86,14 +86,20 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
   const hoy = new Date();
   const diasEmision = Math.floor((hoy.getTime() - fechaEmision.getTime()) / (1000 * 60 * 60 * 24));
 
+  const status = estadoToStatus(f[F.ESTADO], diasVencido);
+
+  // Saldo_Por_Cobrar está roto: el balance se deriva del estado y el TOTAL.
+  // Cobrada/anulada/pendiente → 0; EMITIDA (vencido/por_cobrar) → TOTAL completo.
+  const balance = status === 'vencido' || status === 'por_cobrar' ? totalRaw : 0;
+
   return {
     recordId: record.id,
     noFactura,
     custId:    String((f[F.CLIENTE] as string[] | undefined)?.[0] ?? ''),
     total:     totalRaw,
-    balance:   saldoRaw,
+    balance,
     line:      cc,
-    status:    estadoToStatus(f[F.ESTADO], saldoRaw, diasVencido),
+    status,
     emisionAgo: diasEmision,
     dueAgo:     diasVencido,
   };
