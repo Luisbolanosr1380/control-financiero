@@ -24,8 +24,23 @@ export const F = {
   AGING_BUCKET:     'Calculation',
 } as const;
 
+// CENTRO_COSTO en Airtable es un linked record → llega como [recordId].
+// Mapa de record id de CENTROS_COSTO a nuestra LineKey (base actual).
+// "Pendiente" y "Administrativo" no son líneas de negocio → caen al default.
+const CC_ID_TO_LINE: Record<string, LineKey> = {
+  recta6yzMaZVORniO: 'poligrafo',   // "Poligrafia"
+  recBKqaIp3hHmp7FT: 'socio',       // "Socioeconomicos"
+  receAuGbyq1yzLRL7: 'talenttrack', // "TalentTrackAI"
+};
+
 function ccToLineKey(cc: unknown): LineKey {
-  const s = String(cc ?? '').toLowerCase();
+  const first = Array.isArray(cc) ? cc[0] : cc;
+
+  // CENTRO_COSTO es un linked record (array de ids)
+  if (typeof first === 'string' && CC_ID_TO_LINE[first]) return CC_ID_TO_LINE[first];
+
+  // Fallback: si alguna vez llega el nombre como texto
+  const s = String(first ?? '').toLowerCase();
   if (s.includes('polígraf') || s.includes('poligraf')) return 'poligrafo';
   if (s.includes('socio'))      return 'socio';
   if (s.includes('talent'))     return 'talenttrack';
