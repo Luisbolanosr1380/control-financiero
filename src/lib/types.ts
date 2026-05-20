@@ -36,16 +36,26 @@ export interface Customer {
   onTimeRate: number;
 }
 
+export interface InvoiceLine {
+  line: LineKey;
+  amount: number;
+  balance: number;
+  description?: string;
+}
+
 export interface Invoice {
   id: string;
+  noFactura: string;
   custId: string;
-  line: LineKey;
   total: number;
   balance: number;
   daysSinceIssued: number;
   emisionAgo: number;
   dueAgo: number;
   status: InvoiceStatus;
+  lineas: InvoiceLine[];
+  line: LineKey;
+  isMixed: boolean;
 }
 
 export interface LineStats {

@@ -53,8 +53,18 @@ const inv = (
   total: number, balance: number,
   daysSinceIssued: number, status: Invoice['status'], due: number
 ): Invoice => ({
-  id, custId, line, total, balance, daysSinceIssued, status,
-  emisionAgo: daysSinceIssued, dueAgo: due,
+  id,
+  noFactura: id,
+  custId,
+  line,
+  lineas: [{ line, amount: total, balance }],
+  isMixed: false,
+  total,
+  balance,
+  daysSinceIssued,
+  status,
+  emisionAgo: daysSinceIssued,
+  dueAgo: due,
 });
 
 export const INVOICES: Invoice[] = [
