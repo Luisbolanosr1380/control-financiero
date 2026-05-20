@@ -36,14 +36,14 @@ function ccToLineKey(cc: unknown): LineKey {
 function estadoToStatus(estado: unknown, saldo: number, diasVencidos: number): InvoiceStatus {
   const s = String(estado ?? '').toUpperCase().trim();
 
-  if (s === 'ANULADO' || s === 'ANULADA')       return 'anulado';
-  if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'anulado'; // inactiva
+  // Estados administrativos: estos SÍ son fuente de verdad
+  if (s === 'ANULADO' || s === 'ANULADA')         return 'anulado';
+  if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'anulado';
   if (s === 'PENDIENTE')                          return 'pendiente';
-  if (s === 'COBRADO' || s === 'COBRADA')         return 'cobrado';
-  if (saldo <= 0)                                 return 'cobrado';
 
-  // EMITIDA (o cualquier otro activo) con saldo pendiente:
-  if (diasVencidos > 0) return 'vencido';
+  // Para EMITIDA/COBRADO/CONTABILIZADO: el SALDO REAL manda, no el campo ESTADO
+  if (saldo <= 0)        return 'cobrado';   // incluye sobrepagos (saldo negativo)
+  if (diasVencidos > 0)  return 'vencido';
   return 'por_cobrar';
 }
 
