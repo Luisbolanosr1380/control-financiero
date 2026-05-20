@@ -14,7 +14,7 @@ interface Props {
 
 export function FacturasListClient({ facturas, clientes }: Props) {
   const router = useRouter();
-  const [tab, setTab] = useState<'todas' | 'vencidas' | 'por_cobrar' | 'cobradas' | 'anuladas'>('todas');
+  const [tab, setTab] = useState<'todas' | 'vencidas' | 'por_cobrar' | 'cobradas' | 'anuladas' | 'pendientes'>('todas');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -26,6 +26,7 @@ export function FacturasListClient({ facturas, clientes }: Props) {
     por_cobrar: facturas.filter(i => i.status === 'por_cobrar').length,
     cobradas:   facturas.filter(i => i.status === 'cobrado').length,
     anuladas:   facturas.filter(i => i.status === 'anulado').length,
+    pendientes: facturas.filter(i => i.status === 'pendiente').length,
   };
 
   let rows = facturas;
@@ -33,6 +34,7 @@ export function FacturasListClient({ facturas, clientes }: Props) {
   if (tab === 'por_cobrar') rows = rows.filter(i => i.status === 'por_cobrar');
   if (tab === 'cobradas')   rows = rows.filter(i => i.status === 'cobrado');
   if (tab === 'anuladas')   rows = rows.filter(i => i.status === 'anulado');
+  if (tab === 'pendientes') rows = rows.filter(i => i.status === 'pendiente');
 
   if (search) {
     rows = rows.filter(i =>
@@ -70,9 +72,9 @@ export function FacturasListClient({ facturas, clientes }: Props) {
       </div>
 
       <div className="tabs">
-        {(['todas', 'vencidas', 'por_cobrar', 'cobradas', 'anuladas'] as const).map(t => (
+        {(['todas', 'vencidas', 'por_cobrar', 'cobradas', 'anuladas', 'pendientes'] as const).map(t => (
           <button key={t} className={'tab' + (tab === t ? ' active' : '')} onClick={() => setTab(t)}>
-            {t === 'todas' ? 'Todas' : t === 'vencidas' ? 'Vencidas' : t === 'por_cobrar' ? 'Por cobrar' : t === 'cobradas' ? 'Cobradas' : 'Anuladas'}
+            {t === 'todas' ? 'Todas' : t === 'vencidas' ? 'Vencidas' : t === 'por_cobrar' ? 'Por cobrar' : t === 'cobradas' ? 'Cobradas' : t === 'anuladas' ? 'Anuladas' : 'Pendientes'}
             <span className="tab-count num">{counts[t]}</span>
           </button>
         ))}
