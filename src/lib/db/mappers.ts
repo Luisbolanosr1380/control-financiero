@@ -33,13 +33,17 @@ function ccToLineKey(cc: unknown): LineKey {
   return 'poligrafo';
 }
 
-function estadoToStatus(estado: unknown, saldo: number): InvoiceStatus {
+function estadoToStatus(estado: unknown, saldo: number, diasVencidos: number): InvoiceStatus {
   const s = String(estado ?? '').toUpperCase().trim();
-  if (s === 'ANULADO' || s === 'ANULADA')   return 'anulado';
-  if (saldo === 0)                          return 'cobrado';
-  if (s.includes('VENCID'))                 return 'vencido';
-  if (s === 'CONTABILIZADO')                return 'por_cobrar';
-  if (s === 'EMITIDA')                      return 'por_cobrar';
+
+  if (s === 'ANULADO' || s === 'ANULADA')       return 'anulado';
+  if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'anulado'; // inactiva
+  if (s === 'PENDIENTE')                          return 'pendiente';
+  if (s === 'COBRADO' || s === 'COBRADA')         return 'cobrado';
+  if (saldo <= 0)                                 return 'cobrado';
+
+  // EMITIDA (o cualquier otro activo) con saldo pendiente:
+  if (diasVencidos > 0) return 'vencido';
   return 'por_cobrar';
 }
 
@@ -74,7 +78,7 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
     total:     totalRaw,
     balance:   saldoRaw,
     line:      cc,
-    status:    estadoToStatus(f[F.ESTADO], saldoRaw),
+    status:    estadoToStatus(f[F.ESTADO], saldoRaw, diasVencido),
     emisionAgo: diasEmision,
     dueAgo:     diasVencido,
   };
@@ -82,12 +86,12 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
 
 function worstStatus(statuses: InvoiceStatus[]): InvoiceStatus {
   const priority: Record<InvoiceStatus, number> = {
-    vencido: 4,
-    por_cobrar: 3,
+    vencido: 5,
+    por_cobrar: 4,
+    pendiente: 3,
     cobrado: 2,
     emitida: 2,
     contabilizado: 2,
-    pendiente: 1,
     anulado: 0,
   };
   return statuses.reduce((acc, s) => priority[s] > priority[acc] ? s : acc, statuses[0]);
