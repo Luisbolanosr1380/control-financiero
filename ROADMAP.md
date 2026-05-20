@@ -49,7 +49,7 @@ Cada feature tiene **brief, fase, status, tamaño, dependencias**. Cuando una en
 
 ### F-002 · Dashboard CFO con datos reales
 - **Fase:** 2
-- **Status:** ⬜ Pendiente
+- **Status:** ✅ Done
 - **Tamaño:** M
 - **Brief:** Hoy el Dashboard renderiza mock-data. Reemplazar por queries reales a Airtable: KPIs del mes (facturado, cobrado, por cobrar, vencido +90, flujo neto, margen), evolución 12 meses, top 5 deudores, distribución por línea, aging real. Calcular agregados en el server para que cargue rápido.
 - **Dependencias:** F-001
@@ -137,6 +137,9 @@ Cosas que se han mencionado y queremos no olvidar. Suben a Features priorizadas 
 - **Reportes ejecutivos** mensuales auto-generados para junta
 - **Multi-empresa** si llega a haber otra entidad
 - **Dark mode**
+- **Investigar los ~Q384K en saldos negativos** — distinguir sobrepagos vs notas de crédito vs errores de captura en Airtable
+- **Alinear tasa de cobranza global del Dashboard** — hoy 41.5% (neto); decidir si pasa a ~28% (bruto) para coherencia con la cartera bruta. PENDIENTE de decisión de Stark
+- **Mini-indicador opcional de anulaciones** (Q286K · 81 facturas) como control de proceso en el Dashboard
 
 ---
 
@@ -154,6 +157,10 @@ Bitácora de decisiones de arquitectura. Cuando se toma una decisión nueva, se 
 | 2026-05-19 | No usar shadcn/ui por ahora | El prototipo trae sus propios design tokens; agregamos shadcn solo cuando necesitemos componentes complejos |
 | 2026-05-19 | Pausar deploy a Vercel hasta tener Airtable + Auth | El Hobby de Vercel tiene Deployment Protection que da problemas; mejor deployar cuando esté maduro |
 | 2026-05-19 | Modelo: factura tiene `lineas[]` (multi-línea) | Resolver duplicados de NO.FACTURA causados por necesidad de separar centros de costo |
+| 2026-05-19 | El SALDO real (`Saldo_Por_Cobrar`) manda sobre el campo `ESTADO` para clasificar cartera | El campo ESTADO no es confiable: 483 facturas con ESTADO=COBRADO tenían saldo > 0. Solo se respetan estados administrativos (ANULADO, REFACTURADO, PENDIENTE) |
+| 2026-05-19 | Dashboard reporta cartera BRUTA (Q1.99M, saldos > 0) como "Por cobrar"; los saldos negativos (~Q384K) se muestran aparte como pasivo (saldos a favor de clientes), NO se netean | El neteo escondería tanto la cartera real por cobrar como el pasivo con clientes; mostrarlos separados refleja mejor la realidad financiera |
+| 2026-05-19 | "Facturado" excluye ANULADO y REFACTURADO: facturación válida = EMITIDA + PENDIENTE + COBRADO = Q2.76M. El bruto con anuladas (Q3.04M) NO se reporta como facturación | Las facturas anuladas/refacturadas no son ingreso válido; reportarlas inflaría la facturación |
+| 2026-05-19 | Los KPIs de cartera usan TOTAL con IVA (no el subtotal) | La cartera por cobrar real incluye el IVA que el cliente debe pagar |
 
 ---
 
@@ -162,12 +169,15 @@ Bitácora de decisiones de arquitectura. Cuando se toma una decisión nueva, se 
 Contexto del dominio que va saliendo en conversaciones y no queremos perder.
 
 - Las facturas pueden ser multi-línea para distribuir entre centros de costo. Tu contadora actualmente lo hace duplicando el NO.FACTURA en Airtable — esto se resuelve en F-001/F-006.
-- TalentTrack tiene 0% de cobranza acumulada — posible problema de facturación o términos con clientes nuevos. Insight crítico del Dashboard.
+- TalentTrack: el dato de "0% de cobranza" venía del mapeo viejo por campo `ESTADO` y era falso. Con saldo real su tasa es **~39%** (Q858,966 facturado / Q335,357 cobrado, 74 líneas). Sigue por debajo de Polígrafo (45.8%) pero no está en cero.
 - Polígrafo lidera salud con 49.4% de cobranza — replicable a TalentTrack.
 - Top deudor: FUNDACION GENESIS EMPRESARIAL concentra Q294K, de los cuales Q246K +90 días. El contacto no responde correos desde abril.
 - 5 clientes concentran Q733K en aging +90 días.
 - Centros de costo en Airtable: "Polígrafo", "Socioeconómico", "TalentTrackAI", "Ventas" (verificar mapeo exacto).
 - Cobranza de mayo va 18% por debajo de marzo.
+- La cartera real del negocio es **Q1.99M en 592 facturas con saldo > 0**. El diagnóstico inicial era correcto; el mapeo por campo `ESTADO` la había enmascarado (clasificaba 483 facturas como cobradas pese a tener saldo pendiente).
+- Existen **~Q384K en saldos negativos** (saldos a favor de clientes / sobrepagos). Se reportan como pasivo aparte, no se netean contra la cartera por cobrar. Pendiente investigar su origen (ver Backlog).
+- **434 facturas vencidas reales** (no 37, como sugería el mapeo viejo por campo `ESTADO`). Al clasificar por saldo + días vencidos, la cartera vencida real saltó de 37 a 434. El diagnóstico inicial era correcto.
 
 ---
 
@@ -187,3 +197,5 @@ Contexto del dominio que va saliendo en conversaciones y no queremos perder.
 _Acá se mueven las features cuando llegan a Done. Sirve para tener una bitácora de qué se construyó cuándo._
 
 - **F-001 · Consolidar facturas multi-línea** _(2026-05-19)_ — Resuelto duplicados por NO.FACTURA agrupando en `Invoice.lineas[]`.
+- **Calibración de cartera** _(2026-05-19)_ — `Saldo_Por_Cobrar` manda sobre el campo `ESTADO` para clasificar cartera. Cartera real Q1.98M / 434 vencidas. Tab "Pendientes" agregado al listado. Endpoints temporales de diagnóstico removidos.
+- **F-002 · Dashboard CFO con datos reales** _(2026-05-19)_ — Validado contra Airtable: Facturado Q2,759,846 (excluye anuladas/refacturadas), Por cobrar Q1,984,152, 434 facturas vencidas. Reconciliación exacta confirmada.
