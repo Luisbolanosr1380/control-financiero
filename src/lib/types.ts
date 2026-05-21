@@ -38,8 +38,9 @@ export interface Customer {
 
 export interface InvoiceLine {
   line: LineKey;
-  amount: number;
+  amount: number;       // total de la línea (con IVA)
   balance: number;
+  iva?: number;         // IVA de la línea (para el desglose en el detalle)
   description?: string;
 }
 
@@ -56,6 +57,12 @@ export interface Invoice {
   lineas: InvoiceLine[];
   line: LineKey;
   isMixed: boolean;
+  // Campos opcionales para el detalle (no usados por el listado)
+  fechaEmision?: string;
+  fechaVencimiento?: string;
+  adjuntoUrl?: string;
+  adjuntoNombre?: string;
+  asientoRef?: string;
 }
 
 export interface LineStats {

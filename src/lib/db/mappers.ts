@@ -22,6 +22,8 @@ export const F = {
   MES_COBRO:        'Mes_Cobro',
   QUINCENA_COBRO:   'Quincena_Cobro',
   AGING_BUCKET:     'Calculation',
+  ADJUNTO:          'ADJUNTO ',                          // con espacio al final; multipleAttachments
+  ASIENTO_REF:      'ASIENTO_REF',
 } as const;
 
 // CENTRO_COSTO en Airtable es un linked record → llega como [recordId].
@@ -68,21 +70,31 @@ interface RawRow {
   noFactura: string;
   custId: string;
   total: number;
+  iva: number;
   balance: number;
   line: LineKey;
   status: InvoiceStatus;
   emisionAgo: number;
   dueAgo: number;
+  // para el detalle
+  fechaEmision: string;
+  fechaVencimiento: string;
+  adjuntoUrl?: string;
+  adjuntoNombre?: string;
+  asientoRef: string;
 }
 
 function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
   const f = record.fields;
   const totalRaw    = Number(f[F.TOTAL] ?? 0);
+  const ivaRaw      = Number(f[F.IVA] ?? 0);
   const diasVencido = Number(f[F.DIAS_VENCIDOS] ?? 0);
   const noFactura   = String(f[F.NO_FACTURA] ?? record.id);
   const cc          = ccToLineKey(f[F.CENTRO_COSTO]);
 
-  const fechaEmision = f[F.FECHA_EMISION] ? new Date(String(f[F.FECHA_EMISION])) : new Date();
+  const fechaEmisionStr = f[F.FECHA_EMISION] ? String(f[F.FECHA_EMISION]) : '';
+  const fechaVenceStr   = f[F.FECHA_VENCE] ? String(f[F.FECHA_VENCE]) : '';
+  const fechaEmision = fechaEmisionStr ? new Date(fechaEmisionStr) : new Date();
   const hoy = new Date();
   const diasEmision = Math.floor((hoy.getTime() - fechaEmision.getTime()) / (1000 * 60 * 60 * 24));
 
@@ -92,16 +104,24 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
   // Cobrada/anulada/pendiente → 0; EMITIDA (vencido/por_cobrar) → TOTAL completo.
   const balance = status === 'vencido' || status === 'por_cobrar' ? totalRaw : 0;
 
+  const adjunto = (f[F.ADJUNTO] as Array<{ url?: string; filename?: string }> | undefined)?.[0];
+
   return {
     recordId: record.id,
     noFactura,
     custId:    String((f[F.CLIENTE] as string[] | undefined)?.[0] ?? ''),
     total:     totalRaw,
+    iva:       ivaRaw,
     balance,
     line:      cc,
     status,
     emisionAgo: diasEmision,
     dueAgo:     diasVencido,
+    fechaEmision: fechaEmisionStr,
+    fechaVencimiento: fechaVenceStr,
+    adjuntoUrl: adjunto?.url,
+    adjuntoNombre: adjunto?.filename,
+    asientoRef: String(f[F.ASIENTO_REF] ?? ''),
   };
 }
 
@@ -136,10 +156,13 @@ export function consolidateRecords(records: { id: string; fields: FieldSet }[]):
       line: r.line,
       amount: r.total,
       balance: r.balance,
+      iva: r.iva,
     }));
 
     const principal = rows.reduce((a, b) => (b.total > a.total ? b : a));
     const uniqueCCs = new Set(rows.map(r => r.line));
+    // El PDF suele ir en el principal; si no, tomar el primero que tenga adjunto
+    const conAdjunto = rows.find(r => r.adjuntoUrl) ?? principal;
 
     invoices.push({
       id:              principal.recordId,
@@ -154,6 +177,11 @@ export function consolidateRecords(records: { id: string; fields: FieldSet }[]):
       lineas,
       line:            principal.line,
       isMixed:         uniqueCCs.size > 1,
+      fechaEmision:      principal.fechaEmision || undefined,
+      fechaVencimiento:  principal.fechaVencimiento || undefined,
+      adjuntoUrl:        conAdjunto.adjuntoUrl,
+      adjuntoNombre:     conAdjunto.adjuntoNombre,
+      asientoRef:        principal.asientoRef || undefined,
     });
   }
 
