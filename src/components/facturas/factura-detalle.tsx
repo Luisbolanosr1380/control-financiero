@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
 import { LINES } from '@/lib/mock-data';
+import { AdjuntoViewer } from '@/components/facturas/adjunto-viewer';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
 const STATUS_BADGE: Record<InvoiceStatus, { cls: string; text: string }> = {
@@ -151,13 +152,7 @@ export function FacturaDetalle({ factura: inv, clienteNombre }: Props) {
           <div className="card-head"><div className="card-title">Documento adjunto</div></div>
           <div className="card-pad">
             {inv.adjuntoUrl ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <I.Paperclip size={16} style={{ color: 'var(--ink-3)' }} />
-                <span style={{ fontSize: 13, color: 'var(--ink-2)' }}>{inv.adjuntoNombre ?? 'Factura.pdf'}</span>
-                <a href={inv.adjuntoUrl} target="_blank" rel="noopener noreferrer" className="btn btn-secondary" style={{ marginLeft: 'auto' }}>
-                  <I.Eye size={13} /> Ver PDF
-                </a>
-              </div>
+              <AdjuntoViewer url={inv.adjuntoUrl} nombre={inv.adjuntoNombre} />
             ) : (
               <div style={{ fontSize: 12.5, color: 'var(--ink-4)', display: 'flex', alignItems: 'center', gap: 8 }}>
                 <I.Paperclip size={14} style={{ opacity: 0.5 }} /> Sin documento adjunto
