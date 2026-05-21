@@ -2,7 +2,7 @@
 
 > Documento de planificación del producto. Se actualiza en cada decisión, no al final. Si una conversación produjo una decisión nueva — incluso pequeña — va acá.
 
-**Última actualización:** 2026-05-20
+**Última actualización:** 2026-05-20 (F-006 + F-006b done)
 **Mantenedor:** Stark
 **Estado global:** Fase 1 ✅ · Fase 2 🟡 en curso
 
@@ -75,10 +75,13 @@ Cada feature tiene **brief, fase, status, tamaño, dependencias**. Cuando una en
 
 ### F-006 · Nueva factura con editor de líneas
 - **Fase:** 3
-- **Status:** ⬜ Pendiente
+- **Status:** ✅ Done
 - **Tamaño:** L
-- **Brief:** Formulario para crear factura con autocomplete de cliente y editor de líneas multi-CC (NO más duplicación manual). Validación con Zod. Al guardar: escribir múltiples filas en Airtable (una por línea) o consolidar en una si Airtable lo permite con un campo MultiSelect. Generar asiento contable automático.
-- **Dependencias:** F-001, F-005
+- **Brief:** Formulario para registrar factura (la emite SAT/FEL; acá se registra). Autocomplete de cliente, editor de líneas multi-CC, IVA incluido extraído del total (modelo Guatemala), validación Zod, escritura en Airtable (una fila por línea, mismo NO.FACTURA). El asiento contable automático queda para después.
+- **Dependencias:** F-001
+- **Progreso:**
+  - ✅ Formulario de registro funcionando (escritura real verificada: TOTAL/IVA/SUBTOTAL cuadran contra SAT). Inputs de monto fluidos (uncontrolled + cálculo en onBlur).
+  - ✅ **F-006b — Adjuntar PDF de factura SAT** — Solo respaldo (sin OCR), de a una, PDF, al campo `ADJUNTO ` de Airtable vía Content API. Opcional, máx 5MB; si el upload falla la factura igual se registra.
 
 ### F-007 · Registrar cobro contra facturas 🔥 PRIORIDAD MÁXIMA
 - **Fase:** 3
@@ -146,6 +149,8 @@ Cosas que se han mencionado y queremos no olvidar. Suben a Features priorizadas 
 - ~~Alinear tasa de cobranza global del Dashboard (neto vs bruto)~~ **(OBSOLETO — tasa real ~91% por `ESTADO`)**
 - **Mini-indicador opcional de anulaciones** (Q286K · 81 facturas) como control de proceso en el Dashboard
 - **Backfill histórico de los ~445 cobros no registrados** en `COBROS_CLIENTES` (opcional, datos pasados). Habilita conciliación y reportes históricos, pero no bloquea la operación diaria
+- **Auto-extracción de datos del PDF/XML** para pre-llenar el form de registro (OCR/parseo del FEL) — el salto grande de productividad sobre F-006b
+- **Adjuntar PDF a facturas ya existentes** — desde el detalle de factura (cuando se construya F-005)
 
 ---
 
@@ -206,3 +211,5 @@ _Acá se mueven las features cuando llegan a Done. Sirve para tener una bitácor
 - **F-001 · Consolidar facturas multi-línea** _(2026-05-19)_ — Resuelto duplicados por NO.FACTURA agrupando en `Invoice.lineas[]`.
 - **Calibración de cartera** _(2026-05-19)_ — Iteramos varias fórmulas de clasificación. **Conclusión final: el `ESTADO` manda** (replica `Estatus_Cobranza`); el `Saldo_Por_Cobrar` está roto y se descartó. Cartera real **Q252,684 / 37 vencidas**, cobranza ~91%. Tab "Pendientes" agregado al listado.
 - **F-002 · Dashboard CFO con datos reales** _(2026-05-19)_ — Datos reales de Airtable. Cifras finales (por `ESTADO`): Facturado Q2,759,846 (excluye anuladas/refacturadas), Cobrado Q2,507,161, Por cobrar Q252,684, 37 vencidas, tasa de cobranza 90.8%.
+- **F-006 · Registrar factura** _(2026-05-20)_ — Primera feature de ESCRITURA. Formulario multi-línea, IVA incluido extraído del total (modelo Guatemala), inputs fluidos, escritura por línea con mismo NO.FACTURA (consolidateRecords las junta al leer). Verificado contra SAT.
+- **F-006b · Adjuntar PDF de factura SAT** _(2026-05-20)_ — Respaldo PDF (sin OCR) al campo `ADJUNTO ` del record principal vía Airtable Content API. Opcional, máx 5MB, no rompe el registro si el upload falla.
