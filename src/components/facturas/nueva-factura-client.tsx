@@ -116,9 +116,9 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)}>
-        {/* Encabezado */}
-        <div className="card" style={{ marginBottom: 18 }}>
-          <div className="card-pad">
+        {/* Encabezado (overflow visible para que el dropdown del cliente flote sobre la tabla) */}
+        <div className="card" style={{ marginBottom: 18, overflow: 'visible' }}>
+          <div className="card-pad" style={{ overflow: 'visible' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
               <div className="field" style={{ margin: 0 }}>
                 <label className="label">No. Factura (SAT)</label>
@@ -138,7 +138,7 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
                 />
                 {clienteOpen && (
                   <div style={{
-                    position: 'absolute', zIndex: 20, top: '100%', left: 0, right: 0, marginTop: 4,
+                    position: 'absolute', zIndex: 50, top: '100%', left: 0, right: 0, marginTop: 4,
                     background: 'var(--paper)', border: '1px solid var(--line-2)', borderRadius: 'var(--r-2)',
                     maxHeight: 240, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.10)',
                   }}>
@@ -213,7 +213,7 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
                           type="text" inputMode="decimal" className="input num" style={{ textAlign: 'right' }}
                           placeholder="0.00"
                           {...register(`lineas.${i}.total`, {
-                            onChange: (e) => {
+                            onBlur: (e) => {
                               const t = parseNum(e.target.value);
                               setValue(`lineas.${i}.iva`, Number.isFinite(t) ? String(ivaDeTotal(t)) : '', { shouldValidate: true });
                             },
