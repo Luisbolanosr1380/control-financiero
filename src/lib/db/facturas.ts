@@ -58,6 +58,7 @@ export interface NewFacturaInput {
 export interface CreateFacturaResult {
   noFactura: string;
   recordsCreados: number;
+  recordIdPrincipal: string;   // record de mayor monto (para adjuntar el PDF)
 }
 
 export async function createFactura(input: NewFacturaInput): Promise<CreateFacturaResult> {
@@ -90,15 +91,25 @@ export async function createFactura(input: NewFacturaInput): Promise<CreateFactu
       },
     }));
 
-    // Airtable crea máximo 10 records por llamada
-    let creados = 0;
+    // Airtable crea máximo 10 records por llamada. El orden se preserva.
+    const createdIds: string[] = [];
     for (let i = 0; i < payload.length; i += 10) {
       const lote = payload.slice(i, i + 10);
       const res = await airtable(TABLES.FACTURAS).create(lote);
-      creados += res.length;
+      createdIds.push(...res.map(r => r.id));
     }
 
-    return { noFactura: input.noFactura, recordsCreados: creados };
+    // Principal = línea de mayor total (mismo orden que input.lineas)
+    let maxIdx = 0;
+    for (let i = 1; i < input.lineas.length; i++) {
+      if (input.lineas[i].total > input.lineas[maxIdx].total) maxIdx = i;
+    }
+
+    return {
+      noFactura: input.noFactura,
+      recordsCreados: createdIds.length,
+      recordIdPrincipal: createdIds[maxIdx] ?? createdIds[0] ?? '',
+    };
   } catch (err) {
     throw new Error(err instanceof Error ? err.message : `Error creando factura: ${String(err)}`);
   }

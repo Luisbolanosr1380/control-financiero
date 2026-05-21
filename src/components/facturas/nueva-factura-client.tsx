@@ -44,6 +44,18 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
   const [pending, setPending] = useState(false);
   const [clienteQuery, setClienteQuery] = useState('');
   const [clienteOpen, setClienteOpen] = useState(false);
+  const [pdf, setPdf] = useState<File | null>(null);
+  const [pdfError, setPdfError] = useState<string | null>(null);
+
+  const MAX_PDF = 5 * 1024 * 1024; // 5MB
+
+  const onPickPdf = (file: File | null) => {
+    setPdfError(null);
+    if (!file) { setPdf(null); return; }
+    if (file.type !== 'application/pdf') { setPdfError('El archivo debe ser un PDF.'); return; }
+    if (file.size > MAX_PDF) { setPdfError('El PDF supera el máximo de 5MB.'); return; }
+    setPdf(file);
+  };
 
   const {
     register, handleSubmit, control, setValue, watch, formState: { errors },
@@ -77,7 +89,8 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
 
   const onSubmit = async (values: FormValues) => {
     setPending(true);
-    const res = await crearFacturaAction({
+    const fd = new FormData();
+    fd.append('data', JSON.stringify({
       noFactura: values.noFactura,
       custId: values.custId,
       fechaEmision: values.fechaEmision,
@@ -86,10 +99,14 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
         total: parseNum(l.total),
         iva: parseNum(l.iva),
       })),
-    });
+    }));
+    if (pdf) fd.append('pdf', pdf, pdf.name);
+
+    const res = await crearFacturaAction(fd);
     setPending(false);
     if (res.ok) {
-      toast.success(`Factura ${res.noFactura} registrada · ${res.recordsCreados} línea(s)`);
+      if (res.aviso) toast.warning(res.aviso);
+      else toast.success(`Factura ${res.noFactura} registrada · ${res.recordsCreados} línea(s)${res.pdfAdjuntado ? ' · PDF adjunto' : ''}`);
       router.push('/facturacion');
       router.refresh();
     } else if (res.duplicado) {
@@ -167,6 +184,29 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
                 <input type="date" className="input num" {...register('fechaEmision')} />
                 {errors.fechaEmision && <FieldError msg={errors.fechaEmision.message} />}
               </div>
+            </div>
+
+            {/* Adjunto PDF (opcional) */}
+            <div className="field" style={{ margin: '16px 0 0' }}>
+              <label className="label">Adjuntar factura SAT (PDF) · opcional</label>
+              {pdf ? (
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 10, fontSize: 12.5, color: 'var(--ink-2)', border: '1px solid var(--line)', borderRadius: 'var(--r-2)', padding: '7px 11px', background: 'var(--paper-2)' }}>
+                  <I.Paperclip size={13} style={{ color: 'var(--ink-3)' }} />
+                  <span>{pdf.name}</span>
+                  <span className="num" style={{ color: 'var(--ink-4)' }}>{(pdf.size / 1024).toFixed(0)} KB</span>
+                  <button type="button" className="modal-close" onClick={() => onPickPdf(null)} title="Quitar PDF">
+                    <I.X size={13} />
+                  </button>
+                </div>
+              ) : (
+                <input
+                  type="file"
+                  accept="application/pdf"
+                  className="input"
+                  onChange={(e) => onPickPdf(e.target.files?.[0] ?? null)}
+                />
+              )}
+              {pdfError && <FieldError msg={pdfError} />}
             </div>
           </div>
         </div>
