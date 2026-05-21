@@ -1,14 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
-import { Q } from '@/lib/utils';
-import { crearFacturaAction } from '@/app/(app)/facturacion/nueva/actions';
+import { Q, formatDate } from '@/lib/utils';
+import { crearFacturaAction, checkFacturaExiste } from '@/app/(app)/facturacion/nueva/actions';
 import type { Customer } from '@/lib/types';
 import type { CentroCosto } from '@/lib/db/centros';
 
@@ -46,6 +46,12 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
   const [clienteOpen, setClienteOpen] = useState(false);
   const [pdf, setPdf] = useState<File | null>(null);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [dragover, setDragover] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Verificación en vivo de NO.FACTURA duplicado
+  const [dupChecking, setDupChecking] = useState(false);
+  const [dupInfo, setDupInfo] = useState<{ cliente: string; total: number; fecha: string; numLineas: number } | null>(null);
 
   const MAX_PDF = 5 * 1024 * 1024; // 5MB
 
@@ -55,6 +61,18 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
     if (file.type !== 'application/pdf') { setPdfError('El archivo debe ser un PDF.'); return; }
     if (file.size > MAX_PDF) { setPdfError('El PDF supera el máximo de 5MB.'); return; }
     setPdf(file);
+  };
+
+  const onCheckNoFactura = async (value: string) => {
+    const nf = value.trim();
+    if (!nf) { setDupChecking(false); setDupInfo(null); return; }
+    setDupChecking(true);
+    try {
+      const r = await checkFacturaExiste(nf);
+      setDupInfo(r.existe && r.datos ? r.datos : null);
+    } finally {
+      setDupChecking(false);
+    }
   };
 
   const {
@@ -138,8 +156,17 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
           <div className="card-pad" style={{ overflow: 'visible' }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
               <div className="field" style={{ margin: 0 }}>
-                <label className="label">No. Factura (SAT)</label>
-                <input className="input num" placeholder="Ej. 2050314195" {...register('noFactura')} />
+                <label className="label">
+                  No. Factura (SAT)
+                  {dupChecking && <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--ink-4)', textTransform: 'none', letterSpacing: 0 }}>verificando…</span>}
+                </label>
+                <input
+                  className="input num" placeholder="Ej. 2050314195"
+                  {...register('noFactura', {
+                    onChange: () => { if (dupInfo) setDupInfo(null); },
+                    onBlur: (e) => onCheckNoFactura(e.target.value),
+                  })}
+                />
                 {errors.noFactura && <FieldError msg={errors.noFactura.message} />}
               </div>
 
@@ -186,7 +213,25 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
               </div>
             </div>
 
-            {/* Adjunto PDF (opcional) */}
+            {/* Aviso en vivo: factura ya registrada */}
+            {dupInfo && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 10, marginTop: 14,
+                padding: '10px 14px', border: '1px solid var(--amber)', borderRadius: 'var(--r-2)',
+                background: '#FBF3E0', fontSize: 12.5, color: 'var(--ink-2)',
+              }}>
+                <I.Alert size={14} style={{ color: 'var(--amber)', flexShrink: 0 }} />
+                <span>
+                  <strong>Esta factura ya está registrada</strong> — {dupInfo.cliente} · <span className="num">{Q(dupInfo.total)}</span> · {formatDate(dupInfo.fecha)} · <span className="num">{dupInfo.numLineas}</span> línea(s)
+                </span>
+                <button type="button" className="btn btn-ghost" style={{ marginLeft: 'auto', padding: '3px 8px', fontSize: 11 }}
+                  onClick={() => router.push('/facturacion')}>
+                  Ver en el listado <I.Chevron size={11} />
+                </button>
+              </div>
+            )}
+
+            {/* Adjunto PDF (opcional) — click o drag & drop */}
             <div className="field" style={{ margin: '16px 0 0' }}>
               <label className="label">Adjuntar factura SAT (PDF) · opcional</label>
               {pdf ? (
@@ -199,12 +244,34 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
                   </button>
                 </div>
               ) : (
-                <input
-                  type="file"
-                  accept="application/pdf"
-                  className="input"
-                  onChange={(e) => onPickPdf(e.target.files?.[0] ?? null)}
-                />
+                <div
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={(e) => { e.preventDefault(); setDragover(true); }}
+                  onDragLeave={() => setDragover(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragover(false);
+                    onPickPdf(e.dataTransfer.files?.[0] ?? null);
+                  }}
+                  style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                    padding: '18px 16px', cursor: 'pointer', textAlign: 'center',
+                    border: `1.5px dashed ${dragover ? 'var(--ink)' : 'var(--line-2)'}`,
+                    borderRadius: 'var(--r-2)',
+                    background: dragover ? 'var(--bg-2)' : 'var(--paper-2)',
+                    color: 'var(--ink-3)', fontSize: 12.5, transition: 'background 0.12s, border-color 0.12s',
+                  }}
+                >
+                  <I.Paperclip size={14} style={{ color: 'var(--ink-4)' }} />
+                  <span>{dragover ? 'Soltá el PDF acá' : 'Arrastrá el PDF acá o hacé click para elegir'}</span>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="application/pdf"
+                    style={{ display: 'none' }}
+                    onChange={(e) => onPickPdf(e.target.files?.[0] ?? null)}
+                  />
+                </div>
               )}
               {pdfError && <FieldError msg={pdfError} />}
             </div>
