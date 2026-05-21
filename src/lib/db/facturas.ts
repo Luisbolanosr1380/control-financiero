@@ -44,8 +44,8 @@ export async function getFactura(id: string): Promise<Invoice | null> {
 
 export interface NewFacturaLine {
   centroCostoId: string;
-  subtotal: number;
-  iva: number;
+  total: number;   // monto CON IVA (como en la factura SAT)
+  iva: number;     // IVA extraído del total
 }
 
 export interface NewFacturaInput {
@@ -84,7 +84,7 @@ export async function createFactura(input: NewFacturaInput): Promise<CreateFactu
         [F.CLIENTE]:       [input.custId],
         [F.CENTRO_COSTO]:  [l.centroCostoId],
         [F.FECHA_EMISION]: input.fechaEmision,
-        [F.TOTAL]:         l.subtotal + l.iva,   // SUBTOTAL es fórmula: no se escribe
+        [F.TOTAL]:         l.total,   // monto con IVA. SUBTOTAL es fórmula (= TOTAL - IVA): no se escribe
         [F.IVA]:           l.iva,
         [F.ESTADO]:        'EMITIDA',
       },

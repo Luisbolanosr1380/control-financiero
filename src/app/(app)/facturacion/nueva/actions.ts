@@ -10,7 +10,7 @@ const schema = z.object({
   fechaEmision: z.string().min(1, 'Fecha de emisión es requerida'),
   lineas: z.array(z.object({
     centroCostoId: z.string().min(1, 'Centro de costo requerido'),
-    subtotal: z.number().positive('Subtotal debe ser mayor a 0'),
+    total: z.number().positive('Total debe ser mayor a 0'),
     iva: z.number().min(0, 'IVA inválido'),
   })).min(1, 'Se requiere al menos una línea'),
 });

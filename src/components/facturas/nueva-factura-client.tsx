@@ -12,20 +12,27 @@ import { crearFacturaAction } from '@/app/(app)/facturacion/nueva/actions';
 import type { Customer } from '@/lib/types';
 import type { CentroCosto } from '@/lib/db/centros';
 
+// Monto se maneja como string (texto crudo) mientras se escribe; se parsea para cálculos.
+const parseNum = (s: string): number => {
+  const n = parseFloat(String(s ?? '').replace(/[^\d.]/g, ''));
+  return Number.isFinite(n) ? n : NaN;
+};
+const round2 = (n: number) => Math.round(n * 100) / 100;
+// IVA incluido (Guatemala): se extrae del total con IVA → total * 12 / 112
+const ivaDeTotal = (total: number) => round2((total * 12) / 112);
+
 const formSchema = z.object({
   noFactura: z.string().trim().min(1, 'NO.FACTURA es requerido'),
   custId: z.string().min(1, 'Elegí un cliente'),
   fechaEmision: z.string().min(1, 'Fecha de emisión requerida'),
   lineas: z.array(z.object({
     centroCostoId: z.string().min(1, 'Elegí un centro'),
-    subtotal: z.number({ invalid_type_error: 'Monto inválido' }).positive('Subtotal debe ser > 0'),
-    iva: z.number({ invalid_type_error: 'IVA inválido' }).min(0, 'IVA inválido'),
+    total: z.string().refine(s => parseNum(s) > 0, 'Total debe ser > 0'),
+    iva: z.string().refine(s => parseNum(s) >= 0, 'IVA inválido'),
   })).min(1, 'Agregá al menos una línea'),
 });
 
 type FormValues = z.infer<typeof formSchema>;
-
-const round2 = (n: number) => Math.round(n * 100) / 100;
 
 interface Props {
   clientes: Customer[];
@@ -46,7 +53,7 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
       noFactura: '',
       custId: '',
       fechaEmision: new Date().toISOString().slice(0, 10),
-      lineas: [{ centroCostoId: '', subtotal: 0, iva: 0 }],
+      lineas: [{ centroCostoId: '', total: '', iva: '' }],
     },
   });
 
@@ -60,13 +67,26 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
     ? clientes.filter(c => c.name.toLowerCase().includes(clienteQuery.toLowerCase())).slice(0, 20)
     : clientes.slice(0, 20);
 
-  const sumSub = lineas.reduce((s, l) => s + (Number(l?.subtotal) || 0), 0);
-  const sumIva = lineas.reduce((s, l) => s + (Number(l?.iva) || 0), 0);
-  const sumTotal = sumSub + sumIva;
+  // Sumas (parseando los strings de cada línea)
+  let sumTotal = 0, sumIva = 0;
+  for (const l of lineas ?? []) {
+    sumTotal += parseNum(l?.total) || 0;
+    sumIva += parseNum(l?.iva) || 0;
+  }
+  const sumSub = sumTotal - sumIva;
 
   const onSubmit = async (values: FormValues) => {
     setPending(true);
-    const res = await crearFacturaAction(values);
+    const res = await crearFacturaAction({
+      noFactura: values.noFactura,
+      custId: values.custId,
+      fechaEmision: values.fechaEmision,
+      lineas: values.lineas.map(l => ({
+        centroCostoId: l.centroCostoId,
+        total: parseNum(l.total),
+        iva: parseNum(l.iva),
+      })),
+    });
     setPending(false);
     if (res.ok) {
       toast.success(`Factura ${res.noFactura} registrada · ${res.recordsCreados} línea(s)`);
@@ -85,7 +105,7 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
         <div>
           <h1 className="page-title">Registrar factura</h1>
           <div className="page-subtitle">
-            La factura la emite SAT/FEL; acá se <strong>registra</strong> para control interno. Ingresá el NO.FACTURA tal cual.
+            La factura la emite SAT/FEL; acá se <strong>registra</strong> para control interno. El monto es el <strong>total con IVA</strong> tal cual aparece en la factura.
           </div>
         </div>
         <div className="page-actions">
@@ -96,7 +116,7 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)}>
-        {/* Encabezado de la factura */}
+        {/* Encabezado */}
         <div className="card" style={{ marginBottom: 18 }}>
           <div className="card-pad">
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
@@ -106,7 +126,6 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
                 {errors.noFactura && <FieldError msg={errors.noFactura.message} />}
               </div>
 
-              {/* Cliente autocomplete */}
               <div className="field" style={{ margin: 0, position: 'relative' }}>
                 <label className="label">Cliente</label>
                 <input
@@ -158,7 +177,7 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
             <div className="card-title">Líneas / centros de costo</div>
             <div className="card-actions">
               <button type="button" className="btn btn-secondary" style={{ padding: '5px 10px', fontSize: 12 }}
-                onClick={() => append({ centroCostoId: '', subtotal: 0, iva: 0 })}>
+                onClick={() => append({ centroCostoId: '', total: '', iva: '' })}>
                 <I.Plus size={12} /> Agregar línea
               </button>
             </div>
@@ -168,16 +187,17 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
               <thead>
                 <tr>
                   <th>Centro de costo</th>
-                  <th className="num" style={{ width: 150 }}>Subtotal</th>
+                  <th className="num" style={{ width: 160 }}>Total (con IVA)</th>
                   <th className="num" style={{ width: 150 }}>IVA</th>
-                  <th className="num" style={{ width: 150 }}>Total</th>
+                  <th className="num" style={{ width: 150 }}>Subtotal (ref.)</th>
                   <th style={{ width: 44 }}></th>
                 </tr>
               </thead>
               <tbody>
                 {fields.map((f, i) => {
-                  const sub = Number(lineas?.[i]?.subtotal) || 0;
-                  const iva = Number(lineas?.[i]?.iva) || 0;
+                  const total = parseNum(lineas?.[i]?.total) || 0;
+                  const iva = parseNum(lineas?.[i]?.iva) || 0;
+                  const subtotal = round2(total - iva);
                   const lineErr = errors.lineas?.[i];
                   return (
                     <tr key={f.id}>
@@ -190,25 +210,26 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
                       </td>
                       <td>
                         <input
-                          type="number" step="0.01" className="input num" style={{ textAlign: 'right' }}
-                          {...register(`lineas.${i}.subtotal`, {
-                            valueAsNumber: true,
+                          type="text" inputMode="decimal" className="input num" style={{ textAlign: 'right' }}
+                          placeholder="0.00"
+                          {...register(`lineas.${i}.total`, {
                             onChange: (e) => {
-                              const v = parseFloat(e.target.value);
-                              setValue(`lineas.${i}.iva`, Number.isFinite(v) ? round2(v * 0.12) : 0, { shouldValidate: true });
+                              const t = parseNum(e.target.value);
+                              setValue(`lineas.${i}.iva`, Number.isFinite(t) ? String(ivaDeTotal(t)) : '', { shouldValidate: true });
                             },
                           })}
                         />
-                        {lineErr?.subtotal && <FieldError msg={lineErr.subtotal.message} />}
+                        {lineErr?.total && <FieldError msg={lineErr.total.message} />}
                       </td>
                       <td>
                         <input
-                          type="number" step="0.01" className="input num" style={{ textAlign: 'right' }}
-                          {...register(`lineas.${i}.iva`, { valueAsNumber: true })}
+                          type="text" inputMode="decimal" className="input num" style={{ textAlign: 'right' }}
+                          placeholder="0.00"
+                          {...register(`lineas.${i}.iva`)}
                         />
                         {lineErr?.iva && <FieldError msg={lineErr.iva.message} />}
                       </td>
-                      <td className="num cell-strong" style={{ textAlign: 'right' }}>{Q(round2(sub + iva))}</td>
+                      <td className="num cell-mute" style={{ textAlign: 'right' }}>{Q(subtotal)}</td>
                       <td>
                         {fields.length > 1 && (
                           <button type="button" className="modal-close" onClick={() => remove(i)} title="Eliminar línea">
