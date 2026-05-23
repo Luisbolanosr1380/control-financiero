@@ -162,16 +162,16 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
             </button>
           </div>
         </div>
-        <table className="table">
+        <table className="table" style={{ tableLayout: 'fixed' }}>
           <thead>
             <tr>
               <th style={{ width: 26 }}></th>
-              <th>Cliente</th>
-              <th className="num">Saldo total</th>
-              <th className="num">Vencido</th>
-              <th className="num">% vencido</th>
-              <th>Aging</th>
-              <th className="num">Facturas</th>
+              <th style={{ width: '32%' }}>Cliente</th>
+              <th className="num" style={{ width: '14%' }}>Saldo total</th>
+              <th className="num" style={{ width: '12%' }}>Vencido</th>
+              <th className="num" style={{ width: '10%' }}>% vencido</th>
+              <th style={{ width: 140 }}>Aging</th>
+              <th className="num" style={{ width: '10%' }}>Facturas</th>
               <th style={{ width: 80 }}></th>
             </tr>
           </thead>
@@ -181,12 +181,12 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
               return (
                 <tr key={c.custId} className="clickable" onClick={() => router.push(`/clientes/${c.custId}`)}>
                   <td className="num cell-mute">{i + 1}</td>
-                  <td className="cell-strong">{c.name}</td>
-                  <td className="num cell-strong">{Q(c.balance)}</td>
-                  <td className="num" style={{ color: c.vencido > 0 ? 'var(--wine)' : 'var(--ink-3)' }}>{Q(c.vencido)}</td>
-                  <td className="num">{pct}%</td>
+                  <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.name}>{c.name}</td>
+                  <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{Q(c.balance)}</td>
+                  <td className="num" style={{ color: c.vencido > 0 ? 'var(--wine)' : 'var(--ink-3)', whiteSpace: 'nowrap' }}>{Q(c.vencido)}</td>
+                  <td className="num" style={{ whiteSpace: 'nowrap' }}>{pct}%</td>
                   <td><MiniAgingBar balance={c.balance} vencido={c.vencido} /></td>
-                  <td className="num cell-mute">{c.numFacturas}</td>
+                  <td className="num cell-mute" style={{ whiteSpace: 'nowrap' }}>{c.numFacturas}</td>
                   <td><button className="modal-close"><I.More size={14} /></button></td>
                 </tr>
               );
@@ -213,14 +213,14 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
             Sin clientes en riesgo en la ventana.
           </div>
         ) : (
-          <table className="table">
+          <table className="table" style={{ tableLayout: 'fixed' }}>
             <thead>
               <tr>
-                <th>Cliente</th>
-                <th>Clasificación</th>
-                <th className="num">Facturaba (prom./mes)</th>
-                <th className="num">Sin facturar</th>
-                <th>Tendencia</th>
+                <th style={{ width: '34%' }}>Cliente</th>
+                <th style={{ width: '14%' }}>Clasificación</th>
+                <th className="num" style={{ width: '18%' }}>Facturaba (prom./mes)</th>
+                <th className="num" style={{ width: '14%' }}>Sin facturar</th>
+                <th style={{ width: '14%' }}>Tendencia</th>
                 <th style={{ width: 40 }}></th>
               </tr>
             </thead>
@@ -229,14 +229,14 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
                 const badge = RIESGO_BADGE[c.clasificacion];
                 return (
                   <tr key={c.custId} className="clickable" onClick={() => router.push(`/clientes/${c.custId}`)}>
-                    <td className="cell-strong">{c.nombre}</td>
+                    <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.nombre}>{c.nombre}</td>
                     <td><span className={'badge ' + badge.cls}>{badge.text}</span></td>
-                    <td className="num cell-strong">{Q(c.montoPromedio)}</td>
-                    <td className="num" style={{ color: c.mesesSinFacturar > 2 ? 'var(--wine)' : 'var(--ink-2)' }}>
+                    <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{Q(c.montoPromedio)}</td>
+                    <td className="num" style={{ color: c.mesesSinFacturar > 2 ? 'var(--wine)' : 'var(--ink-2)', whiteSpace: 'nowrap' }}>
                       {c.mesesSinFacturar.toFixed(1)} m
                     </td>
                     <td>
-                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-3)' }}>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>
                         <TendenciaIcon t={c.tendencia} />
                         {c.tendencia === 'creciente' ? 'creciente' : c.tendencia === 'decreciente' ? 'decreciente' : 'estable'}
                       </span>

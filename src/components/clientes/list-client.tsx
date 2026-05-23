@@ -85,15 +85,15 @@ export function ClientesListClient({ clientes }: Props) {
       </div>
 
       <div className="table-wrap" style={{ borderRadius: '0 0 var(--r-3) var(--r-3)', borderTop: 'none' }}>
-        <table className="table">
+        <table className="table" style={{ tableLayout: 'fixed' }}>
           <thead>
             <tr>
-              <th>Cliente</th>
-              <th>Clasificación</th>
-              <th className="num">Promedio/mes</th>
-              <th className="num">Última factura</th>
-              <th className="num">Sin facturar</th>
-              <th>Tendencia</th>
+              <th style={{ width: '36%' }}>Cliente</th>
+              <th style={{ width: '12%' }}>Clasificación</th>
+              <th className="num" style={{ width: '14%' }}>Promedio/mes</th>
+              <th className="num" style={{ width: '12%' }}>Última factura</th>
+              <th className="num" style={{ width: '12%' }}>Sin facturar</th>
+              <th style={{ width: '14%' }}>Tendencia</th>
               <th style={{ width: 40 }}></th>
             </tr>
           </thead>
@@ -106,14 +106,14 @@ export function ClientesListClient({ clientes }: Props) {
               const badge = BADGE[c.clasificacion];
               return (
                 <tr key={c.custId} className="clickable" onClick={() => router.push(`/clientes/${c.custId}`)}>
-                  <td className="cell-strong">{c.nombre}</td>
+                  <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.nombre}>{c.nombre}</td>
                   <td><span className={'badge ' + badge.cls}>{badge.text}</span></td>
-                  <td className="num cell-strong">{Q(c.montoPromedio)}</td>
-                  <td className="num cell-mute">{formatDate(c.ultimaFactura)}</td>
-                  <td className="num" style={{ color: c.mesesSinFacturar > 2 ? 'var(--wine)' : 'var(--ink-2)' }}>
+                  <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{Q(c.montoPromedio)}</td>
+                  <td className="num cell-mute" style={{ whiteSpace: 'nowrap' }}>{formatDate(c.ultimaFactura)}</td>
+                  <td className="num" style={{ color: c.mesesSinFacturar > 2 ? 'var(--wine)' : 'var(--ink-2)', whiteSpace: 'nowrap' }}>
                     {c.mesesSinFacturar.toFixed(1)} m
                   </td>
-                  <td><TendenciaCell t={c.tendencia} /></td>
+                  <td style={{ whiteSpace: 'nowrap' }}><TendenciaCell t={c.tendencia} /></td>
                   <td><button className="modal-close"><I.More size={14} /></button></td>
                 </tr>
               );

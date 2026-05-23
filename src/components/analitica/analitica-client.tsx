@@ -287,18 +287,22 @@ export function AnaliticaClient({ data }: Props) {
           <div className="card-head"><div className="card-title">Clientes que crecieron<InfoTooltip text={explicar.clientesCrecieron()} /></div>
             <div className="card-actions"><span style={{ fontSize: 11, color: 'var(--ink-4)' }}>top 15 por impacto</span></div>
           </div>
-          <table className="table">
+          <table className="table" style={{ tableLayout: 'fixed' }}>
             <thead>
-              <tr><th>Cliente</th><th className="num">Reciente</th><th className="num">Variación</th></tr>
+              <tr>
+                <th style={{ width: '50%' }}>Cliente</th>
+                <th className="num" style={{ width: '25%' }}>Reciente</th>
+                <th className="num" style={{ width: '25%' }}>Variación</th>
+              </tr>
             </thead>
             <tbody>
               {data.moversClientes.crecieron.length === 0 ? (
                 <tr><td colSpan={3} style={{ textAlign: 'center', color: 'var(--ink-4)', padding: 20, fontSize: 12.5 }}>Sin crecimientos en la ventana.</td></tr>
               ) : data.moversClientes.crecieron.map(m => (
                 <tr key={m.custId} className="clickable" onClick={() => router.push(`/clientes/${m.custId}`)}>
-                  <td className="cell-strong">{m.nombre}</td>
-                  <td className="num cell-strong">{Q(m.reciente)}</td>
-                  <td className="num" style={{ color: 'var(--olive)' }}>+{Q(m.variacionQ)} · +{m.variacionPct.toFixed(0)}%</td>
+                  <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.nombre}>{m.nombre}</td>
+                  <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{Q(m.reciente)}</td>
+                  <td className="num" style={{ color: 'var(--olive)', whiteSpace: 'nowrap' }}>+{Q(m.variacionQ)} · +{m.variacionPct.toFixed(0)}%</td>
                 </tr>
               ))}
             </tbody>
@@ -479,16 +483,20 @@ function SubtablaMovers({ titulo, rows, router, tipo }: {
         <span style={{ fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-3)', fontWeight: 500 }}>{titulo}</span>
         <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--ink-4)' }} className="num">{rows.length}</span>
       </div>
-      <table className="table">
+      <table className="table" style={{ tableLayout: 'fixed' }}>
         <thead>
-          <tr><th>Cliente</th><th className="num">Base</th><th className="num">Variación</th></tr>
+          <tr>
+            <th style={{ width: '50%' }}>Cliente</th>
+            <th className="num" style={{ width: '25%' }}>Base</th>
+            <th className="num" style={{ width: '25%' }}>Variación</th>
+          </tr>
         </thead>
         <tbody>
           {rows.map(m => (
             <tr key={m.custId} className="clickable" onClick={() => router.push(`/clientes/${m.custId}`)}>
-              <td className="cell-strong">{m.nombre}</td>
-              <td className="num cell-mute">{Q(m.base)}</td>
-              <td className="num" style={{ color: 'var(--wine)' }}>
+              <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={m.nombre}>{m.nombre}</td>
+              <td className="num cell-mute" style={{ whiteSpace: 'nowrap' }}>{Q(m.base)}</td>
+              <td className="num" style={{ color: 'var(--wine)', whiteSpace: 'nowrap' }}>
                 −{Q(Math.abs(m.variacionQ))} · {m.variacionPct.toFixed(0)}%
               </td>
             </tr>
