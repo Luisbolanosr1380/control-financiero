@@ -51,7 +51,16 @@ JERARQUÍA DE LA CONCLUSIÓN (clave para el diagnóstico):
 - ANTES de redactar, mirá la variación por servicio en su conjunto. Si hay líneas estratégicas creciendo y otras cayendo, el TITULAR es que el problema está LOCALIZADO en un servicio específico, NO que el negocio entero cae. Decilo así en la PRIMERA FRASE del diagnóstico.
 - Si todas las líneas estratégicas caen, recién ahí el titular es una caída general.
 - Líneas ESTRATÉGICAS: Poligrafia, Socioeconomicos, TalentTrackAI (y Administrativo si tiene actividad). Estas se mencionan por nombre y se comparan entre sí.
-- "Otros" = ingresos SIN CLASIFICAR (categoría residual de centros pequeños o sin asignar). NO la pongas al mismo nivel ni junto a las estratégicas. Si tiene una caída/crecimiento relevante, mencionalo APARTE como observación, no como protagonista del diagnóstico.`;
+- "Otros" = ingresos SIN CLASIFICAR (categoría residual de centros pequeños o sin asignar). NO la pongas al mismo nivel ni junto a las estratégicas. Si tiene una caída/crecimiento relevante, mencionalo APARTE como observación, no como protagonista del diagnóstico.
+
+NATURALEZA DE LOS SERVICIOS (crítico para no sobre-contar fugas):
+- TalentTrackAI = reclutamiento, POR PROYECTO/episódico. Un cliente pide candidatos hoy (Q25-30K típico) y puede pasar 3-4 meses sin pedir. Eso es NORMAL, no es fuga. No asumas que un cliente de TalentTrack "se fue" por no facturar unos meses.
+- Polígrafo y Socioeconómico = RECURRENTES (mes a mes). Ahí dejar de facturar SÍ es fuga real y hay que accionar.
+- Administrativo = por proyecto / interno; tratalo como TalentTrack.
+- Cuando un cliente aparece como FUGA o EN RIESGO en los insights, mirá su "naturalezaDominante": si es 'proyecto', NO lo trates como fuga (es episódico). Si es 'recurrente', sí es fuga real.
+
+CONTEXTO COMERCIAL POR CLIENTE:
+- Algunos clientes incluyen una nota "Contexto:" debajo. Es información cualitativa (razón conocida de la salida, vínculos personales, situación del cliente). USALA: si dice por qué se fue alguien, reflejalo en tu lectura. Si no hay contexto, no inventes uno.`;
 
     const userPrompt = `INSIGHTS DEL SISTEMA (estos son los números a usar):
 
@@ -105,6 +114,21 @@ function serializarInsights(
 ): string {
   const sec: string[] = [];
 
+  // Mapa custId → metadata cualitativa (naturaleza dominante + contexto comercial)
+  const meta = new Map(retencion.map(r => [r.custId, {
+    naturaleza: r.naturalezaDominante,
+    contexto: r.contextoComercial,
+  }]));
+  const tag = (custId: string): string => {
+    const m = meta.get(custId);
+    if (!m) return '';
+    const natTag = m.naturaleza === 'proyecto' ? ' [POR PROYECTO]'
+                 : m.naturaleza === 'mixto'    ? ' [MIXTO]'
+                 : ' [RECURRENTE]';
+    const ctx = m.contexto ? `\n    Contexto: ${m.contexto.replace(/\s+/g, ' ').trim()}` : '';
+    return natTag + ctx;
+  };
+
   // 1) Serie mensual y mes de quiebre
   sec.push('### Facturación mensual (12 meses)');
   const serie = a.serieMensualTotal.map(s => `  - ${labelMes(s.mes)}: ${s.monto === 0 ? 'sin datos' : Q(s.monto)}`).join('\n');
@@ -126,18 +150,18 @@ function serializarInsights(
   const cayeronParcial = a.moversClientes.cayeron.filter(m => !(m.reciente <= 1 && m.variacionPct <= -99));
   if (cayeronTodo.length) {
     sec.push('Se fueron del todo (sin facturación reciente):');
-    for (const m of cayeronTodo.slice(0, 6)) sec.push(`  - ${m.nombre}: facturaba ${Q(m.base)} → 0 · última factura ${m.ultimaFactura}`);
+    for (const m of cayeronTodo.slice(0, 6)) sec.push(`  - ${m.nombre}${tag(m.custId)}: facturaba ${Q(m.base)} → 0 · última factura ${m.ultimaFactura}`);
   }
   if (cayeronParcial.length) {
     sec.push('Bajaron pero siguen facturando:');
-    for (const m of cayeronParcial.slice(0, 6)) sec.push(`  - ${m.nombre}: ${Q(m.base)} → ${Q(m.reciente)} (${m.variacionPct.toFixed(0)}%)`);
+    for (const m of cayeronParcial.slice(0, 6)) sec.push(`  - ${m.nombre}${tag(m.custId)}: ${Q(m.base)} → ${Q(m.reciente)} (${m.variacionPct.toFixed(0)}%)`);
   }
 
   // 4) Top clientes que crecieron
   sec.push('\n### Top clientes que CRECIERON');
   for (const m of a.moversClientes.crecieron.slice(0, 6)) {
-    const tag = m.base === 0 ? ' (nuevo)' : '';
-    sec.push(`- ${m.nombre}${tag}: ${Q(m.base)} → ${Q(m.reciente)} (+${Q(m.variacionQ)})`);
+    const flag = m.base === 0 ? ' (nuevo)' : '';
+    sec.push(`- ${m.nombre}${flag}${tag(m.custId)}: ${Q(m.base)} → ${Q(m.reciente)} (+${Q(m.variacionQ)})`);
   }
 
   // 5) Clientes apagados — separar confiables vs provisionales (últimos 3 buckets)
@@ -152,14 +176,34 @@ function serializarInsights(
   }
   if (bucketsConDatos.length === 0) sec.push('Sin apagados en la ventana.');
 
-  // 6) Clientes en riesgo (retención)
-  sec.push('\n### Clientes en riesgo (análisis de retención, cada uno vs SU ritmo normal)');
+  // 6) Clientes en riesgo (retención) — solo recurrentes/mixtos. Los proyecto-dominantes
+  // van en una sección aparte ("episódicos") para no confundir ciclo normal con fuga.
+  sec.push('\n### Clientes en riesgo REALES (recurrentes que dejaron de facturar)');
   const riesgo = retencion
-    .filter(c => c.clasificacion === 'perdido' || c.clasificacion === 'en_riesgo' || c.clasificacion === 'en_declive')
+    .filter(c =>
+      (c.clasificacion === 'perdido' || c.clasificacion === 'en_riesgo' || c.clasificacion === 'en_declive')
+      && c.naturalezaDominante !== 'proyecto',
+    )
     .sort((x, y) => y.montoPromedio - x.montoPromedio)
     .slice(0, 8);
+  if (riesgo.length === 0) sec.push('Sin clientes recurrentes en riesgo.');
   for (const c of riesgo) {
-    sec.push(`- ${c.nombre} [${c.clasificacion}]: facturaba ${Q(c.montoPromedio)}/mes, lleva ${c.mesesSinFacturar.toFixed(1)} meses sin facturar (su ritmo normal: ~${c.intervaloNormal?.toFixed(1) ?? '?'} m).`);
+    const ctx = c.contextoComercial ? `\n    Contexto: ${c.contextoComercial.replace(/\s+/g, ' ').trim()}` : '';
+    sec.push(`- ${c.nombre} [${c.clasificacion}]: facturaba ${Q(c.montoPromedio)}/mes, lleva ${c.mesesSinFacturar.toFixed(1)} meses sin facturar (su ritmo normal: ~${c.intervaloNormal?.toFixed(1) ?? '?'} m).${ctx}`);
+  }
+
+  // Clientes episódicos relevantes (proyecto-dominantes con caída fuerte): información,
+  // NO como fuga. Solo los que tenían facturación base y bajaron mucho.
+  const episodicosConSenal = retencion
+    .filter(c => c.naturalezaDominante === 'proyecto' && c.clasificacion === 'en_declive')
+    .sort((x, y) => y.montoPromedio - x.montoPromedio)
+    .slice(0, 5);
+  if (episodicosConSenal.length > 0) {
+    sec.push('\n### Clientes EPISÓDICOS (por proyecto) con señal — NO es fuga, pero vale la pena monitorear');
+    for (const c of episodicosConSenal) {
+      const ctx = c.contextoComercial ? `\n    Contexto: ${c.contextoComercial.replace(/\s+/g, ' ').trim()}` : '';
+      sec.push(`- ${c.nombre}: facturó ${Q(c.montoBase)} en los 3 meses base, ${Q(c.montoReciente)} en los recientes. Cliente por demanda — la inactividad puede ser ciclo normal.${ctx}`);
+    }
   }
 
   // 7) Concentración (Pareto)
