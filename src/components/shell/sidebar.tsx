@@ -35,6 +35,7 @@ const NAV: NavGroup[] = [
     { href: '/estados',  label: 'Estados Financieros', icon: 'Statement' },
   ]},
   { group: 'Inteligencia', items: [
+    { href: '/analitica', label: 'Analítica',           icon: 'TrendUp' },
     { href: '/ai',       label: 'AI Insights',         icon: 'Sparkles', badge: { text: '3 alertas', kind: 'warn' } },
   ]},
 ];

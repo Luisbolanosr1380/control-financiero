@@ -195,23 +195,6 @@ export async function getAnaliticaIngresos(): Promise<AnaliticaIngresos> {
     totalFacturado,
   };
 
-  // Insights clave (log temporal — se retira en commit posterior)
-  const fmtQ = (n: number) => 'Q' + Math.round(n).toLocaleString('en-US');
-  console.log('\n[analitica] ===== INSIGHTS CLAVE =====');
-  if (mesQuiebre) console.log(`  · Mayor caída MoM: ${mesQuiebre.mes} cayó ${fmtQ(mesQuiebre.caidaQ)} (${mesQuiebre.caidaPct.toFixed(1)}%)`);
-  if (mesPico)    console.log(`  · Mes pico: ${mesPico.mes} con ${fmtQ(mesPico.monto)}`);
-  if (mesValle)   console.log(`  · Mes valle: ${mesValle.mes} con ${fmtQ(mesValle.monto)}`);
-  const peorServ = [...variacionPorServicio].sort((a, b) => a.variacionPct - b.variacionPct)[0];
-  if (peorServ) console.log(`  · Servicio que más cayó: ${peorServ.servicio} ${peorServ.variacionPct.toFixed(1)}% (Δ ${fmtQ(peorServ.variacionQ)})`);
-  console.log('  · Top 5 clientes que CAYERON:');
-  for (const c of cayeron.slice(0, 5)) console.log(`     - ${c.nombre}: ${fmtQ(c.variacionQ)} (${c.variacionPct.toFixed(1)}%)`);
-  console.log('  · Top 5 clientes que CRECIERON:');
-  for (const c of crecieron.slice(0, 5)) console.log(`     - ${c.nombre}: +${fmtQ(c.variacionQ)} (+${c.variacionPct.toFixed(1)}%)`);
-  const peorFuga = [...clientesApagadosPorMes].sort((a, b) => b.cantidad - a.cantidad)[0];
-  if (peorFuga) console.log(`  · Mes con más clientes apagados: ${peorFuga.mes} (${peorFuga.cantidad} clientes · ~${fmtQ(peorFuga.montoPerdido)} promedio mensual)`);
-  console.log(`  · Top 10 concentra ${concentracion.top10pct.toFixed(1)}% · ${concentracion.clientes80pct}/${concentracion.totalClientes} clientes = 80% (Pareto)`);
-  console.log('[analitica] ============================\n');
-
   return {
     servicios: SERVICIOS,
     serieMensualTotal,
