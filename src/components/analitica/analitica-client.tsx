@@ -8,7 +8,8 @@ import {
 } from 'recharts';
 import { I } from '@/components/common/icons';
 import { InfoTooltip } from '@/components/common/info-tooltip';
-import { Q } from '@/lib/utils';
+import { ModalListaClientes, type FilaCliente } from '@/components/common/modal-lista-clientes';
+import { Q, formatDate } from '@/lib/utils';
 import { explicar, guiaAnalitica, type GuiaSeccion } from '@/lib/explicaciones';
 import type { AnaliticaIngresos, MoverCliente } from '@/lib/db/analitica';
 
@@ -38,6 +39,8 @@ export function AnaliticaClient({ data }: Props) {
   const router = useRouter();
   const [filtro, setFiltro] = useState<FiltroServicio>('Todos');
   const [guiaAbierta, setGuiaAbierta] = useState(false);
+  const [concentSel, setConcentSel] = useState<'top5' | 'top10' | 'top20' | 'p80' | null>(null);
+  const [apagadosMes, setApagadosMes] = useState<string | null>(null);
 
   // Serie a graficar según el filtro
   const serie = filtro === 'Todos' ? data.serieMensualTotal : (data.serieMensualPorServicio[filtro] ?? []);
@@ -340,7 +343,15 @@ export function AnaliticaClient({ data }: Props) {
                   }}
                   contentStyle={{ background: 'var(--paper)', border: '1px solid var(--line-2)', borderRadius: 4, fontSize: 12 }}
                 />
-                <Bar dataKey="cantidad" radius={[2, 2, 0, 0]} maxBarSize={42}>
+                <Bar
+                  dataKey="cantidad" radius={[2, 2, 0, 0]} maxBarSize={42}
+                  style={{ cursor: 'pointer' }}
+                  onClick={(d) => {
+                    const row = d as unknown as { rawMes?: string; cantidad?: number; sinDatos?: boolean };
+                    if (!row?.rawMes || row.sinDatos || (row.cantidad ?? 0) === 0) return;
+                    setApagadosMes(row.rawMes);
+                  }}
+                >
                   {apagadosViz.map((d, i) => (
                     <Cell key={i} fill={d.sinDatos ? 'var(--line-3)' : d.provisional ? 'var(--amber)' : 'var(--wine)'}
                           fillOpacity={d.sinDatos ? 0.35 : 1} />
@@ -356,12 +367,26 @@ export function AnaliticaClient({ data }: Props) {
       <div className="card">
         <div className="card-head"><div className="card-title">Concentración de ingresos (Pareto)<InfoTooltip text={explicar.concentracion(data.concentracion.top10pct, data.concentracion.clientes80pct, data.concentracion.totalClientes)} /></div></div>
         <div className="card-pad" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 24 }}>
-          <ConcMetric label="Top 5"  value={`${data.concentracion.top5pct.toFixed(1)}%`} />
-          <ConcMetric label="Top 10" value={`${data.concentracion.top10pct.toFixed(1)}%`} />
-          <ConcMetric label="Top 20" value={`${data.concentracion.top20pct.toFixed(1)}%`} />
-          <ConcMetric label="80% de los ingresos" value={`${data.concentracion.clientes80pct} clientes`} sub={`de ${data.concentracion.totalClientes} activos`} />
+          <ConcMetric label="Top 5"  value={`${data.concentracion.top5pct.toFixed(1)}%`} onClick={() => setConcentSel('top5')} />
+          <ConcMetric label="Top 10" value={`${data.concentracion.top10pct.toFixed(1)}%`} onClick={() => setConcentSel('top10')} />
+          <ConcMetric label="Top 20" value={`${data.concentracion.top20pct.toFixed(1)}%`} onClick={() => setConcentSel('top20')} />
+          <ConcMetric label="80% de los ingresos" value={`${data.concentracion.clientes80pct} clientes`} sub={`de ${data.concentracion.totalClientes} activos`} onClick={() => setConcentSel('p80')} />
         </div>
       </div>
+
+      {/* Modal: drill-down de concentración (Pareto) */}
+      <ConcentracionModal
+        sel={concentSel}
+        onClose={() => setConcentSel(null)}
+        data={data}
+      />
+
+      {/* Modal: clientes apagados de un mes */}
+      <ApagadosMesModal
+        rawMes={apagadosMes}
+        onClose={() => setApagadosMes(null)}
+        data={data}
+      />
 
       {/* Modal: guía completa */}
       {guiaAbierta && (
@@ -422,6 +447,80 @@ function GuiaModal({ onClose, secciones }: { onClose: () => void; secciones: Gui
   );
 }
 
+function ConcentracionModal({
+  sel, onClose, data,
+}: {
+  sel: 'top5' | 'top10' | 'top20' | 'p80' | null;
+  onClose: () => void;
+  data: AnaliticaIngresos;
+}) {
+  if (!sel) return null;
+  const c = data.concentracion;
+  const lista = sel === 'top5' ? c.top5 : sel === 'top10' ? c.top10 : sel === 'top20' ? c.top20 : c.clientes80;
+
+  let titulo: string;
+  let subtitulo: string;
+  if (sel === 'p80') {
+    titulo = `Los ${c.clientes80pct} clientes que generan el 80% de tus ingresos — tus intocables`;
+    subtitulo = `De ${c.totalClientes} clientes activos. Si uno grande se va, se siente.`;
+  } else {
+    const n = sel === 'top5' ? 5 : sel === 'top10' ? 10 : 20;
+    const pct = sel === 'top5' ? c.top5pct : sel === 'top10' ? c.top10pct : c.top20pct;
+    titulo = `Top ${n} clientes — concentran ${pct.toFixed(1)}% de los ingresos`;
+    subtitulo = 'Ordenados por monto facturado en los últimos 12 meses.';
+  }
+
+  const filas: FilaCliente[] = lista.map(cl => ({
+    custId: cl.custId,
+    nombre: cl.nombre,
+    col1: Q(cl.monto),
+    col2: `${cl.pctDelTotal.toFixed(1)}%`,
+  }));
+
+  return (
+    <ModalListaClientes
+      abierto={!!sel}
+      onClose={onClose}
+      titulo={titulo}
+      subtitulo={subtitulo}
+      filas={filas}
+      col1Label="Facturado 12m"
+      col2Label="% del total"
+    />
+  );
+}
+
+function ApagadosMesModal({
+  rawMes, onClose, data,
+}: {
+  rawMes: string | null;
+  onClose: () => void;
+  data: AnaliticaIngresos;
+}) {
+  if (!rawMes) return null;
+  const bucket = data.clientesApagadosPorMes.find(b => b.mes === rawMes);
+  if (!bucket) return null;
+
+  const filas: FilaCliente[] = bucket.clientes.map(cl => ({
+    custId: cl.custId,
+    nombre: cl.nombre,
+    col1: Q(cl.ultimoMonto),
+    col2: formatDate(cl.ultimaFactura),
+  }));
+
+  return (
+    <ModalListaClientes
+      abierto={!!rawMes}
+      onClose={onClose}
+      titulo={`Clientes que se apagaron en ${labelMes(rawMes)}`}
+      subtitulo={`${bucket.cantidad} cliente${bucket.cantidad === 1 ? '' : 's'} con su última factura en este mes.`}
+      filas={filas}
+      col1Label="Último monto"
+      col2Label="Última factura"
+    />
+  );
+}
+
 /* ============= Subcomponentes ============= */
 
 function KpiCard({ label, big, sub, tone, info }: { label: string; big: string; sub?: string; tone?: 'neg'; info?: string }) {
@@ -450,13 +549,29 @@ function Legenda({ swatch, label, striped }: { swatch: string; label: string; st
   );
 }
 
-function ConcMetric({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function ConcMetric({ label, value, sub, onClick }: { label: string; value: string; sub?: string; onClick?: () => void }) {
+  const interactive = !!onClick;
   return (
-    <div>
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!interactive}
+      style={{
+        textAlign: 'left', background: 'transparent', border: 'none', padding: 8, margin: -8,
+        borderRadius: 'var(--r-2)',
+        cursor: interactive ? 'pointer' : 'default',
+        transition: 'background 0.12s',
+      }}
+      onMouseEnter={(e) => { if (interactive) e.currentTarget.style.background = 'var(--bg-2)'; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+    >
       <div style={{ fontSize: 10.5, color: 'var(--ink-4)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 4 }}>{label}</div>
-      <div className="num" style={{ fontSize: 24, fontWeight: 500, color: 'var(--ink)' }}>{value}</div>
+      <div className="num" style={{ fontSize: 24, fontWeight: 500, color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 8 }}>
+        {value}
+        {interactive && <I.ChevDown size={14} style={{ color: 'var(--ink-4)' }} />}
+      </div>
       {sub && <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 2 }}>{sub}</div>}
-    </div>
+    </button>
   );
 }
 
