@@ -2,7 +2,9 @@
 
 import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
+import { InfoTooltip } from '@/components/common/info-tooltip';
 import { Q } from '@/lib/utils';
+import { explicar } from '@/lib/explicaciones';
 import { LINES, MONTHLY, AI_INSIGHTS } from '@/lib/mock-data';
 import type { LineStats, AgingEntry, MonthlyEntry, AIInsight } from '@/lib/types';
 import type { DashboardKPIs, TopDeudor } from '@/lib/db/kpis';
@@ -75,19 +77,19 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
 
       {/* KPIs */}
       <div className="kpi-grid" style={{ marginBottom: 22 }}>
-        <Kpi label="Facturado · total"   value={kpis.facturadoTotal} />
-        <Kpi label="Cobrado · total"     value={kpis.cobradoTotal} />
-        <Kpi label="Por cobrar · total"  value={kpis.porCobrarTotal} />
-        <Kpi label="Vencido · total"     value={kpis.vencidoTotal} tone="neg" note={`${kpis.numVencidas} facturas · crítico`} />
-        <Kpi label="Tasa de cobranza"    value={kpis.tasaCobranza} format="percent" />
-        <Kpi label="Facturas vencidas"   value={kpis.numVencidas} format="count" />
+        <Kpi label="Facturado · total"   value={kpis.facturadoTotal} info={explicar.facturadoTotal()} />
+        <Kpi label="Cobrado · total"     value={kpis.cobradoTotal}   info={explicar.cobradoTotal()} />
+        <Kpi label="Por cobrar · total"  value={kpis.porCobrarTotal} info={explicar.porCobrarTotal()} />
+        <Kpi label="Vencido · total"     value={kpis.vencidoTotal} tone="neg" note={`${kpis.numVencidas} facturas · crítico`} info={explicar.vencidoTotal(kpis.numVencidas)} />
+        <Kpi label="Tasa de cobranza"    value={kpis.tasaCobranza} format="percent" info={explicar.tasaCobranza(kpis.tasaCobranza)} />
+        <Kpi label="Facturas vencidas"   value={kpis.numVencidas} format="count" info={explicar.numVencidas(kpis.numVencidas)} />
       </div>
 
       {/* Dos columnas: líneas + alertas */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, marginBottom: 22 }}>
         <div className="card">
           <div className="card-head">
-            <div className="card-title">Líneas de negocio</div>
+            <div className="card-title">Líneas de negocio<InfoTooltip text={explicar.lineasNegocio()} /></div>
             <div className="card-actions">
               <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>4 líneas activas</span>
             </div>
@@ -100,7 +102,7 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
         {/* Alertas — TODO F-009: insights reales (hoy mock) */}
         <div className="card">
           <div className="card-head">
-            <div className="card-title">Alertas activas</div>
+            <div className="card-title">Alertas activas<InfoTooltip text={explicar.alertasAi()} /></div>
             <span className="badge badge-wine">3</span>
             <div className="card-actions">
               <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 11 }} onClick={() => router.push('/ai')}>
@@ -121,7 +123,7 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
         {/* Evolución — TODO F-002: agrupar por mes desde facturas (hoy mock) */}
         <div className="card">
           <div className="card-head">
-            <div className="card-title">Evolución 12 meses</div>
+            <div className="card-title">Evolución 12 meses<InfoTooltip text={explicar.evolucion12m()} /></div>
             <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>Facturado vs Cobrado</span>
             <div className="card-actions">
               <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 11 }}>12M</button>
@@ -136,7 +138,7 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
 
         <div className="card">
           <div className="card-head">
-            <div className="card-title">Aging de cartera</div>
+            <div className="card-title">Aging de cartera<InfoTooltip text={explicar.aging()} /></div>
             <div className="card-actions">
               <span className="num" style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{Q(agingTotal)}</span>
             </div>
@@ -153,7 +155,7 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
       {/* Top deudores */}
       <div className="card">
         <div className="card-head">
-          <div className="card-title">Top 5 deudores</div>
+          <div className="card-title">Top 5 deudores<InfoTooltip text={explicar.topDeudores()} /></div>
           <div className="card-actions">
             <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 11 }} onClick={() => router.push('/clientes')}>
               Ver todos los clientes <I.Chevron size={11} />
@@ -196,7 +198,7 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
       {/* Clientes en riesgo (retención) */}
       <div className="card" style={{ marginTop: 22 }}>
         <div className="card-head">
-          <div className="card-title">Clientes en riesgo</div>
+          <div className="card-title">Clientes en riesgo<InfoTooltip text={explicar.clientesRiesgo()} /></div>
           <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
             ventana 12 meses · ordenados por impacto
           </span>
@@ -259,12 +261,16 @@ interface KpiProps {
   format?: 'currency' | 'percent' | 'count';
   tone?: 'neg';
   note?: string;
+  info?: string;
 }
 
-function Kpi({ label, value, format = 'currency', tone, note }: KpiProps) {
+function Kpi({ label, value, format = 'currency', tone, note, info }: KpiProps) {
   return (
     <div className="kpi">
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label" style={{ display: 'flex', alignItems: 'center' }}>
+        {label}
+        {info && <InfoTooltip text={info} ariaLabel={`Más información sobre ${label}`} />}
+      </div>
       <div className="kpi-value">
         {format === 'percent' ? (
           <>{value.toFixed(1)}<span style={{ fontSize: 14, color: 'var(--ink-3)', marginLeft: 2 }}>%</span></>

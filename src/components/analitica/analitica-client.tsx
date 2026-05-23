@@ -1,13 +1,15 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   BarChart, Bar, Cell, LineChart, Line,
   XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid, Legend,
 } from 'recharts';
 import { I } from '@/components/common/icons';
+import { InfoTooltip } from '@/components/common/info-tooltip';
 import { Q } from '@/lib/utils';
+import { explicar, guiaAnalitica, type GuiaSeccion } from '@/lib/explicaciones';
 import type { AnaliticaIngresos, MoverCliente } from '@/lib/db/analitica';
 
 const PROVISIONAL_MESES = 3;   // últimos 3 meses se consideran provisionales para "apagados"
@@ -35,6 +37,7 @@ type FiltroServicio = 'Todos' | string;
 export function AnaliticaClient({ data }: Props) {
   const router = useRouter();
   const [filtro, setFiltro] = useState<FiltroServicio>('Todos');
+  const [guiaAbierta, setGuiaAbierta] = useState(false);
 
   // Serie a graficar según el filtro
   const serie = filtro === 'Todos' ? data.serieMensualTotal : (data.serieMensualPorServicio[filtro] ?? []);
@@ -117,6 +120,11 @@ export function AnaliticaClient({ data }: Props) {
             Ventana 12 meses · diagnóstico por tiempo, servicio y cliente
           </div>
         </div>
+        <div className="page-actions">
+          <button className="btn btn-secondary" onClick={() => setGuiaAbierta(true)}>
+            <I.Info size={13} /> ¿Cómo leer este panel?
+          </button>
+        </div>
       </div>
 
       {/* Filtro por servicio */}
@@ -141,20 +149,27 @@ export function AnaliticaClient({ data }: Props) {
 
       {/* SECCIÓN 1: serie mensual + KPIs */}
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 16 }}>
-        <KpiCard label="Mes pico" big={kpis.pico ? Q(kpis.pico.monto) : '—'} sub={kpis.pico ? labelMes(kpis.pico.mes) : ''} />
-        <KpiCard label="Mes valle" big={kpis.valle ? Q(kpis.valle.monto) : '—'} sub={kpis.valle ? labelMes(kpis.valle.mes) : ''} />
+        <KpiCard
+          label="Mes pico" big={kpis.pico ? Q(kpis.pico.monto) : '—'} sub={kpis.pico ? labelMes(kpis.pico.mes) : ''}
+          info={kpis.pico ? explicar.mesPico(kpis.pico.mes, kpis.pico.monto) : undefined}
+        />
+        <KpiCard
+          label="Mes valle" big={kpis.valle ? Q(kpis.valle.monto) : '—'} sub={kpis.valle ? labelMes(kpis.valle.mes) : ''}
+          info={kpis.valle ? explicar.mesValle(kpis.valle.mes, kpis.valle.monto) : undefined}
+        />
         <KpiCard
           label="Caída MoM mayor"
           big={kpis.mesQuiebre ? '−' + Q(kpis.mesQuiebre.caidaQ) : '—'}
           sub={kpis.mesQuiebre ? `${labelMes(kpis.mesQuiebre.mes)} · ${kpis.mesQuiebre.caidaPct.toFixed(1)}%` : ''}
           tone="neg"
+          info={kpis.mesQuiebre ? explicar.caidaMoMMayor(kpis.mesQuiebre.mes, kpis.mesQuiebre.caidaQ, kpis.mesQuiebre.caidaPct) : undefined}
         />
-        <KpiCard label="Promedio mensual" big={Q(kpis.promedio)} sub="meses con datos" />
+        <KpiCard label="Promedio mensual" big={Q(kpis.promedio)} sub="meses con datos" info={explicar.promedioMensual()} />
       </div>
 
       <div className="card" style={{ marginBottom: 22 }}>
         <div className="card-head">
-          <div className="card-title">Facturación mensual {filtro !== 'Todos' && `· ${filtro}`}</div>
+          <div className="card-title">Facturación mensual {filtro !== 'Todos' && `· ${filtro}`}<InfoTooltip text={explicar.facturacionMensual()} /></div>
           <div className="card-actions" style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--ink-3)' }}>
             <Legenda swatch="var(--ink)"   label="normal" />
             <Legenda swatch="var(--wine)"  label="mes de quiebre" />
@@ -190,7 +205,7 @@ export function AnaliticaClient({ data }: Props) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 22, marginBottom: 22 }}>
         <div className="card">
           <div className="card-head">
-            <div className="card-title">Facturación por servicio · 12 meses</div>
+            <div className="card-title">Facturación por servicio · 12 meses<InfoTooltip text={explicar.facturacionPorServicio()} /></div>
           </div>
           <div className="card-pad">
             <div style={{ width: '100%', height: 260 }}>
@@ -224,7 +239,7 @@ export function AnaliticaClient({ data }: Props) {
         </div>
 
         <div className="card">
-          <div className="card-head"><div className="card-title">Variación por servicio</div></div>
+          <div className="card-head"><div className="card-title">Variación por servicio<InfoTooltip text={explicar.variacionPorServicio()} /></div></div>
           <table className="table">
             <thead>
               <tr>
@@ -260,7 +275,7 @@ export function AnaliticaClient({ data }: Props) {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22, marginBottom: 22 }}>
         {/* Cayeron — split */}
         <div className="card">
-          <div className="card-head"><div className="card-title">Clientes que cayeron</div>
+          <div className="card-head"><div className="card-title">Clientes que cayeron<InfoTooltip text={explicar.clientesCayeron()} /></div>
             <div className="card-actions"><span style={{ fontSize: 11, color: 'var(--ink-4)' }}>top 15 por impacto</span></div>
           </div>
           <SubtablaMovers titulo="Se fueron del todo" rows={cayeronTodo} router={router} tipo="todo" />
@@ -269,7 +284,7 @@ export function AnaliticaClient({ data }: Props) {
 
         {/* Crecieron */}
         <div className="card">
-          <div className="card-head"><div className="card-title">Clientes que crecieron</div>
+          <div className="card-head"><div className="card-title">Clientes que crecieron<InfoTooltip text={explicar.clientesCrecieron()} /></div>
             <div className="card-actions"><span style={{ fontSize: 11, color: 'var(--ink-4)' }}>top 15 por impacto</span></div>
           </div>
           <table className="table">
@@ -294,7 +309,7 @@ export function AnaliticaClient({ data }: Props) {
       {/* SECCIÓN 4: apagados por mes */}
       <div className="card" style={{ marginBottom: 22 }}>
         <div className="card-head">
-          <div className="card-title">Clientes apagados por mes</div>
+          <div className="card-title">Clientes apagados por mes<InfoTooltip text={explicar.clientesApagados()} /></div>
           <div className="card-actions" style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--ink-3)' }}>
             <Legenda swatch="var(--wine)"  label="confiables (>3 m sin volver)" />
             <Legenda swatch="var(--amber)" label="provisional (últimos 3 m)" />
@@ -335,12 +350,68 @@ export function AnaliticaClient({ data }: Props) {
 
       {/* SECCIÓN 5: concentración (Pareto) */}
       <div className="card">
-        <div className="card-head"><div className="card-title">Concentración de ingresos (Pareto)</div></div>
+        <div className="card-head"><div className="card-title">Concentración de ingresos (Pareto)<InfoTooltip text={explicar.concentracion(data.concentracion.top10pct, data.concentracion.clientes80pct, data.concentracion.totalClientes)} /></div></div>
         <div className="card-pad" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 24 }}>
           <ConcMetric label="Top 5"  value={`${data.concentracion.top5pct.toFixed(1)}%`} />
           <ConcMetric label="Top 10" value={`${data.concentracion.top10pct.toFixed(1)}%`} />
           <ConcMetric label="Top 20" value={`${data.concentracion.top20pct.toFixed(1)}%`} />
           <ConcMetric label="80% de los ingresos" value={`${data.concentracion.clientes80pct} clientes`} sub={`de ${data.concentracion.totalClientes} activos`} />
+        </div>
+      </div>
+
+      {/* Modal: guía completa */}
+      {guiaAbierta && (
+        <GuiaModal
+          onClose={() => setGuiaAbierta(false)}
+          secciones={guiaAnalitica({
+            mesPico: kpis.pico,
+            mesValle: kpis.valle,
+            mesQuiebre: kpis.mesQuiebre,
+            peorServicio: [...data.variacionPorServicio].sort((a, b) => a.variacionPct - b.variacionPct)[0] ?? null,
+            concentracion: {
+              top10pct: data.concentracion.top10pct,
+              clientes80pct: data.concentracion.clientes80pct,
+              totalClientes: data.concentracion.totalClientes,
+            },
+          })}
+        />
+      )}
+    </div>
+  );
+}
+
+function GuiaModal({ onClose, secciones }: { onClose: () => void; secciones: GuiaSeccion[] }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
+  }, [onClose]);
+
+  return (
+    <div
+      onClick={onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(20, 18, 16, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4vh 4vw' }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{ width: 'min(720px, 94vw)', maxHeight: '92vh', background: 'var(--paper)', borderRadius: 'var(--r-3)', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', padding: '14px 20px', borderBottom: '1px solid var(--line-2)' }}>
+          <I.Info size={15} style={{ color: 'var(--ink-3)', marginRight: 10 }} />
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>¿Cómo leer este panel?</div>
+          <button type="button" className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={onClose} title="Cerrar (Esc)">
+            <I.X size={15} />
+          </button>
+        </div>
+        <div style={{ overflowY: 'auto', padding: '18px 22px' }}>
+          {secciones.map((s, i) => (
+            <div key={i} style={{ marginBottom: 18 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 6, letterSpacing: '-0.005em' }}>{s.titulo}</div>
+              <div style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55, whiteSpace: 'pre-line' }}>{s.cuerpo}</div>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -349,10 +420,13 @@ export function AnaliticaClient({ data }: Props) {
 
 /* ============= Subcomponentes ============= */
 
-function KpiCard({ label, big, sub, tone }: { label: string; big: string; sub?: string; tone?: 'neg' }) {
+function KpiCard({ label, big, sub, tone, info }: { label: string; big: string; sub?: string; tone?: 'neg'; info?: string }) {
   return (
     <div className="kpi">
-      <div className="kpi-label">{label}</div>
+      <div className="kpi-label" style={{ display: 'flex', alignItems: 'center' }}>
+        {label}
+        {info && <InfoTooltip text={info} ariaLabel={`Más información sobre ${label}`} />}
+      </div>
       <div className="kpi-value" style={{ color: tone === 'neg' ? 'var(--wine)' : 'var(--ink)' }}>{big}</div>
       {sub && <div className="kpi-delta"><span className="vs">{sub}</span></div>}
     </div>
