@@ -41,6 +41,7 @@ export interface InvoiceLine {
   amount: number;       // total de la línea (con IVA)
   balance: number;
   iva?: number;         // IVA de la línea (para el desglose en el detalle)
+  centroCostoId?: string;  // record id del CENTRO_COSTO (para analítica por servicio real)
   description?: string;
 }
 

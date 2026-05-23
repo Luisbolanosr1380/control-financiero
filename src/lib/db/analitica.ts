@@ -1,0 +1,227 @@
+// ============================================================
+// Analítica de ingresos · ventana 12 meses
+// Diagnóstico profundo y accionable: tiempo, servicio, cliente.
+// Atribuye por LÍNEA al centro de costo real (no por inv.line).
+// ============================================================
+
+import { getFacturas } from './facturas';
+import { getClientes } from './clientes';
+import { getCentrosCosto } from './centros';
+import type { SerieMes } from './clientes-analisis';
+
+export const CENTROS_SERVICIOS = ['Poligrafia', 'Socioeconomicos', 'TalentTrackAI', 'Administrativo'] as const;
+export const OTROS_SERVICIO = 'Otros';
+
+const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
+const ymKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+
+export interface MoverCliente {
+  custId: string;
+  nombre: string;
+  base: number;
+  reciente: number;
+  variacionQ: number;
+  variacionPct: number;
+  ultimaFactura: string;
+}
+
+export interface VariacionServicio {
+  servicio: string;
+  reciente: number;
+  base: number;
+  variacionQ: number;
+  variacionPct: number;
+}
+
+export interface AnaliticaIngresos {
+  servicios: string[];
+  serieMensualTotal: SerieMes[];
+  serieMensualPorServicio: Record<string, SerieMes[]>;
+  mesQuiebre: { mes: string; caidaQ: number; caidaPct: number } | null;
+  mesPico:  { mes: string; monto: number } | null;
+  mesValle: { mes: string; monto: number } | null;
+  variacionPorServicio: VariacionServicio[];
+  moversClientes: { cayeron: MoverCliente[]; crecieron: MoverCliente[] };
+  clientesApagadosPorMes: Array<{ mes: string; cantidad: number; montoPerdido: number }>;
+  concentracion: {
+    top5pct: number; top10pct: number; top20pct: number;
+    clientes80pct: number; totalClientes: number; totalFacturado: number;
+  };
+}
+
+export async function getAnaliticaIngresos(): Promise<AnaliticaIngresos> {
+  const [facturas, clientes, centros] = await Promise.all([getFacturas(), getClientes(), getCentrosCosto()]);
+
+  // Centro id → bucket de servicio (los 4 spec'd + Otros)
+  const idToName = new Map(centros.map(c => [c.id, c.nombre]));
+  const SERVICIOS: string[] = [...CENTROS_SERVICIOS, OTROS_SERVICIO];
+  const includeSet = new Set<string>(CENTROS_SERVICIOS);
+  const nameKey = (ccId: string | undefined): string => {
+    const n = ccId ? idToName.get(ccId) ?? null : null;
+    return n && includeSet.has(n) ? n : OTROS_SERVICIO;
+  };
+  const nombreCliente = new Map(clientes.map(c => [c.id, c.name]));
+
+  // Ventana: 12 buckets, este mes y los 11 anteriores
+  const now = new Date();
+  const buckets: string[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    buckets.push(ymKey(d));
+  }
+  const windowStart = new Date(now.getFullYear(), now.getMonth() - 11, 1);
+  const bucketIdx = new Map(buckets.map((m, i) => [m, i] as [string, number]));
+
+  const activas = facturas.filter(f =>
+    f.status !== 'anulado' && f.fechaEmision && new Date(f.fechaEmision) >= windowStart
+  );
+
+  // 1) Serie total mensual
+  const totalPorMes = new Map<string, number>(buckets.map(m => [m, 0]));
+  for (const f of activas) {
+    const k = ymKey(new Date(f.fechaEmision!));
+    totalPorMes.set(k, (totalPorMes.get(k) ?? 0) + f.total);
+  }
+  const serieMensualTotal: SerieMes[] = buckets.map(m => ({ mes: m, monto: totalPorMes.get(m) ?? 0 }));
+
+  // 2) Por servicio (atribuyendo por LÍNEA al centro real)
+  const porServ: Record<string, Map<string, number>> = {};
+  for (const s of SERVICIOS) porServ[s] = new Map(buckets.map(m => [m, 0] as [string, number]));
+  for (const f of activas) {
+    const k = ymKey(new Date(f.fechaEmision!));
+    for (const l of f.lineas) {
+      const serv = nameKey(l.centroCostoId);
+      porServ[serv].set(k, (porServ[serv].get(k) ?? 0) + l.amount);
+    }
+  }
+  const serieMensualPorServicio: Record<string, SerieMes[]> = {};
+  for (const s of SERVICIOS) serieMensualPorServicio[s] = buckets.map(m => ({ mes: m, monto: porServ[s].get(m) ?? 0 }));
+
+  // 3) Mes de quiebre / pico / valle
+  let mesQuiebre: AnaliticaIngresos['mesQuiebre'] = null;
+  let peorDiff = 0;
+  for (let i = 1; i < serieMensualTotal.length; i++) {
+    const diff = serieMensualTotal[i].monto - serieMensualTotal[i - 1].monto;
+    if (diff < peorDiff) {
+      peorDiff = diff;
+      const prev = serieMensualTotal[i - 1].monto;
+      mesQuiebre = { mes: serieMensualTotal[i].mes, caidaQ: Math.abs(diff), caidaPct: prev > 0 ? (Math.abs(diff) / prev) * 100 : 0 };
+    }
+  }
+  const mesPico = serieMensualTotal.reduce<{ mes: string; monto: number } | null>(
+    (a, b) => (a == null || b.monto > a.monto ? b : a), null,
+  );
+  const conMonto = serieMensualTotal.filter(s => s.monto > 0);
+  const mesValle = conMonto.length
+    ? conMonto.reduce((a, b) => (b.monto < a.monto ? b : a))
+    : null;
+
+  // 4) Variación por servicio (reciente: meses 9..11; base: meses 6..8)
+  const variacionPorServicio: VariacionServicio[] = SERVICIOS.map(s => {
+    const sv = serieMensualPorServicio[s];
+    const reciente = sv.slice(9, 12).reduce((acc, x) => acc + x.monto, 0);
+    const base     = sv.slice(6, 9).reduce((acc, x) => acc + x.monto, 0);
+    const variacionQ = reciente - base;
+    const variacionPct = base > 0 ? (variacionQ / base) * 100 : (reciente > 0 ? 100 : 0);
+    return { servicio: s, reciente, base, variacionQ, variacionPct };
+  });
+
+  // 5/6/7) Agregado por cliente
+  interface Agg { totalReciente: number; totalBase: number; totalAnual: number; ultimaFactura: Date }
+  const porCliente = new Map<string, Agg>();
+  for (const f of activas) {
+    const d = new Date(f.fechaEmision!);
+    const idx = bucketIdx.get(ymKey(d)) ?? -1;
+    const c = porCliente.get(f.custId) ?? { totalReciente: 0, totalBase: 0, totalAnual: 0, ultimaFactura: new Date(0) };
+    c.totalAnual += f.total;
+    if (idx >= 9) c.totalReciente += f.total;
+    else if (idx >= 6) c.totalBase += f.total;
+    if (d > c.ultimaFactura) c.ultimaFactura = d;
+    porCliente.set(f.custId, c);
+  }
+
+  // 5) Movers
+  const moversAll: MoverCliente[] = [];
+  for (const [custId, agg] of porCliente) {
+    const variacionQ = agg.totalReciente - agg.totalBase;
+    const variacionPct = agg.totalBase > 0 ? (variacionQ / agg.totalBase) * 100 : (agg.totalReciente > 0 ? 100 : 0);
+    moversAll.push({
+      custId,
+      nombre: nombreCliente.get(custId) || custId || '—',
+      base: agg.totalBase,
+      reciente: agg.totalReciente,
+      variacionQ,
+      variacionPct,
+      ultimaFactura: agg.ultimaFactura.toISOString().slice(0, 10),
+    });
+  }
+  const cayeron   = moversAll.filter(m => m.variacionQ < 0).sort((a, b) => a.variacionQ - b.variacionQ).slice(0, 15);
+  const crecieron = moversAll.filter(m => m.variacionQ > 0).sort((a, b) => b.variacionQ - a.variacionQ).slice(0, 15);
+
+  // 6) Apagados por mes (excluye los activos en el mes actual)
+  const apagados = new Map<string, { cantidad: number; montoPerdido: number }>();
+  for (const m of buckets) apagados.set(m, { cantidad: 0, montoPerdido: 0 });
+  const mesActual = buckets[buckets.length - 1];
+  for (const agg of porCliente.values()) {
+    const ultMes = ymKey(agg.ultimaFactura);
+    if (ultMes === mesActual) continue;
+    const slot = apagados.get(ultMes);
+    if (!slot) continue;
+    slot.cantidad += 1;
+    slot.montoPerdido += agg.totalAnual / 12;   // proxy de su facturación mensual promedio
+  }
+  const clientesApagadosPorMes = buckets.map(m => {
+    const v = apagados.get(m)!;
+    return { mes: m, cantidad: v.cantidad, montoPerdido: v.montoPerdido };
+  });
+
+  // 7) Concentración (Pareto)
+  const totalFacturado = serieMensualTotal.reduce((s, x) => s + x.monto, 0);
+  const totales = [...porCliente.values()].map(c => c.totalAnual).sort((a, b) => b - a);
+  const sumN = (n: number) => totales.slice(0, n).reduce((s, v) => s + v, 0);
+  const pct = (a: number) => totalFacturado > 0 ? (a / totalFacturado) * 100 : 0;
+  let acum = 0, clientes80 = 0;
+  for (const t of totales) {
+    acum += t;
+    clientes80 += 1;
+    if (acum >= totalFacturado * 0.8) break;
+  }
+  const concentracion = {
+    top5pct: pct(sumN(5)),
+    top10pct: pct(sumN(10)),
+    top20pct: pct(sumN(20)),
+    clientes80pct: clientes80,
+    totalClientes: totales.length,
+    totalFacturado,
+  };
+
+  // Insights clave (log temporal — se retira en commit posterior)
+  const fmtQ = (n: number) => 'Q' + Math.round(n).toLocaleString('en-US');
+  console.log('\n[analitica] ===== INSIGHTS CLAVE =====');
+  if (mesQuiebre) console.log(`  · Mayor caída MoM: ${mesQuiebre.mes} cayó ${fmtQ(mesQuiebre.caidaQ)} (${mesQuiebre.caidaPct.toFixed(1)}%)`);
+  if (mesPico)    console.log(`  · Mes pico: ${mesPico.mes} con ${fmtQ(mesPico.monto)}`);
+  if (mesValle)   console.log(`  · Mes valle: ${mesValle.mes} con ${fmtQ(mesValle.monto)}`);
+  const peorServ = [...variacionPorServicio].sort((a, b) => a.variacionPct - b.variacionPct)[0];
+  if (peorServ) console.log(`  · Servicio que más cayó: ${peorServ.servicio} ${peorServ.variacionPct.toFixed(1)}% (Δ ${fmtQ(peorServ.variacionQ)})`);
+  console.log('  · Top 5 clientes que CAYERON:');
+  for (const c of cayeron.slice(0, 5)) console.log(`     - ${c.nombre}: ${fmtQ(c.variacionQ)} (${c.variacionPct.toFixed(1)}%)`);
+  console.log('  · Top 5 clientes que CRECIERON:');
+  for (const c of crecieron.slice(0, 5)) console.log(`     - ${c.nombre}: +${fmtQ(c.variacionQ)} (+${c.variacionPct.toFixed(1)}%)`);
+  const peorFuga = [...clientesApagadosPorMes].sort((a, b) => b.cantidad - a.cantidad)[0];
+  if (peorFuga) console.log(`  · Mes con más clientes apagados: ${peorFuga.mes} (${peorFuga.cantidad} clientes · ~${fmtQ(peorFuga.montoPerdido)} promedio mensual)`);
+  console.log(`  · Top 10 concentra ${concentracion.top10pct.toFixed(1)}% · ${concentracion.clientes80pct}/${concentracion.totalClientes} clientes = 80% (Pareto)`);
+  console.log('[analitica] ============================\n');
+
+  return {
+    servicios: SERVICIOS,
+    serieMensualTotal,
+    serieMensualPorServicio,
+    mesQuiebre,
+    mesPico,
+    mesValle,
+    variacionPorServicio,
+    moversClientes: { cayeron, crecieron },
+    clientesApagadosPorMes,
+    concentracion,
+  };
+}

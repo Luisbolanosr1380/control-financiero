@@ -73,6 +73,7 @@ interface RawRow {
   iva: number;
   balance: number;
   line: LineKey;
+  centroCostoId: string;
   status: InvoiceStatus;
   emisionAgo: number;
   dueAgo: number;
@@ -105,6 +106,7 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
   const balance = status === 'vencido' || status === 'por_cobrar' ? totalRaw : 0;
 
   const adjunto = (f[F.ADJUNTO] as Array<{ url?: string; filename?: string }> | undefined)?.[0];
+  const ccId = String((f[F.CENTRO_COSTO] as string[] | undefined)?.[0] ?? '');
 
   return {
     recordId: record.id,
@@ -114,6 +116,7 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
     iva:       ivaRaw,
     balance,
     line:      cc,
+    centroCostoId: ccId,
     status,
     emisionAgo: diasEmision,
     dueAgo:     diasVencido,
@@ -157,6 +160,7 @@ export function consolidateRecords(records: { id: string; fields: FieldSet }[]):
       amount: r.total,
       balance: r.balance,
       iva: r.iva,
+      centroCostoId: r.centroCostoId || undefined,
     }));
 
     const principal = rows.reduce((a, b) => (b.total > a.total ? b : a));
