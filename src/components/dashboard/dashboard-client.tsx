@@ -6,15 +6,31 @@ import { Q } from '@/lib/utils';
 import { LINES, MONTHLY, AI_INSIGHTS } from '@/lib/mock-data';
 import type { LineStats, AgingEntry, MonthlyEntry, AIInsight } from '@/lib/types';
 import type { DashboardKPIs, TopDeudor } from '@/lib/db/kpis';
+import type { AnalisisCliente, ClienteClasificacion, Tendencia } from '@/lib/db/clientes-analisis';
 
 interface Props {
   kpis: DashboardKPIs;
   lineStats: LineStats[];
   aging: AgingEntry[];
   topDeudores: TopDeudor[];
+  clientesRiesgo: AnalisisCliente[];
 }
 
-export function DashboardClient({ kpis, lineStats, aging, topDeudores }: Props) {
+const RIESGO_BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
+  perdido:    { cls: 'badge-wine',    text: 'Perdido' },
+  en_riesgo:  { cls: 'badge-warn',    text: 'En riesgo' },
+  en_declive: { cls: 'badge-outline', text: 'En declive' },
+  sano:       { cls: 'badge-olive',   text: 'Sano' },
+  nuevo:      { cls: 'badge-mute',    text: 'Nuevo' },
+};
+
+function TendenciaIcon({ t }: { t: Tendencia }) {
+  if (t === 'creciente')  return <I.ArrowUp size={11} style={{ color: 'var(--olive)' }} />;
+  if (t === 'decreciente') return <I.ArrowDown size={11} style={{ color: 'var(--wine)' }} />;
+  return <span style={{ display: 'inline-block', width: 9, height: 2, background: 'var(--ink-4)', borderRadius: 1 }} />;
+}
+
+export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo }: Props) {
   const router = useRouter();
 
   const agingTotal = aging.reduce((s, b) => s + b.amount, 0);
@@ -175,6 +191,61 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores }: Props) 
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Clientes en riesgo (retención) */}
+      <div className="card" style={{ marginTop: 22 }}>
+        <div className="card-head">
+          <div className="card-title">Clientes en riesgo</div>
+          <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+            ventana 12 meses · ordenados por impacto
+          </span>
+          <div className="card-actions">
+            <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 11 }} onClick={() => router.push('/clientes')}>
+              Ver todos <I.Chevron size={11} />
+            </button>
+          </div>
+        </div>
+        {clientesRiesgo.length === 0 ? (
+          <div className="card-pad" style={{ textAlign: 'center', color: 'var(--ink-4)', padding: 32, fontSize: 12.5 }}>
+            Sin clientes en riesgo en la ventana.
+          </div>
+        ) : (
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Cliente</th>
+                <th>Clasificación</th>
+                <th className="num">Facturaba (prom./mes)</th>
+                <th className="num">Sin facturar</th>
+                <th>Tendencia</th>
+                <th style={{ width: 40 }}></th>
+              </tr>
+            </thead>
+            <tbody>
+              {clientesRiesgo.map(c => {
+                const badge = RIESGO_BADGE[c.clasificacion];
+                return (
+                  <tr key={c.custId} className="clickable" onClick={() => router.push(`/clientes/${c.custId}`)}>
+                    <td className="cell-strong">{c.nombre}</td>
+                    <td><span className={'badge ' + badge.cls}>{badge.text}</span></td>
+                    <td className="num cell-strong">{Q(c.montoPromedio)}</td>
+                    <td className="num" style={{ color: c.mesesSinFacturar > 2 ? 'var(--wine)' : 'var(--ink-2)' }}>
+                      {c.mesesSinFacturar.toFixed(1)} m
+                    </td>
+                    <td>
+                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-3)' }}>
+                        <TendenciaIcon t={c.tendencia} />
+                        {c.tendencia === 'creciente' ? 'creciente' : c.tendencia === 'decreciente' ? 'decreciente' : 'estable'}
+                      </span>
+                    </td>
+                    <td><button className="modal-close"><I.More size={14} /></button></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
