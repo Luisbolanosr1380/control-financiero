@@ -45,7 +45,13 @@ REGLAS ESTRICTAS:
   · No hay histórico de años previos → una caída en diciembre/temporada baja puede ser estacionalidad, NO crisis. No lo llames "crisis" si no hay forma de saberlo.
   · "Apagados" de los últimos 3 meses son PROVISIONALES: un cliente sin facturar 1-2 meses puede estar en su ciclo normal. Usá los apagados CONFIABLES (>3 meses sin volver) para conclusiones fuertes.
   · Los meses con monto 0 al inicio son "sin datos" (anteriores al registro), no caídas reales.
-- No uses "Q" como sufijo de número (ej: "100Q"). Siempre prefijo: "Q100".`;
+- No uses "Q" como sufijo de número (ej: "100Q"). Siempre prefijo: "Q100".
+
+JERARQUÍA DE LA CONCLUSIÓN (clave para el diagnóstico):
+- ANTES de redactar, mirá la variación por servicio en su conjunto. Si hay líneas estratégicas creciendo y otras cayendo, el TITULAR es que el problema está LOCALIZADO en un servicio específico, NO que el negocio entero cae. Decilo así en la PRIMERA FRASE del diagnóstico.
+- Si todas las líneas estratégicas caen, recién ahí el titular es una caída general.
+- Líneas ESTRATÉGICAS: Poligrafia, Socioeconomicos, TalentTrackAI (y Administrativo si tiene actividad). Estas se mencionan por nombre y se comparan entre sí.
+- "Otros" = ingresos SIN CLASIFICAR (categoría residual de centros pequeños o sin asignar). NO la pongas al mismo nivel ni junto a las estratégicas. Si tiene una caída/crecimiento relevante, mencionalo APARTE como observación, no como protagonista del diagnóstico.`;
 
     const userPrompt = `INSIGHTS DEL SISTEMA (estos son los números a usar):
 
@@ -56,10 +62,10 @@ ${insights}
 Redactá un análisis en español claro con la siguiente estructura exacta en Markdown:
 
 ## Diagnóstico
-3 a 4 frases que resuman el momento del negocio. Mencioná los hechos más importantes (ej: caída de un servicio específico, concentración alta, mes pico, etc.). NO uses la palabra "crisis" si los datos no lo justifican.
+3 a 4 frases. La PRIMERA frase es el titular jerarquizado (¿problema general o localizado? — ver la regla de JERARQUÍA arriba). Las siguientes 2-3 dan el contexto: qué servicio cae, qué crece, concentración. NO uses la palabra "crisis" si los datos no lo justifican. "Otros" no es protagonista; mencionalo aparte si corresponde.
 
 ## Qué accionar esta semana
-Lista de hasta 5 acciones concretas. CADA UNA debe nombrar un cliente, servicio o métrica específica. Empezá cada acción con un verbo ("Llamar a…", "Revisar…", "Blindar…").
+Lista de hasta 5 acciones concretas, **ORDENADAS POR IMPACTO ECONÓMICO** (la del cliente o servicio que más plata movía, primero). CADA UNA debe nombrar un cliente, servicio o métrica específica. Empezá cada acción con un verbo ("Llamar a…", "Revisar…", "Blindar…"). Al lado del nombre poné el monto en juego entre paréntesis cuando esté disponible (ej: "Llamar a BANRURAL (Q184,744 perdidos)").
 
 ## Alertas
 Hasta 3 riesgos a vigilar. Mencioná datos concretos.
