@@ -1,7 +1,9 @@
 import { generateText } from 'ai';
 import { google } from '@ai-sdk/google';
+import { revalidatePath } from 'next/cache';
 import { getAnaliticaIngresos } from '@/lib/db/analitica';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
+import { guardarAnalisis, calcularCostoUSD } from '@/lib/db/ai-analisis';
 import { Q } from '@/lib/utils';
 
 export const dynamic = 'force-dynamic';
@@ -93,12 +95,36 @@ No incluyas otras secciones ni preámbulo. Empezá directamente con "## Diagnós
     });
     const tAI = Date.now() - t1;
 
+    const tokensInput  = Number(usage?.promptTokens     ?? 0);
+    const tokensOutput = Number(usage?.completionTokens ?? 0);
+    const duracionSeg  = (tCalc + tAI) / 1000;
+    const costoUSD     = calcularCostoUSD(tokensInput, tokensOutput);
+
+    // Persistir el análisis (si falla, devolvemos el texto igual — no perderlo)
+    let registroId: string | undefined;
+    try {
+      const reg = await guardarAnalisis({
+        texto: text,
+        modelo: MODELO,
+        tokensInput,
+        tokensOutput,
+        duracionSeg,
+      });
+      registroId = reg.id;
+      revalidatePath('/ai');
+    } catch (e) {
+      console.error('Error guardando análisis AI en Airtable:', e);
+    }
+
     return Response.json({
       ok: true,
       modelo: MODELO,
       generadoEn: new Date().toISOString(),
       ms: { calculos: tCalc, ai: tAI, total: tCalc + tAI },
-      tokens: usage,
+      tokens: { promptTokens: tokensInput, completionTokens: tokensOutput, totalTokens: tokensInput + tokensOutput },
+      costoUSD,
+      registroId,
+      persistido: !!registroId,
       analisis: text,
     });
   } catch (err) {
