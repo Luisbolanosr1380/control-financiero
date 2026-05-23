@@ -33,6 +33,20 @@ export interface VariacionServicio {
   variacionPct: number;
 }
 
+export interface ConcentracionCliente {
+  custId: string;
+  nombre: string;
+  monto: number;          // total facturado en la ventana
+  pctDelTotal: number;    // % del total facturado
+}
+
+export interface ClienteApagado {
+  custId: string;
+  nombre: string;
+  ultimoMonto: number;    // monto de su última factura
+  ultimaFactura: string;  // 'YYYY-MM-DD'
+}
+
 export interface AnaliticaIngresos {
   servicios: string[];
   serieMensualTotal: SerieMes[];
@@ -42,10 +56,19 @@ export interface AnaliticaIngresos {
   mesValle: { mes: string; monto: number } | null;
   variacionPorServicio: VariacionServicio[];
   moversClientes: { cayeron: MoverCliente[]; crecieron: MoverCliente[] };
-  clientesApagadosPorMes: Array<{ mes: string; cantidad: number; montoPerdido: number }>;
+  clientesApagadosPorMes: Array<{
+    mes: string;
+    cantidad: number;
+    montoPerdido: number;
+    clientes: ClienteApagado[];
+  }>;
   concentracion: {
     top5pct: number; top10pct: number; top20pct: number;
     clientes80pct: number; totalClientes: number; totalFacturado: number;
+    top5:  ConcentracionCliente[];
+    top10: ConcentracionCliente[];
+    top20: ConcentracionCliente[];
+    clientes80: ConcentracionCliente[];
   };
 }
 
@@ -127,16 +150,16 @@ export async function getAnaliticaIngresos(): Promise<AnaliticaIngresos> {
   });
 
   // 5/6/7) Agregado por cliente
-  interface Agg { totalReciente: number; totalBase: number; totalAnual: number; ultimaFactura: Date }
+  interface Agg { totalReciente: number; totalBase: number; totalAnual: number; ultimaFactura: Date; ultimoMonto: number }
   const porCliente = new Map<string, Agg>();
   for (const f of activas) {
     const d = new Date(f.fechaEmision!);
     const idx = bucketIdx.get(ymKey(d)) ?? -1;
-    const c = porCliente.get(f.custId) ?? { totalReciente: 0, totalBase: 0, totalAnual: 0, ultimaFactura: new Date(0) };
+    const c = porCliente.get(f.custId) ?? { totalReciente: 0, totalBase: 0, totalAnual: 0, ultimaFactura: new Date(0), ultimoMonto: 0 };
     c.totalAnual += f.total;
     if (idx >= 9) c.totalReciente += f.total;
     else if (idx >= 6) c.totalBase += f.total;
-    if (d > c.ultimaFactura) c.ultimaFactura = d;
+    if (d > c.ultimaFactura) { c.ultimaFactura = d; c.ultimoMonto = f.total; }
     porCliente.set(f.custId, c);
   }
 
@@ -158,41 +181,63 @@ export async function getAnaliticaIngresos(): Promise<AnaliticaIngresos> {
   const cayeron   = moversAll.filter(m => m.variacionQ < 0).sort((a, b) => a.variacionQ - b.variacionQ).slice(0, 15);
   const crecieron = moversAll.filter(m => m.variacionQ > 0).sort((a, b) => b.variacionQ - a.variacionQ).slice(0, 15);
 
-  // 6) Apagados por mes (excluye los activos en el mes actual)
-  const apagados = new Map<string, { cantidad: number; montoPerdido: number }>();
-  for (const m of buckets) apagados.set(m, { cantidad: 0, montoPerdido: 0 });
+  // 6) Apagados por mes (excluye los activos en el mes actual). Incluye la lista de clientes.
+  interface ApagadoSlot { cantidad: number; montoPerdido: number; clientes: ClienteApagado[] }
+  const apagados = new Map<string, ApagadoSlot>();
+  for (const m of buckets) apagados.set(m, { cantidad: 0, montoPerdido: 0, clientes: [] });
   const mesActual = buckets[buckets.length - 1];
-  for (const agg of porCliente.values()) {
+  for (const [custId, agg] of porCliente) {
     const ultMes = ymKey(agg.ultimaFactura);
     if (ultMes === mesActual) continue;
     const slot = apagados.get(ultMes);
     if (!slot) continue;
     slot.cantidad += 1;
     slot.montoPerdido += agg.totalAnual / 12;   // proxy de su facturación mensual promedio
+    slot.clientes.push({
+      custId,
+      nombre: nombreCliente.get(custId) || custId || '—',
+      ultimoMonto: agg.ultimoMonto,
+      ultimaFactura: agg.ultimaFactura.toISOString().slice(0, 10),
+    });
   }
   const clientesApagadosPorMes = buckets.map(m => {
     const v = apagados.get(m)!;
-    return { mes: m, cantidad: v.cantidad, montoPerdido: v.montoPerdido };
+    // Ordenar los clientes del mes por monto perdido descendente
+    v.clientes.sort((a, b) => b.ultimoMonto - a.ultimoMonto);
+    return { mes: m, cantidad: v.cantidad, montoPerdido: v.montoPerdido, clientes: v.clientes };
   });
 
-  // 7) Concentración (Pareto)
+  // 7) Concentración (Pareto) — incluye las listas concretas por bucket
   const totalFacturado = serieMensualTotal.reduce((s, x) => s + x.monto, 0);
-  const totales = [...porCliente.values()].map(c => c.totalAnual).sort((a, b) => b - a);
-  const sumN = (n: number) => totales.slice(0, n).reduce((s, v) => s + v, 0);
-  const pct = (a: number) => totalFacturado > 0 ? (a / totalFacturado) * 100 : 0;
+  const pctOf = (a: number) => totalFacturado > 0 ? (a / totalFacturado) * 100 : 0;
+  const sortedClientes: ConcentracionCliente[] = [...porCliente.entries()]
+    .map(([custId, c]) => ({
+      custId,
+      nombre: nombreCliente.get(custId) || custId || '—',
+      monto: c.totalAnual,
+      pctDelTotal: pctOf(c.totalAnual),
+    }))
+    .sort((a, b) => b.monto - a.monto);
+
+  const sumN = (n: number) => sortedClientes.slice(0, n).reduce((s, v) => s + v.monto, 0);
+
   let acum = 0, clientes80 = 0;
-  for (const t of totales) {
-    acum += t;
+  for (const cl of sortedClientes) {
+    acum += cl.monto;
     clientes80 += 1;
     if (acum >= totalFacturado * 0.8) break;
   }
   const concentracion = {
-    top5pct: pct(sumN(5)),
-    top10pct: pct(sumN(10)),
-    top20pct: pct(sumN(20)),
+    top5pct: pctOf(sumN(5)),
+    top10pct: pctOf(sumN(10)),
+    top20pct: pctOf(sumN(20)),
     clientes80pct: clientes80,
-    totalClientes: totales.length,
+    totalClientes: sortedClientes.length,
     totalFacturado,
+    top5:       sortedClientes.slice(0, 5),
+    top10:      sortedClientes.slice(0, 10),
+    top20:      sortedClientes.slice(0, 20),
+    clientes80: sortedClientes.slice(0, clientes80),
   };
 
   return {
