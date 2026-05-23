@@ -40,6 +40,7 @@ export interface AnalisisCliente {
   ultimaFactura: string;             // 'YYYY-MM-DD'
   naturalezaDominante: NaturalezaDominante;
   pctRecurrente: number;             // % de facturación en líneas recurrentes
+  contextoComercial?: string;        // notas cualitativas (de la tabla CLIENTES)
 }
 
 const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
@@ -55,6 +56,7 @@ function mediana(nums: number[]): number {
 export async function getAnalisisClientes(): Promise<AnalisisCliente[]> {
   const [facturas, clientes, centros] = await Promise.all([getFacturas(), getClientes(), getCentrosCosto()]);
   const nombreById = new Map(clientes.map(c => [c.id, c.name]));
+  const contextoById = new Map(clientes.map(c => [c.id, c.contextoComercial]));
   const naturalezaById = buildNaturalezaMap(centros);
 
   const now = new Date();
@@ -174,6 +176,7 @@ export async function getAnalisisClientes(): Promise<AnalisisCliente[]> {
       ultimaFactura: ultima.toISOString().slice(0, 10),
       naturalezaDominante,
       pctRecurrente,
+      contextoComercial: contextoById.get(custId) || undefined,
     });
   }
 

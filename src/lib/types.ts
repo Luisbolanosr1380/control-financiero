@@ -34,6 +34,7 @@ export interface Customer {
   vencido: number;
   avgPayDays: number;
   onTimeRate: number;
+  contextoComercial?: string;   // notas cualitativas sobre la relación con el cliente
 }
 
 export interface InvoiceLine {

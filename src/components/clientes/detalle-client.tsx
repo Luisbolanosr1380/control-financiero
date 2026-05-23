@@ -87,6 +87,25 @@ export function ClienteDetalleClient({ analisis: a, facturas }: Props) {
         </div>
       </div>
 
+      {/* Contexto comercial (notas cualitativas) */}
+      {a.contextoComercial && (
+        <div className="card" style={{ marginBottom: 18, background: 'var(--paper-2)' }}>
+          <div className="card-head">
+            <div className="card-title">Contexto comercial</div>
+            <div className="card-actions">
+              <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                {a.naturalezaDominante === 'proyecto' ? 'Cliente por proyecto'
+                  : a.naturalezaDominante === 'mixto' ? 'Mix recurrente/proyecto'
+                  : 'Cliente recurrente'}
+              </span>
+            </div>
+          </div>
+          <div className="card-pad" style={{ fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55, whiteSpace: 'pre-line' }}>
+            {a.contextoComercial}
+          </div>
+        </div>
+      )}
+
       {/* Gráfico mensual */}
       <div className="card" style={{ marginBottom: 22 }}>
         <div className="card-head">

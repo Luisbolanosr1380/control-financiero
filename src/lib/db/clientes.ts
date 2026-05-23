@@ -10,11 +10,13 @@ const FC = {
   NIT:          'NIt',
   EMAIL:        'Email cobros',
   DIAS_CREDITO: 'Dias Credito',
+  CONTEXTO:     'Contexto_Comercial',
 } as const;
 
 function recordToCustomer(record: { id: string; fields: FieldSet }): Customer {
   const f = record.fields;
   const nombre = String(f[FC.NOMBRE] ?? f[FC.RAZON_SOCIAL] ?? '').trim();
+  const contexto = String(f[FC.CONTEXTO] ?? '').trim();
   return {
     id:           record.id,
     name:         nombre,
@@ -28,6 +30,7 @@ function recordToCustomer(record: { id: string; fields: FieldSet }): Customer {
     vencido:      0,
     avgPayDays:   0,
     onTimeRate:   0,
+    contextoComercial: contexto || undefined,
   };
 }
 
