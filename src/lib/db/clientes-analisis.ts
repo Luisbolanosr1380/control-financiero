@@ -6,6 +6,7 @@
 
 import { getFacturas } from './facturas';
 import { getClientes } from './clientes';
+import { getCentrosCosto, buildNaturalezaMap, type Naturaleza } from './centros';
 import type { Invoice } from '../types';
 
 export type ClienteClasificacion =
@@ -13,7 +14,10 @@ export type ClienteClasificacion =
   | 'en_riesgo'
   | 'en_declive'
   | 'sano'
-  | 'nuevo';
+  | 'nuevo'
+  | 'episodico';   // facturación por proyecto/demanda — no es fuga por inactividad
+
+export type NaturalezaDominante = 'recurrente' | 'proyecto' | 'mixto';
 
 export type Tendencia = 'creciente' | 'estable' | 'decreciente';
 
@@ -34,6 +38,8 @@ export interface AnalisisCliente {
   tendencia: Tendencia;
   serieMensual: SerieMes[];
   ultimaFactura: string;             // 'YYYY-MM-DD'
+  naturalezaDominante: NaturalezaDominante;
+  pctRecurrente: number;             // % de facturación en líneas recurrentes
 }
 
 const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
@@ -47,8 +53,9 @@ function mediana(nums: number[]): number {
 }
 
 export async function getAnalisisClientes(): Promise<AnalisisCliente[]> {
-  const [facturas, clientes] = await Promise.all([getFacturas(), getClientes()]);
+  const [facturas, clientes, centros] = await Promise.all([getFacturas(), getClientes(), getCentrosCosto()]);
   const nombreById = new Map(clientes.map(c => [c.id, c.name]));
+  const naturalezaById = buildNaturalezaMap(centros);
 
   const now = new Date();
   // 12 buckets: este mes y los 11 anteriores, en orden cronológico
@@ -65,18 +72,39 @@ export async function getAnalisisClientes(): Promise<AnalisisCliente[]> {
     return new Date(f.fechaEmision) >= windowStart;
   });
 
-  // Agrupar por cliente
-  const grupos = new Map<string, Array<{ fecha: Date; total: number }>>();
+  // Agrupar por cliente — además trackear mix recurrente/proyecto por monto de líneas
+  interface Bucket { fecha: Date; total: number }
+  const grupos = new Map<string, { facturas: Bucket[]; recurrente: number; proyecto: number }>();
+  const ensure = (id: string) => {
+    let g = grupos.get(id);
+    if (!g) { g = { facturas: [], recurrente: 0, proyecto: 0 }; grupos.set(id, g); }
+    return g;
+  };
   for (const f of activas) {
-    const arr = grupos.get(f.custId) ?? [];
-    arr.push({ fecha: new Date(f.fechaEmision), total: f.total });
-    grupos.set(f.custId, arr);
+    const g = ensure(f.custId);
+    g.facturas.push({ fecha: new Date(f.fechaEmision), total: f.total });
+    for (const l of f.lineas) {
+      const nat: Naturaleza | null = l.centroCostoId ? (naturalezaById.get(l.centroCostoId) ?? null) : null;
+      if (nat === 'recurrente') g.recurrente += l.amount;
+      else if (nat === 'proyecto') g.proyecto += l.amount;
+      // null/unknown → no afecta el mix
+    }
   }
 
   const out: AnalisisCliente[] = [];
 
-  for (const [custId, lista] of grupos) {
+  for (const [custId, g] of grupos) {
+    const lista = g.facturas;
     lista.sort((a, b) => a.fecha.getTime() - b.fecha.getTime());
+
+    // Mix de naturaleza
+    const sumaCat = g.recurrente + g.proyecto;
+    const pctRecurrente = sumaCat > 0 ? (g.recurrente / sumaCat) * 100 : 0;
+    let naturalezaDominante: NaturalezaDominante;
+    if (sumaCat === 0)              naturalezaDominante = 'recurrente';   // sin datos → seguro
+    else if (pctRecurrente >= 60)   naturalezaDominante = 'recurrente';
+    else if (pctRecurrente <= 40)   naturalezaDominante = 'proyecto';
+    else                            naturalezaDominante = 'mixto';
 
     // serie mensual: monto por bucket, 0 en meses sin factura
     const porMes = new Map<string, number>();
@@ -114,18 +142,22 @@ export async function getAnalisisClientes(): Promise<AnalisisCliente[]> {
       else if (r > 1.1) tendencia = 'creciente';
     }
 
-    // Clasificación
+    // Clasificación — distinta según naturaleza del mix del cliente
     let clasificacion: ClienteClasificacion;
     if (intervaloNormal === null) {
       clasificacion = 'nuevo';
-    } else if (mesesSinFacturar >= intervaloNormal * 3) {
-      clasificacion = 'perdido';
-    } else if (mesesSinFacturar >= intervaloNormal * 1.5) {
-      clasificacion = 'en_riesgo';
-    } else if (montoBase > 0 && montoReciente < montoBase * 0.5) {
-      clasificacion = 'en_declive';
+    } else if (naturalezaDominante === 'proyecto') {
+      // Por proyecto: la inactividad NO es fuga; es ciclo normal de demanda.
+      // No se marca perdido/en_riesgo por silencio. Solo declive si hubo facturación
+      // reciente pero bajó muy fuerte vs base (señal real, no ciclo).
+      if (montoBase > 0 && montoReciente < montoBase * 0.5) clasificacion = 'en_declive';
+      else                                                   clasificacion = 'episodico';
     } else {
-      clasificacion = 'sano';
+      // Recurrente (o mixto): lógica de churn habitual
+      if (mesesSinFacturar >= intervaloNormal * 3)               clasificacion = 'perdido';
+      else if (mesesSinFacturar >= intervaloNormal * 1.5)        clasificacion = 'en_riesgo';
+      else if (montoBase > 0 && montoReciente < montoBase * 0.5) clasificacion = 'en_declive';
+      else                                                        clasificacion = 'sano';
     }
 
     out.push({
@@ -140,6 +172,8 @@ export async function getAnalisisClientes(): Promise<AnalisisCliente[]> {
       tendencia,
       serieMensual,
       ultimaFactura: ultima.toISOString().slice(0, 10),
+      naturalezaDominante,
+      pctRecurrente,
     });
   }
 

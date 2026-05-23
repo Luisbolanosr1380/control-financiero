@@ -12,6 +12,7 @@ const BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
   en_declive: { cls: 'badge-outline', text: 'En declive' },
   sano:       { cls: 'badge-olive',   text: 'Sano' },
   nuevo:      { cls: 'badge-mute',    text: 'Nuevo' },
+  episodico:  { cls: 'badge-mute',    text: 'Episódico' },
 };
 
 function TendenciaCell({ t }: { t: Tendencia }) {
@@ -29,7 +30,7 @@ interface Props {
   clientes: AnalisisCliente[];
 }
 
-type Tab = 'todos' | 'riesgo' | 'sanos';
+type Tab = 'todos' | 'riesgo' | 'sanos' | 'episodicos';
 
 export function ClientesListClient({ clientes }: Props) {
   const router = useRouter();
@@ -37,16 +38,20 @@ export function ClientesListClient({ clientes }: Props) {
   const [search, setSearch] = useState('');
 
   const enRiesgoSet = new Set<ClienteClasificacion>(['perdido', 'en_riesgo', 'en_declive']);
+  const esRiesgoReal = (c: typeof clientes[number]) => enRiesgoSet.has(c.clasificacion) && c.naturalezaDominante !== 'proyecto';
+  const esEpisodico  = (c: typeof clientes[number]) => c.naturalezaDominante === 'proyecto';
 
   const counts = {
     todos: clientes.length,
-    riesgo: clientes.filter(c => enRiesgoSet.has(c.clasificacion)).length,
+    riesgo: clientes.filter(esRiesgoReal).length,
     sanos: clientes.filter(c => c.clasificacion === 'sano').length,
+    episodicos: clientes.filter(esEpisodico).length,
   };
 
   let rows = clientes;
-  if (tab === 'riesgo') rows = rows.filter(c => enRiesgoSet.has(c.clasificacion));
-  if (tab === 'sanos')  rows = rows.filter(c => c.clasificacion === 'sano');
+  if (tab === 'riesgo')     rows = rows.filter(esRiesgoReal);
+  if (tab === 'sanos')      rows = rows.filter(c => c.clasificacion === 'sano');
+  if (tab === 'episodicos') rows = rows.filter(esEpisodico);
   if (search.trim()) {
     const q = search.toLowerCase();
     rows = rows.filter(c => c.nombre.toLowerCase().includes(q));
@@ -66,9 +71,9 @@ export function ClientesListClient({ clientes }: Props) {
       </div>
 
       <div className="tabs">
-        {(['todos', 'riesgo', 'sanos'] as const).map(t => (
+        {(['todos', 'riesgo', 'sanos', 'episodicos'] as const).map(t => (
           <button key={t} className={'tab' + (tab === t ? ' active' : '')} onClick={() => setTab(t)}>
-            {t === 'todos' ? 'Todos' : t === 'riesgo' ? 'En riesgo' : 'Sanos'}
+            {t === 'todos' ? 'Todos' : t === 'riesgo' ? 'En riesgo' : t === 'sanos' ? 'Sanos' : 'Episódicos'}
             <span className="tab-count num">{counts[t]}</span>
           </button>
         ))}

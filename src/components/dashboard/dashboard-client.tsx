@@ -24,6 +24,7 @@ const RIESGO_BADGE: Record<ClienteClasificacion, { cls: string; text: string }> 
   en_declive: { cls: 'badge-outline', text: 'En declive' },
   sano:       { cls: 'badge-olive',   text: 'Sano' },
   nuevo:      { cls: 'badge-mute',    text: 'Nuevo' },
+  episodico:  { cls: 'badge-mute',    text: 'Episódico' },
 };
 
 function TendenciaIcon({ t }: { t: Tendencia }) {

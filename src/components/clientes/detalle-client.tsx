@@ -14,6 +14,7 @@ const BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
   en_declive: { cls: 'badge-outline', text: 'En declive' },
   sano:       { cls: 'badge-olive',   text: 'Sano' },
   nuevo:      { cls: 'badge-mute',    text: 'Nuevo' },
+  episodico:  { cls: 'badge-mute',    text: 'Episódico' },
 };
 
 function TendenciaInline({ t }: { t: Tendencia }) {

@@ -17,8 +17,13 @@ export default async function DashboardPage() {
     getAnalisisClientes(),
   ]);
 
+  // "En riesgo" = fuga real → solo clientes con naturaleza recurrente o mixta.
+  // Los proyecto-dominantes (TalentTrack, Administrativo) NO son fuga por inactividad.
   const clientesRiesgo = analisis
-    .filter(a => a.clasificacion === 'perdido' || a.clasificacion === 'en_riesgo' || a.clasificacion === 'en_declive')
+    .filter(a =>
+      (a.clasificacion === 'perdido' || a.clasificacion === 'en_riesgo' || a.clasificacion === 'en_declive')
+      && a.naturalezaDominante !== 'proyecto',
+    )
     .sort((a, b) => b.montoPromedio - a.montoPromedio)
     .slice(0, 8);
 
