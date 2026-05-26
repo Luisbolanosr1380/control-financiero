@@ -6,8 +6,17 @@
 
 import { getFacturas } from './facturas';
 import { getClientes } from './clientes';
-import { getCentrosCosto } from './centros';
+import { getCentrosCosto, buildNaturalezaMap, type CentroCosto, type Naturaleza } from './centros';
+import type { Customer, Invoice } from '../types';
 import type { SerieMes } from './clientes-analisis';
+
+export type FiltroNaturaleza = 'todos' | 'recurrente' | 'proyecto';
+
+export interface AnaliticaVariantes {
+  todos:      AnaliticaIngresos;
+  recurrente: AnaliticaIngresos;
+  proyecto:   AnaliticaIngresos;
+}
 
 export const CENTROS_SERVICIOS = ['Poligrafia', 'Socioeconomicos', 'TalentTrackAI', 'Administrativo'] as const;
 export const OTROS_SERVICIO = 'Otros';
@@ -72,9 +81,27 @@ export interface AnaliticaIngresos {
   };
 }
 
-export async function getAnaliticaIngresos(): Promise<AnaliticaIngresos> {
+export async function getAnaliticaIngresos(filtroNaturaleza: FiltroNaturaleza = 'todos'): Promise<AnaliticaIngresos> {
   const [facturas, clientes, centros] = await Promise.all([getFacturas(), getClientes(), getCentrosCosto()]);
+  return computarAnalitica(facturas, clientes, centros, filtroNaturaleza);
+}
 
+/** Devuelve los 3 snapshots (todos / recurrente / proyecto) con UNA sola pasada de Airtable. */
+export async function getAnaliticaIngresosVariantes(): Promise<AnaliticaVariantes> {
+  const [facturas, clientes, centros] = await Promise.all([getFacturas(), getClientes(), getCentrosCosto()]);
+  return {
+    todos:      computarAnalitica(facturas, clientes, centros, 'todos'),
+    recurrente: computarAnalitica(facturas, clientes, centros, 'recurrente'),
+    proyecto:   computarAnalitica(facturas, clientes, centros, 'proyecto'),
+  };
+}
+
+function computarAnalitica(
+  facturas: Invoice[],
+  clientes: Customer[],
+  centros: CentroCosto[],
+  filtroNaturaleza: FiltroNaturaleza,
+): AnaliticaIngresos {
   // Centro id → bucket de servicio (los 4 spec'd + Otros)
   const idToName = new Map(centros.map(c => [c.id, c.nombre]));
   const SERVICIOS: string[] = [...CENTROS_SERVICIOS, OTROS_SERVICIO];
@@ -95,9 +122,40 @@ export async function getAnaliticaIngresos(): Promise<AnaliticaIngresos> {
   const windowStart = new Date(now.getFullYear(), now.getMonth() - 11, 1);
   const bucketIdx = new Map(buckets.map((m, i) => [m, i] as [string, number]));
 
-  const activas = facturas.filter(f =>
+  const activasUniverso = facturas.filter(f =>
     f.status !== 'anulado' && f.fechaEmision && new Date(f.fechaEmision) >= windowStart
   );
+
+  // === Filtro por naturaleza del cliente (F-020) ===
+  // Computamos naturalezaDominante por cliente sobre el universo completo, después filtramos.
+  const naturalezaById = buildNaturalezaMap(centros);
+  const natTotales = new Map<string, { recurrente: number; proyecto: number }>();
+  for (const f of activasUniverso) {
+    let b = natTotales.get(f.custId);
+    if (!b) { b = { recurrente: 0, proyecto: 0 }; natTotales.set(f.custId, b); }
+    for (const l of f.lineas) {
+      const nat: Naturaleza | null = l.centroCostoId ? (naturalezaById.get(l.centroCostoId) ?? null) : null;
+      if (nat === 'recurrente') b.recurrente += l.amount;
+      else if (nat === 'proyecto') b.proyecto += l.amount;
+    }
+  }
+  const naturalezaDominante = (custId: string): 'recurrente' | 'proyecto' | 'mixto' => {
+    const b = natTotales.get(custId);
+    if (!b) return 'recurrente';
+    const tot = b.recurrente + b.proyecto;
+    if (tot === 0) return 'recurrente';
+    const pct = (b.recurrente / tot) * 100;
+    if (pct >= 60) return 'recurrente';
+    if (pct <= 40) return 'proyecto';
+    return 'mixto';
+  };
+  const keepCliente = (custId: string): boolean => {
+    if (filtroNaturaleza === 'todos') return true;
+    const nat = naturalezaDominante(custId);
+    if (filtroNaturaleza === 'recurrente') return nat !== 'proyecto';   // recurrente + mixto
+    return nat === 'proyecto';                                           // 'proyecto' only
+  };
+  const activas = activasUniverso.filter(f => keepCliente(f.custId));
 
   // 1) Serie total mensual
   const totalPorMes = new Map<string, number>(buckets.map(m => [m, 0]));
