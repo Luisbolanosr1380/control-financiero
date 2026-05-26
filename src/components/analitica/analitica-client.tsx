@@ -11,7 +11,7 @@ import { InfoTooltip } from '@/components/common/info-tooltip';
 import { ModalListaClientes, type FilaCliente } from '@/components/common/modal-lista-clientes';
 import { Q, formatDate } from '@/lib/utils';
 import { explicar, guiaAnalitica, type GuiaSeccion } from '@/lib/explicaciones';
-import type { AnaliticaIngresos, MoverCliente } from '@/lib/db/analitica';
+import type { AnaliticaIngresos, AnaliticaVariantes, FiltroNaturaleza, MoverCliente } from '@/lib/db/analitica';
 
 const PROVISIONAL_MESES = 3;   // últimos 3 meses se consideran provisionales para "apagados"
 
@@ -30,17 +30,27 @@ function labelMes(ym: string): string {
 }
 
 interface Props {
-  data: AnaliticaIngresos;
+  variantes: AnaliticaVariantes;
 }
 
 type FiltroServicio = 'Todos' | string;
 
-export function AnaliticaClient({ data }: Props) {
+const NAT_LABEL: Record<FiltroNaturaleza, string> = {
+  todos:      'Todos los clientes',
+  recurrente: 'Solo recurrentes',
+  proyecto:   'Solo por proyecto',
+};
+
+export function AnaliticaClient({ variantes }: Props) {
   const router = useRouter();
   const [filtro, setFiltro] = useState<FiltroServicio>('Todos');
+  const [filtroNat, setFiltroNat] = useState<FiltroNaturaleza>('todos');
   const [guiaAbierta, setGuiaAbierta] = useState(false);
   const [concentSel, setConcentSel] = useState<'top5' | 'top10' | 'top20' | 'p80' | null>(null);
   const [apagadosMes, setApagadosMes] = useState<string | null>(null);
+
+  // Snapshot activo según el filtro de naturaleza (los drill-downs lo usan automáticamente)
+  const data: AnaliticaIngresos = variantes[filtroNat];
 
   // Serie a graficar según el filtro
   const serie = filtro === 'Todos' ? data.serieMensualTotal : (data.serieMensualPorServicio[filtro] ?? []);
@@ -130,23 +140,42 @@ export function AnaliticaClient({ data }: Props) {
         </div>
       </div>
 
-      {/* Filtro por servicio */}
+      {/* Filtros: servicio + naturaleza de cliente */}
       <div className="card" style={{ marginBottom: 18 }}>
-        <div className="card-pad" style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 11.5, color: 'var(--ink-3)', marginRight: 4 }}>Servicio</span>
-          {(['Todos', ...data.servicios] as FiltroServicio[]).map(s => (
-            <button
-              key={s}
-              className={'btn ' + (filtro === s ? 'btn-primary' : 'btn-secondary')}
-              style={{ padding: '5px 12px', fontSize: 12 }}
-              onClick={() => setFiltro(s)}
-            >
-              {s !== 'Todos' && SERVICIO_COLOR[s] && (
-                <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: SERVICIO_COLOR[s], marginRight: 6 }} />
-              )}
-              {s}
-            </button>
-          ))}
+        <div className="card-pad" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11.5, color: 'var(--ink-3)', marginRight: 4, minWidth: 64 }}>Servicio</span>
+            {(['Todos', ...data.servicios] as FiltroServicio[]).map(s => (
+              <button
+                key={s}
+                className={'btn ' + (filtro === s ? 'btn-primary' : 'btn-secondary')}
+                style={{ padding: '5px 12px', fontSize: 12 }}
+                onClick={() => setFiltro(s)}
+              >
+                {s !== 'Todos' && SERVICIO_COLOR[s] && (
+                  <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: SERVICIO_COLOR[s], marginRight: 6 }} />
+                )}
+                {s}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', paddingTop: 8, borderTop: '1px solid var(--line-3)' }}>
+            <span style={{ fontSize: 11.5, color: 'var(--ink-3)', marginRight: 4, minWidth: 64 }}>Cliente</span>
+            {(['todos', 'recurrente', 'proyecto'] as FiltroNaturaleza[]).map(n => (
+              <button
+                key={n}
+                className={'btn ' + (filtroNat === n ? 'btn-primary' : 'btn-secondary')}
+                style={{ padding: '5px 12px', fontSize: 12 }}
+                onClick={() => setFiltroNat(n)}
+              >
+                {NAT_LABEL[n]}
+              </button>
+            ))}
+            <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--ink-4)' }}>
+              Recurrentes = Polígrafo/Socio, mes a mes · Por proyecto = reclutamiento, facturación intermitente
+            </span>
+          </div>
         </div>
       </div>
 
