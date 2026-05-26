@@ -3,6 +3,7 @@ import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
 import { LINES } from '@/lib/mock-data';
 import { AdjuntoViewer } from '@/components/facturas/adjunto-viewer';
+import { AnularFacturaButton } from '@/components/facturas/anular-factura-button';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
 const STATUS_BADGE: Record<InvoiceStatus, { cls: string; text: string }> = {
@@ -58,7 +59,7 @@ export function FacturaDetalle({ factura: inv, clienteNombre }: Props) {
           </div>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary" disabled title="Próximamente"><I.X size={13} /> Anular factura</button>
+          <AnularFacturaButton noFactura={inv.noFactura} status={inv.status} />
           <button className="btn btn-primary" disabled title="Próximamente"><I.Coins size={13} /> Registrar cobro</button>
         </div>
       </div>
