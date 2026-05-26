@@ -24,6 +24,7 @@ export const F = {
   AGING_BUCKET:     'Calculation',
   ADJUNTO:          'ADJUNTO ',                          // con espacio al final; multipleAttachments
   ASIENTO_REF:      'ASIENTO_REF',
+  OBSERVACIONES:    'Observaciones:',                    // con dos puntos al final; multilineText
 } as const;
 
 // CENTRO_COSTO en Airtable es un linked record → llega como [recordId].

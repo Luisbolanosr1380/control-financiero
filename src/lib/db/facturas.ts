@@ -115,6 +115,83 @@ export async function createFactura(input: NewFacturaInput): Promise<CreateFactu
   }
 }
 
-export async function anularFactura(_id: string): Promise<void> {
-  // TODO Fase 3
+export interface AnularFacturaResult {
+  ok: boolean;
+  noFactura: string;
+  recordsActualizados: number;
+  recordsTotal: number;
+  fallidos?: string[];   // record ids que no se pudieron actualizar (anulación parcial)
+  error?: string;
+}
+
+/**
+ * Anula TODAS las filas (líneas) de una factura por NO.FACTURA en una operación.
+ * ESTADO → 'ANULADO' (sin espacio final). Si hay motivo, lo anexa a Observaciones:
+ * con la fecha de anulación. Las anuladas quedan fuera de KPIs/listados via consolidateRecords.
+ */
+export async function anularFactura(noFactura: string, motivo?: string): Promise<AnularFacturaResult> {
+  if (!airtable) throw new Error('Airtable no está configurado.');
+  const nf = (noFactura ?? '').trim();
+  if (!nf) return { ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: 0, error: 'NO.FACTURA es requerido.' };
+
+  try {
+    const esc = nf.replace(/"/g, '\\"');
+    const records = await airtable(TABLES.FACTURAS)
+      .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
+      .all();
+
+    if (records.length === 0) {
+      return { ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: 0, error: `No se encontró la factura ${nf}.` };
+    }
+
+    const fechaAnulacion = new Date().toISOString().slice(0, 10);
+    const nota = motivo?.trim()
+      ? `[Anulado ${fechaAnulacion}: ${motivo.trim()}]`
+      : `[Anulado ${fechaAnulacion}]`;
+
+    const payloads = records.map(r => {
+      const existing = String(r.fields[F.OBSERVACIONES] ?? '').trim();
+      const newObs = existing ? `${existing}\n${nota}` : nota;
+      return {
+        id: r.id,
+        fields: {
+          [F.ESTADO]: 'ANULADO',         // exacto, sin espacio final
+          [F.OBSERVACIONES]: newObs,
+        },
+      };
+    });
+
+    // Batch update: máx 10 records por llamada
+    const actualizados: string[] = [];
+    const fallidos: string[] = [];
+    for (let i = 0; i < payloads.length; i += 10) {
+      const lote = payloads.slice(i, i + 10);
+      try {
+        const res = await airtable(TABLES.FACTURAS).update(lote);
+        actualizados.push(...res.map(r => r.id));
+      } catch (err) {
+        console.error('Error en lote de anulación:', err);
+        fallidos.push(...lote.map(p => p.id));
+      }
+    }
+
+    return {
+      ok: fallidos.length === 0,
+      noFactura: nf,
+      recordsActualizados: actualizados.length,
+      recordsTotal: records.length,
+      fallidos: fallidos.length > 0 ? fallidos : undefined,
+      error: fallidos.length > 0
+        ? `Anulación parcial: ${actualizados.length}/${records.length} líneas. Revisá en Airtable.`
+        : undefined,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      noFactura: nf,
+      recordsActualizados: 0,
+      recordsTotal: 0,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
 }
