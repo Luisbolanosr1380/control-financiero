@@ -62,7 +62,12 @@ NATURALEZA DE LOS SERVICIOS (crítico para no sobre-contar fugas):
 - Cuando un cliente aparece como FUGA o EN RIESGO en los insights, mirá su "naturalezaDominante": si es 'proyecto', NO lo trates como fuga (es episódico). Si es 'recurrente', sí es fuga real.
 
 CONTEXTO COMERCIAL POR CLIENTE:
-- Algunos clientes incluyen una nota "Contexto:" debajo. Es información cualitativa (razón conocida de la salida, vínculos personales, situación del cliente). USALA: si dice por qué se fue alguien, reflejalo en tu lectura. Si no hay contexto, no inventes uno.`;
+- Algunos clientes incluyen una nota "Contexto:" debajo. Es información cualitativa (razón conocida de la salida, vínculos personales, situación del cliente). USALA: si dice por qué se fue alguien, reflejalo en tu lectura. Si no hay contexto, no inventes uno.
+
+SEMÁNTICA DE MONTOS (clave para no confundir tamaño con pérdida):
+- Cuando un cliente aparece en CONCENTRACIÓN (top 5/10/20/80) o en SE FUERON DEL TODO, el monto que se le asocia (etiquetado "Facturación 12m") es su FACTURACIÓN HISTÓRICA en la ventana de 12 meses — eso es su TAMAÑO como cliente, NO una pérdida puntual.
+- Cuando el dato es VARIACIÓN o CAÍDA (etiquetado "Caída reciente vs base" o "Variación 3m vs 3m"), eso SÍ es la diferencia entre dos períodos (últimos 3 meses vs los 3 anteriores). Ahí sí podés llamarlo "caída de Qxxx".
+- LENGUAJE PRECISO obligatorio: si un cliente top facturaba Q184K al año y se apagó, decí "BANRURAL nos facturaba Q184K al año y dejó de hacerlo" o "BANRURAL (cliente top 5, Q184K/año) se apagó". NUNCA digas "perdimos Q184K con BANRURAL" — eso sugiere una pérdida puntual de ese monto, cuando en realidad es el tamaño anual acumulado del cliente. La pérdida real a futuro es incierta y depende de cuánto tiempo deje de facturar; no es el histórico.`;
 
     const userPrompt = `INSIGHTS DEL SISTEMA (estos son los números a usar):
 
@@ -176,18 +181,18 @@ function serializarInsights(
   const cayeronParcial = a.moversClientes.cayeron.filter(m => !(m.reciente <= 1 && m.variacionPct <= -99));
   if (cayeronTodo.length) {
     sec.push('Se fueron del todo (sin facturación reciente):');
-    for (const m of cayeronTodo.slice(0, 6)) sec.push(`  - ${m.nombre}${tag(m.custId)}: facturaba ${Q(m.base)} → 0 · última factura ${m.ultimaFactura}`);
+    for (const m of cayeronTodo.slice(0, 6)) sec.push(`  - ${m.nombre}${tag(m.custId)}: Facturación 3m base ${Q(m.base)} → Reciente 3m ${Q(0)} · Caída reciente vs base: ${Q(m.variacionQ)} · última factura ${m.ultimaFactura}`);
   }
   if (cayeronParcial.length) {
     sec.push('Bajaron pero siguen facturando:');
-    for (const m of cayeronParcial.slice(0, 6)) sec.push(`  - ${m.nombre}${tag(m.custId)}: ${Q(m.base)} → ${Q(m.reciente)} (${m.variacionPct.toFixed(0)}%)`);
+    for (const m of cayeronParcial.slice(0, 6)) sec.push(`  - ${m.nombre}${tag(m.custId)}: Facturación 3m base ${Q(m.base)} → Reciente 3m ${Q(m.reciente)} · Caída reciente vs base: ${Q(m.variacionQ)} (${m.variacionPct.toFixed(0)}%)`);
   }
 
   // 4) Top clientes que crecieron
   sec.push('\n### Top clientes que CRECIERON');
   for (const m of a.moversClientes.crecieron.slice(0, 6)) {
     const flag = m.base === 0 ? ' (nuevo)' : '';
-    sec.push(`- ${m.nombre}${flag}${tag(m.custId)}: ${Q(m.base)} → ${Q(m.reciente)} (+${Q(m.variacionQ)})`);
+    sec.push(`- ${m.nombre}${flag}${tag(m.custId)}: Facturación 3m base ${Q(m.base)} → Reciente 3m ${Q(m.reciente)} · Crecimiento reciente vs base: ${Q(m.variacionQ)}`);
   }
 
   // 5) Clientes apagados — separar confiables vs provisionales (últimos 3 buckets)
@@ -215,7 +220,7 @@ function serializarInsights(
   if (riesgo.length === 0) sec.push('Sin clientes recurrentes en riesgo.');
   for (const c of riesgo) {
     const ctx = c.contextoComercial ? `\n    Contexto: ${c.contextoComercial.replace(/\s+/g, ' ').trim()}` : '';
-    sec.push(`- ${c.nombre} [${c.clasificacion}]: facturaba ${Q(c.montoPromedio)}/mes, lleva ${c.mesesSinFacturar.toFixed(1)} meses sin facturar (su ritmo normal: ~${c.intervaloNormal?.toFixed(1) ?? '?'} m).${ctx}`);
+    sec.push(`- ${c.nombre} [${c.clasificacion}]: Facturación promedio mensual ${Q(c.montoPromedio)} (ritmo histórico, NO pérdida) · lleva ${c.mesesSinFacturar.toFixed(1)} meses sin facturar (ritmo normal: ~${c.intervaloNormal?.toFixed(1) ?? '?'} m).${ctx}`);
   }
 
   // Clientes episódicos relevantes (proyecto-dominantes con caída fuerte): información,
@@ -238,8 +243,8 @@ function serializarInsights(
   sec.push(`- Top 10 clientes: ${a.concentracion.top10pct.toFixed(1)}% del total.`);
   sec.push(`- Top 20 clientes: ${a.concentracion.top20pct.toFixed(1)}% del total.`);
   sec.push(`- ${a.concentracion.clientes80pct} clientes (de ${a.concentracion.totalClientes}) acumulan el 80% — los "intocables".`);
-  sec.push('Top 5 cuentas (por facturación 12m):');
-  for (const c of a.concentracion.top5) sec.push(`  - ${c.nombre}: ${Q(c.monto)} (${c.pctDelTotal.toFixed(1)}%)`);
+  sec.push('Top 5 cuentas (Facturación 12m = TAMAÑO histórico, NO pérdida):');
+  for (const c of a.concentracion.top5) sec.push(`  - ${c.nombre}: Facturación 12m ${Q(c.monto)} (${c.pctDelTotal.toFixed(1)}% del total)`);
 
   return sec.join('\n');
 }
