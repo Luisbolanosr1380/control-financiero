@@ -103,11 +103,13 @@ function computarAnalitica(
   filtroNaturaleza: FiltroNaturaleza,
 ): AnaliticaIngresos {
   // Centro id → bucket de servicio (los 4 spec'd + Otros)
+  // Poligrafia Xela (oficina cerrada) → mismo bucket que Poligrafia.
   const idToName = new Map(centros.map(c => [c.id, c.nombre]));
   const SERVICIOS: string[] = [...CENTROS_SERVICIOS, OTROS_SERVICIO];
   const includeSet = new Set<string>(CENTROS_SERVICIOS);
   const nameKey = (ccId: string | undefined): string => {
     const n = ccId ? idToName.get(ccId) ?? null : null;
+    if (n === 'Poligrafia Xela') return 'Poligrafia';   // mismo servicio, oficina cerrada
     return n && includeSet.has(n) ? n : OTROS_SERVICIO;
   };
   const nombreCliente = new Map(clientes.map(c => [c.id, c.name]));

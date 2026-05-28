@@ -4,7 +4,7 @@
 // Postgres, estos tipos se mantienen — solo cambia /lib/db.
 // ============================================================
 
-export type LineKey = 'poligrafo' | 'socio' | 'talenttrack' | 'ventas';
+export type LineKey = 'poligrafo' | 'socio' | 'talenttrack' | 'administrativo';
 
 export type InvoiceStatus = 'pendiente' | 'emitida' | 'contabilizado' | 'cobrado' | 'por_cobrar' | 'vencido' | 'anulado';
 

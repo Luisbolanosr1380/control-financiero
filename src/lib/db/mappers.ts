@@ -29,11 +29,15 @@ export const F = {
 
 // CENTRO_COSTO en Airtable es un linked record → llega como [recordId].
 // Mapa de record id de CENTROS_COSTO a nuestra LineKey (base actual).
-// "Pendiente" y "Administrativo" no son líneas de negocio → caen al default.
+// Poligrafia Xela (oficina cerrada) → agrupada con Poligrafia (mismo servicio histórico).
+// "Pendiente" y "6300" son internos → caen al default (poligrafo) y la analítica los
+// agrupa en "Otros" por nombre.
 const CC_ID_TO_LINE: Record<string, LineKey> = {
-  recta6yzMaZVORniO: 'poligrafo',   // "Poligrafia"
-  recBKqaIp3hHmp7FT: 'socio',       // "Socioeconomicos"
-  receAuGbyq1yzLRL7: 'talenttrack', // "TalentTrackAI"
+  recta6yzMaZVORniO: 'poligrafo',      // "Poligrafia"
+  recNI39e0UgnPAZJc: 'poligrafo',      // "Poligrafia Xela" → mismo servicio
+  recBKqaIp3hHmp7FT: 'socio',          // "Socioeconomicos"
+  receAuGbyq1yzLRL7: 'talenttrack',    // "TalentTrackAI"
+  rec4K7KF4q6qNdMfJ: 'administrativo', // "Administrativo" → línea propia
 };
 
 function ccToLineKey(cc: unknown): LineKey {
@@ -47,7 +51,7 @@ function ccToLineKey(cc: unknown): LineKey {
   if (s.includes('polígraf') || s.includes('poligraf')) return 'poligrafo';
   if (s.includes('socio'))      return 'socio';
   if (s.includes('talent'))     return 'talenttrack';
-  if (s.includes('venta'))      return 'ventas';
+  if (s.includes('admin'))      return 'administrativo';
   return 'poligrafo';
 }
 

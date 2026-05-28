@@ -59,12 +59,12 @@ function healthFor(tasa: number): HealthStatus {
 export async function getLineStats(facturas?: Invoice[]): Promise<LineStats[]> {
   const activas = (facturas ?? await getFacturas()).filter(isActiva);
 
-  const order: LineKey[] = ['poligrafo', 'socio', 'talenttrack', 'ventas'];
+  const order: LineKey[] = ['poligrafo', 'socio', 'talenttrack', 'administrativo'];
   const acc: Record<LineKey, { facturado: number; porCobrar: number; count: number }> = {
-    poligrafo:   { facturado: 0, porCobrar: 0, count: 0 },
-    socio:       { facturado: 0, porCobrar: 0, count: 0 },
-    talenttrack: { facturado: 0, porCobrar: 0, count: 0 },
-    ventas:      { facturado: 0, porCobrar: 0, count: 0 },
+    poligrafo:      { facturado: 0, porCobrar: 0, count: 0 },
+    socio:          { facturado: 0, porCobrar: 0, count: 0 },
+    talenttrack:    { facturado: 0, porCobrar: 0, count: 0 },
+    administrativo: { facturado: 0, porCobrar: 0, count: 0 },
   };
 
   // Atribuir por LÍNEA, no por inv.line (una factura puede ser mixta)

@@ -12,7 +12,7 @@ export const LINES: Record<LineKey, LineMeta> = {
   poligrafo:   { key: 'poligrafo',   name: 'Polígrafo',      color: 'var(--line-poligrafo)',   dot: 'dot-poligrafo' },
   socio:       { key: 'socio',       name: 'Socioeconómico', color: 'var(--line-socio)',       dot: 'dot-socio' },
   talenttrack: { key: 'talenttrack', name: 'TalentTrack',    color: 'var(--line-talenttrack)', dot: 'dot-talenttrack' },
-  ventas:      { key: 'ventas',      name: 'Ventas',         color: 'var(--line-ventas)',      dot: 'dot-ventas' },
+  administrativo: { key: 'administrativo', name: 'Administrativo', color: 'var(--line-ventas)', dot: 'dot-ventas' },
 };
 
 export const CUSTOMERS: Customer[] = [
@@ -81,24 +81,24 @@ export const INVOICES: Invoice[] = [
   inv('F-2026-0511', 'C-005', 'poligrafo',    28920,  28920,  92, 'vencido', 62),
   inv('F-2026-0644', 'C-005', 'talenttrack',  47260,  47260,  48, 'por_cobrar', 18),
   inv('F-2026-0533', 'C-006', 'socio',        19200,  19200,  88, 'vencido', 58),
-  inv('F-2026-0680', 'C-006', 'ventas',       45700,  45700,  29, 'por_cobrar', -1),
+  inv('F-2026-0680', 'C-006', 'administrativo',       45700,  45700,  29, 'por_cobrar', -1),
   inv('F-2026-0555', 'C-007', 'poligrafo',    12400,  12400,  76, 'vencido', 46),
   inv('F-2026-0691', 'C-007', 'talenttrack',  36320,  36320,  22, 'por_cobrar', -8),
-  inv('F-2026-0567', 'C-008', 'ventas',        8800,   8800,  72, 'vencido', 42),
+  inv('F-2026-0567', 'C-008', 'administrativo',        8800,   8800,  72, 'vencido', 42),
   inv('F-2026-0712', 'C-008', 'poligrafo',    32400,  32400,  15, 'por_cobrar', -15),
   inv('F-2026-0716', 'C-009', 'talenttrack',  38600,  38600,  18, 'por_cobrar', -27),
   inv('F-2026-0721', 'C-010', 'socio',        35280,  35280,  11, 'por_cobrar', -49),
   inv('F-2026-0301', 'C-009', 'socio',        24800,      0, 165, 'cobrado', -2),
   inv('F-2026-0344', 'C-005', 'poligrafo',    18900,      0, 152, 'cobrado', -8),
   inv('F-2026-0376', 'C-004', 'talenttrack',  29400,      0, 144, 'cobrado', -3),
-  inv('F-2026-0392', 'C-006', 'ventas',       12600,      0, 138, 'cobrado', -1),
+  inv('F-2026-0392', 'C-006', 'administrativo',       12600,      0, 138, 'cobrado', -1),
 ];
 
 export const LINE_STATS: LineStats[] = [
   { line: 'poligrafo',   name: 'Polígrafo',       count: 434, facturado: 1067200, cobrado: 527200, porCobrar: 540000, tasa: 49.4, health: 'good' },
   { line: 'socio',       name: 'Socioeconómico',  count: 259, facturado: 1289000, cobrado: 381000, porCobrar: 908000, tasa: 29.6, health: 'bad'  },
   { line: 'talenttrack', name: 'TalentTrack',     count:  74, facturado:  859496, cobrado: 0,      porCobrar: 859496, tasa:  0.0, health: 'warn' },
-  { line: 'ventas',      name: 'Ventas',          count:   6, facturado:  105000, cobrado:  93000, porCobrar:  12000, tasa: 88.6, health: 'good' },
+  { line: 'administrativo', name: 'Administrativo', count: 6, facturado: 105000, cobrado: 93000, porCobrar: 12000, tasa: 88.6, health: 'good' },
 ];
 
 export const AGING: AgingEntry[] = [
