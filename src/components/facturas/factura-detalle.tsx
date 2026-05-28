@@ -4,6 +4,8 @@ import { Q, formatDate } from '@/lib/utils';
 import { LINES } from '@/lib/mock-data';
 import { AdjuntoViewer } from '@/components/facturas/adjunto-viewer';
 import { AnularFacturaButton } from '@/components/facturas/anular-factura-button';
+import { RegistrarCobroButton } from '@/components/facturas/registrar-cobro-button';
+import type { Banco } from '@/lib/db/bancos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
 const STATUS_BADGE: Record<InvoiceStatus, { cls: string; text: string }> = {
@@ -19,9 +21,10 @@ const STATUS_BADGE: Record<InvoiceStatus, { cls: string; text: string }> = {
 interface Props {
   factura: Invoice;
   clienteNombre: string;
+  bancos: Banco[];
 }
 
-export function FacturaDetalle({ factura: inv, clienteNombre }: Props) {
+export function FacturaDetalle({ factura: inv, clienteNombre, bancos }: Props) {
   const badge = STATUS_BADGE[inv.status] ?? { cls: 'badge-mute', text: inv.status };
 
   const sumIva = inv.lineas.reduce((s, l) => s + (l.iva ?? 0), 0);
@@ -60,7 +63,7 @@ export function FacturaDetalle({ factura: inv, clienteNombre }: Props) {
         </div>
         <div className="page-actions">
           <AnularFacturaButton noFactura={inv.noFactura} status={inv.status} />
-          <button className="btn btn-primary" disabled title="Próximamente"><I.Coins size={13} /> Registrar cobro</button>
+          <RegistrarCobroButton noFactura={inv.noFactura} total={inv.total} status={inv.status} bancos={bancos} />
         </div>
       </div>
 
