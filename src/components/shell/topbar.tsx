@@ -1,6 +1,7 @@
 'use client';
 
 import { I } from '@/components/common/icons';
+import { UserButton } from '@clerk/nextjs';
 import { usePathname } from 'next/navigation';
 
 interface TopbarProps {
@@ -66,6 +67,9 @@ export function Topbar({ aiOpen, setAiOpen, onSearch }: TopbarProps) {
         >
           <I.Sparkles size={13} /> Asistente AI
         </button>
+        <div style={{ display: 'flex', alignItems: 'center', marginLeft: 4 }}>
+          <UserButton />
+        </div>
       </div>
     </header>
   );

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Fraunces, Inter_Tight, JetBrains_Mono } from 'next/font/google';
+import { ClerkProvider } from '@clerk/nextjs';
 import { Toaster } from 'sonner';
 import './globals.css';
 
@@ -32,11 +33,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="es" className={`${fraunces.variable} ${interTight.variable} ${jetbrainsMono.variable}`}>
-      <body>
-        {children}
-        <Toaster position="top-right" richColors closeButton />
-      </body>
-    </html>
+    <ClerkProvider afterSignOutUrl="/sign-in">
+      <html lang="es" className={`${fraunces.variable} ${interTight.variable} ${jetbrainsMono.variable}`}>
+        <body>
+          {children}
+          <Toaster position="top-right" richColors closeButton />
+        </body>
+      </html>
+    </ClerkProvider>
   );
 }
