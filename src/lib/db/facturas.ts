@@ -42,6 +42,86 @@ export async function getFactura(id: string): Promise<Invoice | null> {
   return facturas.find(f => f.id === id) ?? null;
 }
 
+/* ===== Paginación (F-022) ===== */
+
+export interface GetFacturasPaginaResult {
+  invoices: Invoice[];
+  hayMas: boolean;
+  ultimaFecha: string | null;   // FECHA_EMISION de la última invoice del batch (para next page)
+}
+
+/**
+ * Trae las últimas N facturas consolidadas, ordenadas por FECHA_EMISION desc.
+ * Si se pasa `before`, sigue la paginación: trae las que tengan fecha < before.
+ * Como una factura puede ser multi-línea, sobre-fetchea records para garantizar `limit` facturas.
+ */
+export async function getFacturasPagina(args: { limit?: number; before?: string } = {}): Promise<GetFacturasPaginaResult> {
+  const limit = args.limit ?? 50;
+
+  if (USE_MOCK || !airtable) {
+    const mock = [...MOCK_INVOICES].sort((a, b) => (b.fechaEmision ?? '').localeCompare(a.fechaEmision ?? ''));
+    const filtered = args.before ? mock.filter(i => (i.fechaEmision ?? '') < args.before!) : mock;
+    const page = filtered.slice(0, limit);
+    return {
+      invoices: page,
+      hayMas: filtered.length > limit,
+      ultimaFecha: page[page.length - 1]?.fechaEmision ?? null,
+    };
+  }
+
+  try {
+    const overFetch = Math.min(2000, limit * 3 + 50);
+    const select: Parameters<ReturnType<typeof airtable>['select']>[0] = {
+      sort: [{ field: 'FECHA_EMISION', direction: 'desc' }],
+      maxRecords: overFetch,
+    };
+    if (args.before) {
+      // Estrictamente antes de la fecha cursor — para evitar re-fetch del cursor exacto.
+      // En el cliente deduplicamos por noFactura si hay empates de fecha.
+      const beforeEsc = args.before.replace(/"/g, '');
+      select.filterByFormula = `IS_BEFORE({FECHA_EMISION}, DATETIME_PARSE("${beforeEsc}"))`;
+    }
+
+    const records = await airtable(TABLES.FACTURAS).select(select).all();
+    const invoices = consolidateRecords(records.map(r => ({ id: r.id, fields: r.fields })));
+    // Ya vienen sorted desc por la query
+    const page = invoices.slice(0, limit);
+    const hayMas = invoices.length > limit || records.length === overFetch;
+    const ultimaFecha = page[page.length - 1]?.fechaEmision ?? null;
+    return { invoices: page, hayMas, ultimaFecha };
+  } catch (err) {
+    console.error('Error fetching facturas pagina:', err);
+    return { invoices: [], hayMas: false, ultimaFecha: null };
+  }
+}
+
+/**
+ * Cuenta el total de facturas que aparecerían en el listado consolidado (para "Mostrando N de X").
+ * Trae solo los campos NO.FACTURA y ESTADO (más liviano que el fetch completo).
+ */
+export async function getFacturasCountTotal(): Promise<number> {
+  if (USE_MOCK || !airtable) return MOCK_INVOICES.length;
+  try {
+    const records = await airtable(TABLES.FACTURAS)
+      .select({ fields: [F.NO_FACTURA, F.ESTADO], maxRecords: 2000 })
+      .all();
+    const noAnulNoFactura = new Set<string>();
+    let anuladasYRef = 0;   // cada una cuenta individual (no se consolidan)
+    for (const r of records) {
+      const est = String(r.fields[F.ESTADO] ?? '').toUpperCase().trim();
+      if (est === 'ANULADO' || est === 'ANULADA' || est === 'REFACTURADO' || est === 'REFACTURADA') {
+        anuladasYRef += 1;
+      } else {
+        noAnulNoFactura.add(String(r.fields[F.NO_FACTURA] ?? r.id));
+      }
+    }
+    return noAnulNoFactura.size + anuladasYRef;
+  } catch (err) {
+    console.error('Error contando facturas:', err);
+    return 0;
+  }
+}
+
 export interface NewFacturaLine {
   centroCostoId: string;
   total: number;   // monto CON IVA (como en la factura SAT)
