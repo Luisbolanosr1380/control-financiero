@@ -8,22 +8,26 @@ import { LINES } from '@/lib/mock-data';
 import { cargarMasFacturasAction } from '@/app/(app)/facturacion/actions';
 import type { Invoice, Customer } from '@/lib/types';
 
+export const FACTURAS_TABS = ['todas', 'vencidas', 'por_cobrar', 'cobradas', 'anuladas', 'pendientes'] as const;
+export type FacturasTab = (typeof FACTURAS_TABS)[number];
+
 interface Props {
   initialInvoices: Invoice[];
   initialHayMas: boolean;
   initialUltimaFecha: string | null;
   totalConsolidadas: number;
   clientes: Customer[];
+  initialTab?: FacturasTab;
 }
 
-export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, totalConsolidadas, clientes }: Props) {
+export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, totalConsolidadas, clientes, initialTab = 'todas' }: Props) {
   const router = useRouter();
   const [facturas, setFacturas] = useState<Invoice[]>(initialInvoices);
   const [hayMas, setHayMas] = useState<boolean>(initialHayMas);
   const [ultimaFecha, setUltimaFecha] = useState<string | null>(initialUltimaFecha);
   const [cargandoMas, setCargandoMas] = useState(false);
 
-  const [tab, setTab] = useState<'todas' | 'vencidas' | 'por_cobrar' | 'cobradas' | 'anuladas' | 'pendientes'>('todas');
+  const [tab, setTab] = useState<FacturasTab>(initialTab);
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -95,7 +99,7 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
       </div>
 
       <div className="tabs">
-        {(['todas', 'vencidas', 'por_cobrar', 'cobradas', 'anuladas', 'pendientes'] as const).map(t => (
+        {FACTURAS_TABS.map(t => (
           <button key={t} className={'tab' + (tab === t ? ' active' : '')} onClick={() => setTab(t)}>
             {t === 'todas' ? 'Todas' : t === 'vencidas' ? 'Vencidas' : t === 'por_cobrar' ? 'Por cobrar' : t === 'cobradas' ? 'Cobradas' : t === 'anuladas' ? 'Anuladas' : 'Pendientes'}
             <span className="tab-count num">{counts[t]}</span>
