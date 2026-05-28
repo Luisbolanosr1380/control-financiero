@@ -1,13 +1,22 @@
-import { getFacturas } from '@/lib/db/facturas';
+import { getFacturasPagina, getFacturasCountTotal } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { FacturasListClient } from '@/components/facturas/list-client';
 
-export const dynamic = 'force-dynamic'; // siempre fetch fresh
+export const dynamic = 'force-dynamic';
 
 export default async function FacturacionPage() {
-  const [facturas, clientes] = await Promise.all([
-    getFacturas(),
+  const [pagina, totalConsolidadas, clientes] = await Promise.all([
+    getFacturasPagina({ limit: 50 }),
+    getFacturasCountTotal(),
     getClientes(),
   ]);
-  return <FacturasListClient facturas={facturas} clientes={clientes} />;
+  return (
+    <FacturasListClient
+      initialInvoices={pagina.invoices}
+      initialHayMas={pagina.hayMas}
+      initialUltimaFecha={pagina.ultimaFecha}
+      totalConsolidadas={totalConsolidadas}
+      clientes={clientes}
+    />
+  );
 }

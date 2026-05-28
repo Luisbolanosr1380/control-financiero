@@ -3,17 +3,26 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
-import { Q, formatDateShort } from '@/lib/utils';
+import { Q, formatDateDDMMYYYY } from '@/lib/utils';
 import { LINES } from '@/lib/mock-data';
+import { cargarMasFacturasAction } from '@/app/(app)/facturacion/actions';
 import type { Invoice, Customer } from '@/lib/types';
 
 interface Props {
-  facturas: Invoice[];
+  initialInvoices: Invoice[];
+  initialHayMas: boolean;
+  initialUltimaFecha: string | null;
+  totalConsolidadas: number;
   clientes: Customer[];
 }
 
-export function FacturasListClient({ facturas, clientes }: Props) {
+export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, totalConsolidadas, clientes }: Props) {
   const router = useRouter();
+  const [facturas, setFacturas] = useState<Invoice[]>(initialInvoices);
+  const [hayMas, setHayMas] = useState<boolean>(initialHayMas);
+  const [ultimaFecha, setUltimaFecha] = useState<string | null>(initialUltimaFecha);
+  const [cargandoMas, setCargandoMas] = useState(false);
+
   const [tab, setTab] = useState<'todas' | 'vencidas' | 'por_cobrar' | 'cobradas' | 'anuladas' | 'pendientes'>('todas');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -27,6 +36,23 @@ export function FacturasListClient({ facturas, clientes }: Props) {
     cobradas:   facturas.filter(i => i.status === 'cobrado').length,
     anuladas:   facturas.filter(i => i.status === 'anulado').length,
     pendientes: facturas.filter(i => i.status === 'pendiente').length,
+  };
+
+  const cargarMas = async () => {
+    if (!ultimaFecha || cargandoMas) return;
+    setCargandoMas(true);
+    try {
+      const res = await cargarMasFacturasAction(ultimaFecha, 50);
+      setFacturas(prev => {
+        const vistos = new Set(prev.map(i => i.noFactura));
+        const nuevos = res.invoices.filter(i => !vistos.has(i.noFactura));
+        return [...prev, ...nuevos];
+      });
+      setHayMas(res.hayMas);
+      setUltimaFecha(res.ultimaFecha);
+    } finally {
+      setCargandoMas(false);
+    }
   };
 
   let rows = facturas;
@@ -44,9 +70,6 @@ export function FacturasListClient({ facturas, clientes }: Props) {
   }
 
   const totalSaldo = rows.reduce((s, i) => s + i.balance, 0);
-  const activas = facturas.filter(i => i.status !== 'anulado');
-  const totalFacturadoActivo = activas.reduce((s, i) => s + i.total, 0);
-  const totalPorCobrar = activas.reduce((s, i) => s + i.balance, 0);
 
   const toggleAll = () => {
     if (selected.size === rows.length) setSelected(new Set());
@@ -59,7 +82,7 @@ export function FacturasListClient({ facturas, clientes }: Props) {
         <div>
           <h1 className="page-title">Facturación</h1>
           <div className="page-subtitle">
-            <span className="num">{counts.todas}</span> facturas · <span className="num">{Q(totalFacturadoActivo)}</span> facturado · <span className="num" style={{ color: 'var(--wine)' }}>{Q(totalPorCobrar)}</span> por cobrar
+            Mostrando <span className="num">{facturas.length}</span> de <span className="num">{totalConsolidadas}</span> facturas · ordenadas por fecha (más recientes arriba)
           </div>
         </div>
         <div className="page-actions">
@@ -100,6 +123,7 @@ export function FacturasListClient({ facturas, clientes }: Props) {
                 <input type="checkbox" checked={selected.size === rows.length && rows.length > 0} onChange={toggleAll} />
               </th>
               <th>Factura</th>
+              <th className="num" style={{ width: 110 }}>Fecha</th>
               <th>Cliente</th>
               <th>Centro</th>
               <th className="num">Total</th>
@@ -111,7 +135,7 @@ export function FacturasListClient({ facturas, clientes }: Props) {
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <tr><td colSpan={9} style={{ height: 200, textAlign: 'center', color: 'var(--ink-4)' }}>
+              <tr><td colSpan={10} style={{ height: 200, textAlign: 'center', color: 'var(--ink-4)' }}>
                 <div style={{ padding: 40 }}>
                   <I.Receipt size={28} style={{ opacity: 0.4, marginBottom: 8 }} />
                   <div style={{ fontSize: 13 }}>No hay facturas en esta vista</div>
@@ -146,6 +170,7 @@ export function FacturasListClient({ facturas, clientes }: Props) {
                     }} />
                   </td>
                   <td className="num cell-strong">{inv.noFactura}</td>
+                  <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{formatDateDDMMYYYY(inv.fechaEmision)}</td>
                   <td className="cell-strong">{cust?.short ?? inv.custId ?? '—'}</td>
                   <td>
                     {inv.isMixed ? (
@@ -175,6 +200,31 @@ export function FacturasListClient({ facturas, clientes }: Props) {
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Footer: paginación */}
+      <div style={{
+        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16,
+        padding: '18px 12px', borderTop: '1px solid var(--line-3)', flexWrap: 'wrap',
+      }}>
+        <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+          Mostrando <span className="num" style={{ color: 'var(--ink-2)' }}>{facturas.length}</span> de <span className="num" style={{ color: 'var(--ink-2)' }}>{totalConsolidadas}</span> facturas
+        </span>
+        {hayMas ? (
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={cargarMas}
+            disabled={cargandoMas}
+            style={{ padding: '6px 14px' }}
+          >
+            {cargandoMas ? <><I.Refresh size={13} /> Cargando…</> : <><I.ChevDown size={13} /> Cargar 50 más</>}
+          </button>
+        ) : (
+          <button type="button" className="btn btn-ghost" disabled style={{ padding: '6px 14px' }}>
+            <I.Check size={13} /> Fin del listado
+          </button>
+        )}
       </div>
     </div>
   );

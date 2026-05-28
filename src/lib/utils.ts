@@ -52,6 +52,13 @@ export const formatDateShort = (d: Date | string | null | undefined): string => 
   return `${dt.getDate().toString().padStart(2, '0')} ${MESES[dt.getMonth()]}`;
 };
 
+/** Formato DD/MM/YYYY — útil en tablas donde el espacio es escaso */
+export const formatDateDDMMYYYY = (d: Date | string | null | undefined): string => {
+  if (!d) return '—';
+  const dt = typeof d === 'string' ? new Date(d) : d;
+  return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`;
+};
+
 // ============================================================
 // Utilidad de clases (Tailwind merge)
 // ============================================================
