@@ -1065,3 +1065,24 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   z-index: 10;
 }
 .tooltip-wrap:hover .tooltip { opacity: 1; }
+
+/* ===== Skeleton loaders (F-024) ===== */
+@keyframes skeletonShimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+.sk {
+  display: inline-block;
+  background: linear-gradient(90deg, var(--line-3) 0%, var(--paper-tint) 50%, var(--line-3) 100%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+  border-radius: 4px;
+  color: transparent;
+}
+.sk-block { display: block; }
+.sk-line  { height: 12px; width: 100%; }
+.sk-title { height: 22px; width: 220px; }
+.sk-sub   { height: 12px; width: 320px; margin-top: 8px; }
+.sk-kpi   { height: 84px; width: 100%; border-radius: var(--r-3, 10px); }
+.sk-row   { height: 38px; width: 100%; margin-bottom: 1px; }
+.sk-pill  { height: 18px; width: 70px; border-radius: 999px; }
