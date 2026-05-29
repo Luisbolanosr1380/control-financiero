@@ -2,7 +2,7 @@ import { getFacturas } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { IdentificarClient } from '@/components/cobros/identificar-client';
 
-export const dynamic = 'force-dynamic';
+export const revalidate = 30;
 
 export default async function IdentificarPage() {
   const [facturas, clientes] = await Promise.all([getFacturas(), getClientes()]);

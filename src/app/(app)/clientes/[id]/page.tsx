@@ -4,7 +4,7 @@ import { getFacturas } from '@/lib/db/facturas';
 import { ClienteDetalleClient } from '@/components/clientes/detalle-client';
 import { I } from '@/components/common/icons';
 
-export const dynamic = 'force-dynamic';
+export const revalidate = 120;
 
 export default async function ClienteDetallePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

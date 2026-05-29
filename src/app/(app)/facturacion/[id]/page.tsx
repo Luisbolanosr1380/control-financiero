@@ -5,7 +5,7 @@ import { getBancosActivos } from '@/lib/db/bancos';
 import { FacturaDetalle } from '@/components/facturas/factura-detalle';
 import { I } from '@/components/common/icons';
 
-export const dynamic = 'force-dynamic';
+export const revalidate = 30;
 
 export default async function FacturaDetallePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;

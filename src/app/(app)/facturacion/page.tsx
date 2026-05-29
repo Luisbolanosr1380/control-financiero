@@ -2,7 +2,7 @@ import { getFacturasPagina, getFacturasCountTotal } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { FacturasListClient, type FacturasTab } from '@/components/facturas/list-client';
 
-export const dynamic = 'force-dynamic';
+export const revalidate = 30;
 
 const TABS_VALIDOS: readonly FacturasTab[] = ['todas', 'vencidas', 'por_cobrar', 'cobradas', 'anuladas', 'pendientes'];
 

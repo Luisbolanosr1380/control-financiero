@@ -4,7 +4,7 @@ import { getDashboardKPIs, getLineStats, getAging, getTopDeudores } from '@/lib/
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { DashboardClient } from '@/components/dashboard/dashboard-client';
 
-export const dynamic = 'force-dynamic';
+export const revalidate = 60;
 
 export default async function DashboardPage() {
   const [facturas, clientes] = await Promise.all([getFacturas(), getClientes()]);

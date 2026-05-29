@@ -13,6 +13,8 @@ function revalidarTodo() {
   revalidatePath('/dashboard');
   revalidatePath('/clientes');
   revalidatePath('/analitica');
+  revalidatePath('/cobros');
+  revalidatePath('/cobros/identificar');
 }
 
 export async function anularFacturaAction(noFactura: string, motivo?: string): Promise<AnularResult> {

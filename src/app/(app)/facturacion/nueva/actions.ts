@@ -76,6 +76,10 @@ export async function crearFacturaAction(formData: FormData): Promise<CrearFactu
     return { ok: false, error: msg, duplicado: /ya existe/i.test(msg) };
   }
   revalidatePath('/facturacion');
+  revalidatePath('/dashboard');
+  revalidatePath('/clientes');
+  revalidatePath('/analitica');
+  revalidatePath('/cobros/identificar');
 
   // 2) Adjuntar PDF (opcional). Si falla, NO se pierde la factura ya creada.
   const pdf = formData.get('pdf');
