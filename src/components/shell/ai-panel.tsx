@@ -169,7 +169,7 @@ export function AIPanel({ onClose, mensajes, setMensajes }: AIPanelProps) {
         gap: 6,
       }}>
         <I.Info size={12} style={{ flexShrink: 0, marginTop: 2 }} />
-        <span>Estás conversando con AI. Los datos vienen del sistema, la interpretación del modelo. Validá antes de decidir.</span>
+        <span>Auros usa datos del sistema. Validá antes de decidir.</span>
       </div>
 
       {/* Sugerencias iniciales */}
@@ -190,8 +190,8 @@ export function AIPanel({ onClose, mensajes, setMensajes }: AIPanelProps) {
 
       <div className="ai-messages" ref={msgsRef}>
         {mensajes.length === 0 ? (
-          <div style={{ padding: '20px 4px', fontSize: 13, color: 'var(--ink-3)', lineHeight: 1.55 }}>
-            Preguntame lo que quieras sobre tus datos. Tocá una sugerencia arriba o escribí abajo.
+          <div style={{ padding: '16px 4px 8px', fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+            Hola Stark, soy <strong>Auros</strong>. Te ayudo a leer tus datos financieros. ¿Qué querés saber hoy?
           </div>
         ) : mensajes.map((m, i) => (
           m.rol === 'user'
