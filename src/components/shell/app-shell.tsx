@@ -3,12 +3,16 @@
 import { useEffect, useState } from 'react';
 import { Sidebar } from '@/components/shell/sidebar';
 import { Topbar } from '@/components/shell/topbar';
-import { AIPanel } from '@/components/shell/ai-panel';
+import { AIPanel, type ChatMensaje } from '@/components/shell/ai-panel';
 import { CommandPalette } from '@/components/shell/command-palette';
 
 export function AppShell({ children }: { children: React.ReactNode }) {
-  const [aiOpen, setAiOpen] = useState(true);
+  const [aiOpen, setAiOpen] = useState(false);
   const [showCmdK, setShowCmdK] = useState(false);
+
+  // El historial vive aquí — sobrevive al cierre/apertura del drawer y a
+  // las navegaciones entre pantallas. Se pierde solo al recargar la página.
+  const [chatMensajes, setChatMensajes] = useState<ChatMensaje[]>([]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -32,7 +36,13 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </div>
 
-      {aiOpen && <AIPanel onClose={() => setAiOpen(false)} />}
+      {aiOpen && (
+        <AIPanel
+          onClose={() => setAiOpen(false)}
+          mensajes={chatMensajes}
+          setMensajes={setChatMensajes}
+        />
+      )}
       {showCmdK && <CommandPalette onClose={() => setShowCmdK(false)} />}
     </div>
   );
