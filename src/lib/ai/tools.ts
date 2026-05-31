@@ -17,6 +17,7 @@ import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getAnaliticaIngresos, getFacturadoPorRango, type FiltroNaturaleza } from '@/lib/db/analitica';
+import { getProyeccionMesActual } from '@/lib/db/proyecciones';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -160,6 +161,16 @@ export const aiTools = {
         }).sort((a, b) => a.variacionQ - b.variacionQ),
       };
     },
+  }),
+
+  getProyeccionMesActual: tool({
+    description:
+      'Proyección del mes en curso al cierre con dos métodos: (1) extrapolación lineal por días y (2) promedio de los 3 últimos meses cerrados. ' +
+      'Devuelve también los últimos 3 meses cerrados como referencia y la variación proyectada vs el mes anterior. ' +
+      'USAR cuando el usuario pregunte "cómo voy este mes" (junto con getKPIs mes_actual), "estimá el cierre", "hacia dónde va el mes". ' +
+      'En la respuesta marcá explícitamente "REAL" (lo facturado hasta hoy) vs "PROYECTADO" (los dos métodos) y avisá que el período no está cerrado.',
+    parameters: z.object({}),
+    execute: async () => getProyeccionMesActual(),
   }),
 
   getCobrosPorPeriodo: tool({
