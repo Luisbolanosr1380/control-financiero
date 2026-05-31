@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { getFacturas } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
+import { getTopDeudores } from '@/lib/db/kpis';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getAnaliticaIngresos, getFacturadoPorRango, type FiltroNaturaleza } from '@/lib/db/analitica';
 import { getProyeccionMesActual } from '@/lib/db/proyecciones';
@@ -269,6 +270,27 @@ export const aiTools = {
         tendencia: a.tendencia,
         ultimaFactura: a.ultimaFactura,
         contextoComercial: a.contextoComercial ?? null,
+      };
+    },
+  }),
+
+  getTopDeudores: tool({
+    description:
+      'Top N deudores actuales agrupados por cliente: balance pendiente total, monto vencido y nº de facturas abiertas, ordenados por balance descendente. ' +
+      'USAR cuando el usuario pregunte "¿quiénes son mis deudores más críticos?", "¿quiénes me deben más?", "top N que me deben". Es STOCK del momento, no depende de período.',
+    parameters: z.object({
+      n: z.number().int().min(1).max(20).describe('Cuántos deudores devolver (típicamente 5)'),
+    }),
+    execute: async ({ n }) => {
+      const deudores = await getTopDeudores(n);
+      return {
+        total: deudores.length,
+        deudores: deudores.map(d => ({
+          cliente: d.name,
+          balanceQ: Math.round(d.balance),
+          vencidoQ: Math.round(d.vencido),
+          numFacturasAbiertas: d.numFacturas,
+        })),
       };
     },
   }),
