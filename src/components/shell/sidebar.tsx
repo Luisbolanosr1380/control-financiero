@@ -36,7 +36,8 @@ const NAV: NavGroup[] = [
   ]},
   { group: 'Inteligencia', items: [
     { href: '/analitica', label: 'Analítica',           icon: 'TrendUp' },
-    { href: '/ai',       label: 'AI Insights',         icon: 'Sparkles', badge: { text: '3 alertas', kind: 'warn' } },
+    { href: '/chat',      label: 'Chat AI',             icon: 'Sparkles' },
+    { href: '/ai',        label: 'AI Insights',         icon: 'Sparkles', badge: { text: '3 alertas', kind: 'warn' } },
   ]},
 ];
 
