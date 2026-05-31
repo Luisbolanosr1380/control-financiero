@@ -116,6 +116,16 @@ export function ChatClient() {
         </div>
       </div>
 
+      {/* Aviso de uso (F-025 parte C) */}
+      <div className="card" style={{ marginBottom: 14, background: 'var(--paper-2)' }}>
+        <div className="card-pad" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55, padding: '12px 14px' }}>
+          <I.Info size={14} style={{ color: 'var(--ink-3)', flexShrink: 0, marginTop: 2 }} />
+          <div>
+            Estás conversando con AI. Los <strong>datos vienen del sistema</strong>, la <strong>interpretación viene del modelo</strong>. Validá antes de decidir.
+          </div>
+        </div>
+      </div>
+
       {/* Lista de mensajes */}
       <div
         ref={scrollRef}
