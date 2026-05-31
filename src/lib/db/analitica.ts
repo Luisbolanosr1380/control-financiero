@@ -313,3 +313,59 @@ function computarAnalitica(
     concentracion,
   };
 }
+
+// ===========================================================================
+// Facturado por rango de fechas (filtro por FECHA_EMISION), desglosado en los
+// mismos servicios que usa getAnaliticaIngresos: Poligrafia, Socioeconomicos,
+// TalentTrackAI, Administrativo, Otros. Una factura mixta se reparte por
+// línea según centroCostoId.
+// ===========================================================================
+
+export interface FacturadoServicio {
+  servicio: string;
+  montoQ: number;
+  pctDelTotal: number;
+}
+export interface FacturadoPorRango {
+  facturadoTotalQ: number;
+  numFacturas: number;
+  porServicio: FacturadoServicio[];
+}
+
+export async function getFacturadoPorRango(desde: string, hasta: string): Promise<FacturadoPorRango> {
+  const [facturas, centros] = await Promise.all([getFacturas(), getCentrosCosto()]);
+  const idToName = new Map(centros.map(c => [c.id, c.nombre]));
+  const includeSet = new Set<string>(CENTROS_SERVICIOS);
+  const SERVICIOS: string[] = [...CENTROS_SERVICIOS, OTROS_SERVICIO];
+  const nameKey = (ccId: string | undefined): string => {
+    const n = ccId ? idToName.get(ccId) ?? null : null;
+    if (n === 'Poligrafia Xela') return 'Poligrafia';
+    return n && includeSet.has(n) ? n : OTROS_SERVICIO;
+  };
+
+  const en = (f: string | undefined) => !!f && f.slice(0, 10) >= desde && f.slice(0, 10) <= hasta;
+  const activas = facturas.filter(i => i.status !== 'anulado' && en(i.fechaEmision));
+
+  const porServicio = new Map<string, number>(SERVICIOS.map(s => [s, 0]));
+  let total = 0;
+  for (const inv of activas) {
+    for (const l of inv.lineas) {
+      const s = nameKey(l.centroCostoId);
+      porServicio.set(s, (porServicio.get(s) ?? 0) + l.amount);
+      total += l.amount;
+    }
+  }
+  const totalRound = Math.round(total);
+  return {
+    facturadoTotalQ: totalRound,
+    numFacturas: activas.length,
+    porServicio: SERVICIOS.map(s => {
+      const m = Math.round(porServicio.get(s) ?? 0);
+      return {
+        servicio: s,
+        montoQ: m,
+        pctDelTotal: totalRound > 0 ? Number(((m / totalRound) * 100).toFixed(1)) : 0,
+      };
+    }),
+  };
+}

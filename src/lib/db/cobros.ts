@@ -149,6 +149,30 @@ export async function getCobrosPagina(args: { limit?: number; before?: string } 
   }
 }
 
+/**
+ * Trae TODOS los cobros consolidados desde Airtable (no paginado).
+ * Pensado para reportes/analítica/AI tools que necesitan agregar por período.
+ * NOTA: getCobros() devuelve mock data por compatibilidad histórica; esta
+ * función es la que hay que usar para datos reales.
+ */
+export async function getCobrosCompletos(): Promise<CobroListado[]> {
+  if (USE_MOCK || !airtable) return [];
+  try {
+    const [records, bancos] = await Promise.all([
+      airtable(TABLES.COBROS)
+        .select({ sort: [{ field: FC_READ.FECHA, direction: 'desc' }], maxRecords: 5000 })
+        .all(),
+      getBancos(),
+    ]);
+    const bancoNombreById = new Map(bancos.map(b => [b.id, b.nombreCuenta || b.banco || b.id]));
+    const raws = records.map(r => recordToRaw({ id: r.id, fields: r.fields as Record<string, unknown> }));
+    return consolidarCobros(raws, bancoNombreById);
+  } catch (err) {
+    console.error('Error fetching cobros completos:', err);
+    return [];
+  }
+}
+
 /** Cuenta total de cobros consolidados (única (NO.FACTURA, Fecha_Cobro)). */
 export async function getCobrosCountTotal(): Promise<number> {
   if (USE_MOCK || !airtable) return 0;
