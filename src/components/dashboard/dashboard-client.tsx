@@ -60,7 +60,7 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
           <div className="ai-avatar" style={{ width: 32, height: 32, flexShrink: 0 }}></div>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-4)', fontWeight: 500, marginBottom: 8 }}>
-              Asistente · Resumen del día
+              Auros · Resumen del día
             </div>
             <p className="serif" style={{ fontSize: 19, lineHeight: 1.5, margin: 0, color: 'var(--ink)', maxWidth: 920, letterSpacing: '-0.005em' }}>
               La cartera por cobrar suma <span className="num" style={{ fontWeight: 500 }}>{Q(kpis.porCobrarTotal)}</span>, de los cuales <span className="num" style={{ fontWeight: 500, color: 'var(--wine)' }}>{Q(kpis.vencidoTotal)}</span> están <em style={{ fontStyle: 'italic', fontWeight: 400 }}>vencidos</em> en <span className="num" style={{ fontWeight: 500 }}>{kpis.numVencidas}</span> facturas. La tasa de cobranza global es <span className="num" style={{ fontWeight: 500 }}>{kpis.tasaCobranza.toFixed(1)}%</span>.

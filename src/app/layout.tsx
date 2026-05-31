@@ -24,7 +24,7 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   title: 'Control Financiero · Sistema operativo de contabilidad',
-  description: 'Sistema operativo de contabilidad con asistente AI integrado',
+  description: 'Sistema operativo de contabilidad con Auros, asistente AI integrado',
 };
 
 export default function RootLayout({

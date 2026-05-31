@@ -131,8 +131,8 @@ export function AIPanel({ onClose, mensajes, setMensajes }: AIPanelProps) {
       <div className="ai-head">
         <div className="ai-avatar"></div>
         <div style={{ flex: 1 }}>
-          <div className="ai-title">Asistente</div>
-          <div className="ai-sub">Modelo financiero · contexto Q2 &apos;26</div>
+          <div className="ai-title">Auros</div>
+          <div className="ai-sub">Auros · Modelo financiero · Q2 2026</div>
         </div>
         {mensajes.length > 0 && (
           <button
@@ -196,12 +196,12 @@ export function AIPanel({ onClose, mensajes, setMensajes }: AIPanelProps) {
         ) : mensajes.map((m, i) => (
           m.rol === 'user'
             ? <div key={i} className="msg-user">{m.contenido}</div>
-            : <MensajeAsistente key={i} mensaje={m} />
+            : <MensajeAuros key={i} mensaje={m} />
         ))}
 
         {pendiente && (
           <div className="msg-ai" style={{ paddingTop: 4 }}>
-            <div className="ai-label">Asistente</div>
+            <div className="ai-label">Auros</div>
             <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--ink-3)' }}>
               <span className="ai-dots"><span /><span /><span /></span> Escribiendo...
             </div>
@@ -269,11 +269,11 @@ export function AIPanel({ onClose, mensajes, setMensajes }: AIPanelProps) {
   );
 }
 
-function MensajeAsistente({ mensaje }: { mensaje: ChatMensaje }) {
+function MensajeAuros({ mensaje }: { mensaje: ChatMensaje }) {
   const [funcionesAbiertas, setFuncionesAbiertas] = useState(false);
   return (
     <div className="msg-ai">
-      <div className="ai-label">Asistente</div>
+      <div className="ai-label">Auros</div>
       <div className="ai-text" style={{ whiteSpace: 'pre-wrap' }}>{mensaje.contenido}</div>
       {mensaje.funcionesUsadas && mensaje.funcionesUsadas.length > 0 && (
         <div style={{ marginTop: 4, fontSize: 10.5, color: 'var(--ink-4)' }}>

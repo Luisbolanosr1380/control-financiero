@@ -65,7 +65,7 @@ export function Topbar({ aiOpen, setAiOpen, onSearch }: TopbarProps) {
           className={'btn ' + (aiOpen ? 'btn-secondary' : 'btn-primary')}
           onClick={() => setAiOpen(!aiOpen)}
         >
-          <I.Sparkles size={13} /> Asistente AI
+          <I.Sparkles size={13} /> Auros
         </button>
         <div style={{ display: 'flex', alignItems: 'center', marginLeft: 4 }}>
           <UserButton />
