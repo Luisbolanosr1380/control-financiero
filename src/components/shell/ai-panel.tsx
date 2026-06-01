@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { I } from '@/components/common/icons';
 import { usePathname } from 'next/navigation';
+import type { Role } from '@/lib/auth/allowlist';
+import { PERMISSIONS } from '@/lib/auth/permissions';
 
 export interface ChatMensaje {
   rol: 'user' | 'assistant';
@@ -19,12 +21,17 @@ interface ChatResponse {
   costoUSD?: number;
   funcionesUsadas?: Array<{ nombre: string; argumentos: unknown }>;
   ms?: number;
+  consumoMensual?: number;
+  limite?: number | null;
 }
 
 interface AIPanelProps {
   onClose: () => void;
   mensajes: ChatMensaje[];
   setMensajes: React.Dispatch<React.SetStateAction<ChatMensaje[]>>;
+  rol: Role;
+  consumoMensual: number;     // del server al abrir el drawer
+  limiteMensual: number;       // 0 si rol sin permiso, Infinity (admin) o número
 }
 
 const SCREEN_NAMES: Record<string, string> = {
@@ -51,7 +58,18 @@ const SUGERENCIAS = [
   'Proyectar cash a 30 días',
 ];
 
-export function AIPanel({ onClose, mensajes, setMensajes }: AIPanelProps) {
+export function AIPanel({ onClose, mensajes, setMensajes, rol, consumoMensual, limiteMensual }: AIPanelProps) {
+  const tienePermiso = PERMISSIONS[rol].aurosChat;
+  // Consumo en tiempo real: el server reporta el dato inicial; cada respuesta
+  // del backend trae el consumoMensual actualizado.
+  const [consumoVivo, setConsumoVivo] = useState<number>(consumoMensual);
+  const [limiteVivo, setLimiteVivo]   = useState<number>(limiteMensual);
+  useEffect(() => { setConsumoVivo(consumoMensual); setLimiteVivo(limiteMensual); }, [consumoMensual, limiteMensual]);
+
+  const sinLimite      = !Number.isFinite(limiteVivo) || limiteVivo === Infinity;
+  const limiteAlcanzado = !sinLimite && tienePermiso && consumoVivo >= limiteVivo;
+  const cercaDelLimite  = !sinLimite && tienePermiso && !limiteAlcanzado && consumoVivo >= limiteVivo * 0.8;
+
   const pathname = usePathname();
   const screenName = getScreenName(pathname);
 
@@ -86,8 +104,13 @@ export function AIPanel({ onClose, mensajes, setMensajes }: AIPanelProps) {
         body: JSON.stringify({ messages: historial, newMessage: msg }),
       });
       const data: ChatResponse = await res.json();
+      // El backend devuelve mensaje legible para LIMITE_ALCANZADO / SIN_PERMISO / FUERA_DE_VENTANA
+      type GuardResponse = { mensaje?: string; consumoActual?: number; limite?: number };
       if (!data.ok || !data.respuesta) {
-        setError(data.error ?? 'Respuesta vacía del servidor');
+        const g = data as ChatResponse & GuardResponse;
+        setError(g.mensaje ?? g.error ?? 'Respuesta vacía del servidor');
+        if (typeof g.consumoActual === 'number') setConsumoVivo(g.consumoActual);
+        if (typeof g.limite === 'number')        setLimiteVivo(g.limite);
         return;
       }
       setMensajes(prev => [...prev, {
@@ -97,6 +120,8 @@ export function AIPanel({ onClose, mensajes, setMensajes }: AIPanelProps) {
         costoUSD: data.costoUSD,
         ms: data.ms,
       }]);
+      if (typeof data.consumoMensual === 'number') setConsumoVivo(data.consumoMensual);
+      if (typeof data.limite === 'number')          setLimiteVivo(data.limite);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -221,35 +246,57 @@ export function AIPanel({ onClose, mensajes, setMensajes }: AIPanelProps) {
       </div>
 
       <div className="ai-input">
-        <div className="ai-input-box" style={{ alignItems: 'flex-end', gap: 6 }}>
-          <I.Sparkles size={14} style={{ color: 'var(--ink-3)', marginBottom: 6 }} />
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={onKeyDown}
-            placeholder="Preguntá algo o describí una acción..."
-            disabled={pendiente}
-            rows={1}
-            style={{
-              flex: 1, resize: 'none', border: 'none', background: 'transparent',
-              outline: 'none', fontFamily: 'inherit', fontSize: 13, color: 'var(--ink)',
-              padding: '4px 0', lineHeight: 1.5, maxHeight: 96,
-            }}
-          />
-          <button
-            className="ai-send"
-            onClick={() => void enviar()}
-            disabled={pendiente || !input.trim()}
-            title="Enviar (Enter)"
-          >
-            <I.Send size={12} />
-          </button>
-        </div>
+        {!tienePermiso ? (
+          <div style={{
+            padding: '12px 14px', background: 'var(--paper)', border: '1px solid var(--line-2)',
+            borderRadius: 6, fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5,
+          }}>
+            Auros está disponible solo para roles <strong>Gerencia</strong> y <strong>Admin</strong>.
+            Si necesitás acceso, hablá con Stark.
+          </div>
+        ) : (
+          <div className="ai-input-box" style={{ alignItems: 'flex-end', gap: 6 }}>
+            <I.Sparkles size={14} style={{ color: 'var(--ink-3)', marginBottom: 6 }} />
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={onKeyDown}
+              placeholder={limiteAlcanzado ? 'Llegaste al límite mensual' : 'Preguntá algo o describí una acción...'}
+              disabled={pendiente || limiteAlcanzado}
+              rows={1}
+              style={{
+                flex: 1, resize: 'none', border: 'none', background: 'transparent',
+                outline: 'none', fontFamily: 'inherit', fontSize: 13, color: 'var(--ink)',
+                padding: '4px 0', lineHeight: 1.5, maxHeight: 96,
+              }}
+            />
+            <button
+              className="ai-send"
+              onClick={() => void enviar()}
+              disabled={pendiente || !input.trim() || limiteAlcanzado}
+              title={limiteAlcanzado ? 'Límite alcanzado' : 'Enviar (Enter)'}
+            >
+              <I.Send size={12} />
+            </button>
+          </div>
+        )}
         <div style={{ marginTop: 6, fontSize: 10.5, color: 'var(--ink-4)', textAlign: 'right' }}>
           Sesión: ${costoTotal.toFixed(4)} USD
           {mensajes.length > 0 && <> · {mensajes.filter(m => m.rol === 'assistant').length} respuesta(s)</>}
         </div>
+        {tienePermiso && (
+          <div style={{
+            marginTop: 4, fontSize: 10.5, textAlign: 'right',
+            color: limiteAlcanzado ? 'var(--wine)' : cercaDelLimite ? 'var(--burnt)' : 'var(--ink-4)',
+            fontWeight: (limiteAlcanzado || cercaDelLimite) ? 500 : 400,
+          }}>
+            {sinLimite
+              ? 'Consultas ilimitadas este mes'
+              : `Consumiste ${consumoVivo} de ${limiteVivo} consultas este mes`
+            }
+          </div>
+        )}
       </div>
 
       <style jsx>{`

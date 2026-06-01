@@ -3,6 +3,8 @@
 import { I, type IconName } from '@/components/common/icons';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import type { Role } from '@/lib/auth/allowlist';
+import { PERMISSIONS } from '@/lib/auth/permissions';
 
 interface NavItem {
   href: string;
@@ -16,11 +18,15 @@ interface NavGroup {
   items: NavItem[];
 }
 
-function buildNav(opts: { deudasVencidasCount?: number } = {}): NavGroup[] {
+function buildNav(opts: { deudasVencidasCount?: number; rol?: Role } = {}): NavGroup[] {
   const deudasBadge = opts.deudasVencidasCount && opts.deudasVencidasCount > 0
     ? { text: `${opts.deudasVencidasCount} vencidas`, kind: 'wine' as const }
     : undefined;
-  return [
+  const rol = opts.rol;
+  const verAvanzada = rol && PERMISSIONS[rol].verAnaliticaAvanzada;
+  const esAdmin = rol === 'admin';
+
+  const groups: NavGroup[] = [
     { group: 'Operación', items: [
       { href: '/dashboard',    label: 'Dashboard',    icon: 'Dashboard' },
       { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: { text: '5 vencidas', kind: 'wine' } },
@@ -39,20 +45,35 @@ function buildNav(opts: { deudasVencidasCount?: number } = {}): NavGroup[] {
       { href: '/asientos', label: 'Asientos',            icon: 'Journal' },
       { href: '/estados',  label: 'Estados Financieros', icon: 'Statement' },
     ]},
-    { group: 'Inteligencia', items: [
-      { href: '/analitica', label: 'Analítica',           icon: 'TrendUp' },
-      { href: '/ai',        label: 'AI Insights',         icon: 'Sparkles', badge: { text: '3 alertas', kind: 'warn' } },
-    ]},
   ];
+
+  // Inteligencia: visible solo si el rol ve analítica avanzada (admin/gerencia).
+  if (verAvanzada) {
+    groups.push({ group: 'Inteligencia', items: [
+      { href: '/analitica', label: 'Analítica',   icon: 'TrendUp' },
+      { href: '/ai',        label: 'AI Insights', icon: 'Sparkles', badge: { text: '3 alertas', kind: 'warn' } },
+    ]});
+  }
+
+  // Admin: solo si rol = admin.
+  if (esAdmin) {
+    groups.push({ group: 'Admin', items: [
+      { href: '/admin/usuarios', label: 'Usuarios y AI', icon: 'Users' },
+    ]});
+  }
+
+  return groups;
 }
 
 interface SidebarProps {
   deudasVencidasCount?: number;
+  rol?: Role;
+  email?: string;
 }
 
-export function Sidebar({ deudasVencidasCount }: SidebarProps = {}) {
+export function Sidebar({ deudasVencidasCount, rol }: SidebarProps = {}) {
   const pathname = usePathname();
-  const NAV = buildNav({ deudasVencidasCount });
+  const NAV = buildNav({ deudasVencidasCount, rol });
 
   // El item activo es el de href más específico que matchea (evita que
   // /cobros y /cobros/identificar se marquen ambos a la vez).

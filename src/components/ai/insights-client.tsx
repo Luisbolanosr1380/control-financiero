@@ -16,9 +16,11 @@ interface Props {
   ultimo: AnalisisRegistro | null;
   historial: AnalisisRegistro[];
   costo: CostoAcumulado;
+  puedeGenerar?: boolean;
+  proximaVentana?: string | null;
 }
 
-export function AiInsightsClient({ ultimo, historial, costo }: Props) {
+export function AiInsightsClient({ ultimo, historial, costo, puedeGenerar = true, proximaVentana = null }: Props) {
   const router = useRouter();
   const [viendoId, setViendoId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -59,7 +61,16 @@ export function AiInsightsClient({ ultimo, historial, costo }: Props) {
           </div>
         </div>
         <div className="page-actions">
-          <button className="btn btn-primary" onClick={regenerar} disabled={loading}>
+          <button
+            className="btn btn-primary"
+            onClick={regenerar}
+            disabled={loading || !puedeGenerar}
+            title={!puedeGenerar && proximaVentana
+              ? `Análisis manual disponible solo lunes y últimos 2 días del mes. Próxima ventana: ${proximaVentana}.`
+              : !puedeGenerar
+                ? 'Tu rol no incluye la generación de análisis manual.'
+                : undefined}
+          >
             {loading ? <><I.Refresh size={13} /> Generando…</> : <><I.Sparkles size={13} /> Regenerar análisis</>}
           </button>
         </div>

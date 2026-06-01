@@ -5,13 +5,18 @@ import { Sidebar } from '@/components/shell/sidebar';
 import { Topbar } from '@/components/shell/topbar';
 import { AIPanel, type ChatMensaje } from '@/components/shell/ai-panel';
 import { CommandPalette } from '@/components/shell/command-palette';
+import type { Role } from '@/lib/auth/allowlist';
 
 interface AppShellProps {
   children: React.ReactNode;
   deudasVencidasCount?: number;
+  rol: Role;
+  email: string;
+  consumoAuros?: number;
+  limiteAuros?: number;
 }
 
-export function AppShell({ children, deudasVencidasCount }: AppShellProps) {
+export function AppShell({ children, deudasVencidasCount, rol, email, consumoAuros, limiteAuros }: AppShellProps) {
   const [aiOpen, setAiOpen] = useState(false);
   const [showCmdK, setShowCmdK] = useState(false);
 
@@ -34,7 +39,7 @@ export function AppShell({ children, deudasVencidasCount }: AppShellProps) {
 
   return (
     <div className={'app' + (aiOpen ? ' ai-open' : '')}>
-      <Sidebar deudasVencidasCount={deudasVencidasCount} />
+      <Sidebar deudasVencidasCount={deudasVencidasCount} rol={rol} email={email} />
 
       <div className="main">
         <Topbar aiOpen={aiOpen} setAiOpen={setAiOpen} onSearch={() => setShowCmdK(true)} />
@@ -46,6 +51,9 @@ export function AppShell({ children, deudasVencidasCount }: AppShellProps) {
           onClose={() => setAiOpen(false)}
           mensajes={chatMensajes}
           setMensajes={setChatMensajes}
+          rol={rol}
+          consumoMensual={consumoAuros ?? 0}
+          limiteMensual={limiteAuros ?? 0}
         />
       )}
       {showCmdK && <CommandPalette onClose={() => setShowCmdK(false)} />}
