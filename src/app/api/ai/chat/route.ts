@@ -1,8 +1,12 @@
 import { generateText, type CoreMessage } from 'ai';
 import { google } from '@ai-sdk/google';
+import { currentUser } from '@clerk/nextjs/server';
 import { aiTools } from '@/lib/ai/tools';
 import { calcularCostoUSD } from '@/lib/db/ai-analisis';
 import { resolverPeriodo } from '@/lib/db/periodos';
+import { getRolUsuario } from '@/lib/auth/allowlist';
+import { tienePermiso, getLimiteAuros } from '@/lib/auth/permissions';
+import { registrarUsoAuros, getConsumoMensual } from '@/lib/db/uso-auros';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -110,6 +114,42 @@ export async function POST(req: Request) {
     return Response.json({ ok: false, error: 'Falta GOOGLE_GENERATIVE_AI_API_KEY' }, { status: 500 });
   }
 
+  // ──────────────────────────────────────────────────────────
+  // F-030: control de permisos + rate limit por rol
+  // ──────────────────────────────────────────────────────────
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
+  const rol = getRolUsuario(email);
+  if (!rol) {
+    return Response.json({ ok: false, error: 'NO_AUTORIZADO', mensaje: 'Tu correo no está autorizado para usar este sistema.' }, { status: 401 });
+  }
+  if (!tienePermiso(rol, 'aurosChat')) {
+    return Response.json(
+      { ok: false, error: 'SIN_PERMISO', mensaje: 'Tu rol no incluye acceso a Auros. Hablá con Stark si necesitás permisos.' },
+      { status: 403 },
+    );
+  }
+  const limite = getLimiteAuros(rol);
+  let consumoActual = 0;
+  if (Number.isFinite(limite)) {
+    consumoActual = await getConsumoMensual(email);
+    if (consumoActual >= limite) {
+      const hoy = new Date();
+      const proximo = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 1);
+      const mesNombre = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'][proximo.getMonth()];
+      return Response.json(
+        {
+          ok: false,
+          error: 'LIMITE_ALCANZADO',
+          mensaje: `Llegaste al límite de ${limite} consultas este mes. Se renueva el 1 de ${mesNombre}.`,
+          consumoActual,
+          limite,
+        },
+        { status: 429 },
+      );
+    }
+  }
+
   let body: ChatRequest;
   try {
     body = await req.json();
@@ -149,6 +189,19 @@ export async function POST(req: Request) {
 
     const costoUSD = calcularCostoUSD(tokensInput, tokensOutput);
 
+    // Tracking (F-030 parte D): se hace después de la consulta exitosa.
+    // No await del race con la respuesta — si falla no rompe la UX.
+    await registrarUsoAuros({
+      email,
+      tipo: 'chat',
+      tokensIn: tokensInput,
+      tokensOut: tokensOutput,
+      costoUsd: costoUSD,
+      durSeg: ms / 1000,
+      queryPreview: nuevo,
+    });
+
+    const consumoMensual = consumoActual + 1;
     return Response.json({
       ok: true,
       modelo: MODELO,
@@ -159,6 +212,8 @@ export async function POST(req: Request) {
       funcionesUsadas,
       pasos: result.steps.length,
       ms,
+      consumoMensual,
+      limite: Number.isFinite(limite) ? limite : null,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
