@@ -344,9 +344,16 @@ export function DeudasClient({ deudas, kpis, acreedores, centros }: Props) {
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={8} style={{ height: 160, textAlign: 'center', color: 'var(--ink-4)' }}>
-                  <I.Debt size={26} style={{ opacity: 0.4, marginBottom: 6 }} />
-                  <div style={{ fontSize: 13 }}>No hay deudas que coincidan con el filtro</div>
+                <tr><td colSpan={8} style={{ height: 180, textAlign: 'center', color: 'var(--ink-4)' }}>
+                  <I.Debt size={28} style={{ opacity: 0.4, marginBottom: 8 }} />
+                  {deudas.length === 0 ? (
+                    <>
+                      <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink-2)', marginBottom: 2 }}>No hay deudas registradas todavía</div>
+                      <div style={{ fontSize: 12.5 }}>Tocá <strong>&quot;+ Nueva deuda&quot;</strong> arriba para crear la primera.</div>
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 13 }}>No hay deudas que coincidan con el filtro</div>
+                  )}
                 </td></tr>
               ) : rows.map(d => {
                 const morColor = d.diasEnMora > 0 ? 'var(--wine)' : d.diasAVencer <= 7 ? 'var(--burnt)' : 'var(--ink-3)';

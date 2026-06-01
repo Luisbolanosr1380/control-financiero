@@ -59,19 +59,44 @@ export function PagosDeudasClient({ pagos, acreedores }: Props) {
     setMetodo(''); setBanco(''); setAcreedorId(''); setDesde(''); setHasta(''); setSearch('');
   };
 
+  const sinPagos = pagos.length === 0;
+  const filtrosActivos = !!(metodo || banco || acreedorId || desde || hasta || search.trim());
+
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Pagos a acreedores</h1>
           <div className="page-subtitle">
-            Mostrando <span className="num">{filtrados.length}</span> de <span className="num">{pagos.length}</span> pagos recientes
-            {' · '}
-            <span className="num">Total filtrado: {Q(sumaTotal)}</span>
-            {sumaCapital !== sumaTotal && <> · <span className="num">Capital: {Q(sumaCapital)}</span></>}
+            {sinPagos
+              ? 'Sin pagos registrados todavía'
+              : <>
+                  Mostrando <span className="num">{filtrados.length}</span> de <span className="num">{pagos.length}</span> pagos recientes
+                  {' · '}
+                  <span className="num">Total filtrado: {Q(sumaTotal)}</span>
+                  {sumaCapital !== sumaTotal && <> · <span className="num">Capital: {Q(sumaCapital)}</span></>}
+                </>
+            }
           </div>
         </div>
       </div>
+
+      {sinPagos && (
+        <div className="card" style={{ marginBottom: 18 }}>
+          <div className="card-pad" style={{ padding: '48px 24px', textAlign: 'center', color: 'var(--ink-3)' }}>
+            <I.Coins size={36} style={{ opacity: 0.5, marginBottom: 12 }} />
+            <div style={{ fontSize: 15, fontWeight: 500, color: 'var(--ink-2)', marginBottom: 4 }}>
+              Aún no se registró ningún pago
+            </div>
+            <div style={{ fontSize: 12.5, lineHeight: 1.55 }}>
+              Andá a <a href="/deudas" style={{ color: 'var(--olive)', textDecoration: 'underline' }}>/deudas</a>,
+              {' '}abrí una deuda y tocá <strong>&quot;Registrar pago&quot;</strong>. Acá aparecerán todos los pagos cronológicamente.
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!sinPagos && (<>
 
       {/* Filtros */}
       <div className="card" style={{ padding: 0, marginBottom: 18 }}>
@@ -141,6 +166,7 @@ export function PagosDeudasClient({ pagos, acreedores }: Props) {
           </tbody>
         </table>
       </div>
+      </>)}
     </div>
   );
 }
