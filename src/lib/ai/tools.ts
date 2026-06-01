@@ -19,7 +19,7 @@ import { getTopDeudores } from '@/lib/db/kpis';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getAnaliticaIngresos, getFacturadoPorRango, type FiltroNaturaleza } from '@/lib/db/analitica';
 import { getProyeccionMesActual } from '@/lib/db/proyecciones';
-import { getKPIsDeudas, getDeudas, getAcreedores } from '@/lib/db/deudas';
+import { getKPIsDeudas, getDeudas, getAcreedores, clasificarPasivo } from '@/lib/db/deudas';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -376,17 +376,21 @@ export const aiTools = {
 
   getKPIsDeudas: tool({
     description:
-      'Resumen del PASIVO: total adeudado, separado en deuda externa (bancos, tarjetas, proveedores, fisco) vs cuenta con socios (parte relacionada). ' +
-      'Incluye vencidas (cantidad, monto, mora promedio, peor caso) y próximos vencimientos a 30 días. ' +
-      'USAR cuando el usuario pregunte "¿cuánto debo?", "¿cómo viene el pasivo?", "¿tengo deudas vencidas?". ' +
-      'IMPORTANTE: SIEMPRE distinguir deuda externa vs cuenta con socios — son obligaciones de naturaleza diferente.',
+      'Resumen del PASIVO con 4 categorías: externa (bancos, fisco, tarjetas, proveedores no relacionados), socios (parte relacionada accionaria), ex_empleados (prioridad por riesgo laboral) y asesores_relacionados (proveedores con vínculo cercano). ' +
+      'Incluye vencidas (cantidad, monto, mora promedio, peor caso), próximos vencimientos a 30 días, top acreedores con su categoría y desglose por tipo de documento. ' +
+      'USAR cuando el usuario pregunte "¿cuánto debo?", "¿cómo viene el pasivo?", "¿tengo deudas vencidas?", "¿cuánto es deuda externa real?". ' +
+      'REGLA AL RESPONDER: SIEMPRE distinguir las 4 categorías — la deuda "real" externa es la #1; las otras tres tienen mayor flexibilidad de negociación, pero ex_empleados tiene prioridad por riesgo laboral/reputacional.',
     parameters: z.object({}),
     execute: async () => {
       const k = await getKPIsDeudas();
       return {
         totalPasivoQ: Math.round(k.totalPasivo),
-        deudaExternaQ: Math.round(k.porCategoria.externa.monto),
-        cuentaConSociosQ: Math.round(k.porCategoria.socios.monto),
+        porCategoria: {
+          externa:               { montoQ: Math.round(k.porCategoria.externa.monto),               cantidad: k.porCategoria.externa.cantidad },
+          socios:                { montoQ: Math.round(k.porCategoria.socios.monto),                cantidad: k.porCategoria.socios.cantidad },
+          ex_empleados:          { montoQ: Math.round(k.porCategoria.ex_empleados.monto),          cantidad: k.porCategoria.ex_empleados.cantidad },
+          asesores_relacionados: { montoQ: Math.round(k.porCategoria.asesores_relacionados.monto), cantidad: k.porCategoria.asesores_relacionados.cantidad },
+        },
         vencidas: {
           cantidad: k.vencidas.cantidad,
           montoTotalQ: Math.round(k.vencidas.montoTotal),
@@ -400,7 +404,7 @@ export const aiTools = {
         topAcreedores: k.porAcreedor.map(a => ({
           acreedor: a.acreedor,
           saldoQ: Math.round(a.saldo),
-          esSocio: a.categoria === 'socios',
+          categoria: a.categoria,
         })),
         porTipo: k.porTipo.map(t => ({ tipo: t.tipo, saldoQ: Math.round(t.saldo), cantidad: t.cantidad })),
       };
@@ -432,7 +436,7 @@ export const aiTools = {
           candidatos: matches.slice(0, 8).map(a => ({
             nombre: a.nombre || a.nombreLegal,
             tipo: a.tipoAcreedor,
-            esSocio: a.esParteRelacionada,
+            categoria: clasificarPasivo(a.tipoAcreedor, a.esParteRelacionada),
           })),
         };
       }
@@ -444,7 +448,7 @@ export const aiTools = {
         acreedor: {
           nombre: ac.nombre || ac.nombreLegal,
           tipoAcreedor: ac.tipoAcreedor,
-          esSocio: ac.esParteRelacionada,
+          categoria: clasificarPasivo(ac.tipoAcreedor, ac.esParteRelacionada),
           totalDeudaInicialQ: Math.round(ac.totalDeudaInicial),
         },
         totalSaldoQ: Math.round(vigentes.reduce((s, d) => s + d.saldoPendiente, 0)),
@@ -484,7 +488,7 @@ export const aiTools = {
         diasPromedioMora: promedioMora,
         deudas: ord.map(d => ({
           acreedor: d.acreedorNombre,
-          esSocio: d.esParteRelacionada,
+          categoria: d.categoriaPasivo,
           tipoDocumento: d.tipoDocumento,
           saldoQ: Math.round(d.saldoPendiente),
           diasEnMora: d.diasEnMora,
