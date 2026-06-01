@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from 'recharts';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
-import type { Acreedor, Deuda, KPIsDeudas } from '@/lib/db/deudas';
+import type { Acreedor, Deuda, KPIsDeudas, CategoriaPasivo } from '@/lib/db/deudas';
 
 interface Props {
   deudas: Deuda[];
@@ -14,6 +14,13 @@ interface Props {
 }
 
 type EstadoFiltro = 'todas' | 'vigentes' | 'vencidas';
+
+const CATEGORIA_LABELS: Record<CategoriaPasivo, string> = {
+  externa:               '🔴 Externa',
+  socios:                '🟡 Socios',
+  ex_empleados:          '🟠 Ex-empleados',
+  asesores_relacionados: '🔵 Asesores / relacionados',
+};
 
 const DONUT_COLORS = ['#8A2A2A', '#B8801C', '#5A6A2E', '#2B3A6B', '#7A857F', '#1A3B33', '#A8B0AB', '#4A5A53'];
 
@@ -24,8 +31,7 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
   const [tipoDoc, setTipoDoc] = useState<string>('');
   const [acreedorId, setAcreedorId] = useState<string>('');
   const [centroId, setCentroId] = useState<string>('');
-  const [soloSocios, setSoloSocios] = useState(false);
-  const [soloExternas, setSoloExternas] = useState(false);
+  const [categoria, setCategoria] = useState<CategoriaPasivo | ''>('');
   const [search, setSearch] = useState('');
   const [verTodasVencidas, setVerTodasVencidas] = useState(false);
 
@@ -47,8 +53,7 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
     if (tipoDoc)                r = r.filter(d => d.tipoDocumento === tipoDoc);
     if (acreedorId)             r = r.filter(d => d.acreedorId === acreedorId);
     if (centroId)               r = r.filter(d => d.centroCostoId === centroId);
-    if (soloSocios)             r = r.filter(d => d.esParteRelacionada);
-    if (soloExternas)           r = r.filter(d => !d.esParteRelacionada);
+    if (categoria)              r = r.filter(d => d.categoriaPasivo === categoria);
     if (search.trim()) {
       const q = search.toLowerCase();
       r = r.filter(d =>
@@ -64,13 +69,13 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
       if (av !== bv) return bv - av;
       return a.diasAVencer - b.diasAVencer;
     });
-  }, [deudas, estado, tipoDoc, acreedorId, centroId, soloSocios, soloExternas, search]);
+  }, [deudas, estado, tipoDoc, acreedorId, centroId, categoria, search]);
 
   const sumaSaldoFiltrado = rows.reduce((s, d) => s + d.saldoPendiente, 0);
 
   const limpiarFiltros = () => {
     setEstado('todas'); setTipoDoc(''); setAcreedorId(''); setCentroId('');
-    setSoloSocios(false); setSoloExternas(false); setSearch('');
+    setCategoria(''); setSearch('');
   };
 
   const verVencidas = () => {
@@ -79,7 +84,7 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
   };
   function limpiarOtrosFiltros() {
     setTipoDoc(''); setAcreedorId(''); setCentroId('');
-    setSoloSocios(false); setSoloExternas(false); setSearch('');
+    setCategoria(''); setSearch('');
   }
 
   const donutData = kpis.porTipo.map((p, i) => ({ name: p.tipo, value: p.saldo, color: DONUT_COLORS[i % DONUT_COLORS.length] }));
@@ -274,14 +279,13 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
             <option value="">Centro de costo (todos)</option>
             {centros.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
           </select>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--ink-3)' }}>
-            <input type="checkbox" checked={soloSocios} onChange={(e) => { setSoloSocios(e.target.checked); if (e.target.checked) setSoloExternas(false); }} />
-            Solo socios
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--ink-3)' }}>
-            <input type="checkbox" checked={soloExternas} onChange={(e) => { setSoloExternas(e.target.checked); if (e.target.checked) setSoloSocios(false); }} />
-            Solo externas
-          </label>
+          <select value={categoria} onChange={(e) => setCategoria((e.target.value || '') as CategoriaPasivo | '')} style={inputStyle}>
+            <option value="">Categoría (todas)</option>
+            <option value="externa">{CATEGORIA_LABELS.externa}</option>
+            <option value="socios">{CATEGORIA_LABELS.socios}</option>
+            <option value="ex_empleados">{CATEGORIA_LABELS.ex_empleados}</option>
+            <option value="asesores_relacionados">{CATEGORIA_LABELS.asesores_relacionados}</option>
+          </select>
           <div className="toolbar-search" style={{ marginLeft: 'auto' }}>
             <I.Search size={13} style={{ color: 'var(--ink-4)' }} />
             <input placeholder="Acreedor, nombre, tipo..." value={search} onChange={(e) => setSearch(e.target.value)} />
