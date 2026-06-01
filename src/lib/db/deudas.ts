@@ -20,32 +20,46 @@ const FA = {
 } as const;
 
 const FD = {
-  CLAVE:            'Clave_Deuda',               // formula
-  ACREEDOR:         'Acreedor',                  // link
-  NOMBRE_DEUDA:     'Nombre_Deuda / Código',
-  TIPO_DOC:         'Tipo_Documento',
-  ESTADO:           'Estado',
-  ESTADO_DEUDA:     'Estado_Deuda',              // formula
-  FECHA_EMI:        'Fecha_Emision',
-  FECHA_VENC:       'Fecha_Vencimiento',
-  FECHA_VENC_REAL:  'Fecha_Vencimiento_Real',    // formula
-  DIAS_VENCER:      'Dias_a_Vencer',             // formula
-  VENCIDA:          'Vencida?',                  // formula 0/1
-  MONEDA:           'Moneda',
-  TIPO_CAMBIO:      'Tipo_Cambio',
-  MONTO_ORIG:       'Monto_Original',
-  MONTO_GTQ:        'Monto_GTQ',                 // formula
-  TOTAL_PAGADO:     'Total_Pagado',              // rollup
-  SALDO:            'Saldo_Pendiente',           // formula
-  CENTRO_COSTO:     'Centro_Costo',              // link
-  TASA_INTERES:     'Tasa_Interes',
-  PCT_AVANCE:       '%_Avance',                  // formula
-  DIAS_MORA:        'Dias_en_Mora',              // formula
-  SEMAFORO:         'Semaforo_Vencimiento',      // formula con emoji
-  MORA_ACUM:        'Mora_Acumulada',            // formula
-  NUM_PAGOS:        'Num_Pagos',                 // rollup
-  NOTAS:            'Notas',
-  NO_INCLUIR:       'No Incluir',                // checkbox
+  CLAVE:              'Clave_Deuda',               // formula
+  ACREEDOR:           'Acreedor',                  // link
+  NOMBRE_DEUDA:       'Nombre_Deuda / Código',
+  TIPO_DOC:           'Tipo_Documento',
+  ESTADO:             'Estado',
+  ESTADO_DEUDA:       'Estado_Deuda',              // formula
+  FECHA_EMI:          'Fecha_Emision',
+  FECHA_DESEMBOLSO:   'Fecha_Desembolso',
+  FECHA_PRIMER_CUOTA: 'Fecha_Primer_Cuota',
+  PLAZO_MESES:        'Plazo_Meses',
+  FECHA_VENC:         'Fecha_Vencimiento',
+  FECHA_VENC_REAL:    'Fecha_Vencimiento_Real',    // formula
+  DIAS_VENCER:        'Dias_a_Vencer',             // formula
+  VENCIDA:            'Vencida?',                  // formula 0/1
+  MONEDA:             'Moneda',
+  TIPO_CAMBIO:        'Tipo_Cambio',
+  MONTO_ORIG:         'Monto_Original',
+  IVA:                'IVA',
+  MONTO_GTQ:          'Monto_GTQ',                 // formula
+  TOTAL_PAGADO:       'Total_Pagado',              // rollup
+  SALDO:              'Saldo_Pendiente',           // formula
+  CENTRO_COSTO:       'Centro_Costo',              // link
+  TASA_INTERES:       'Tasa_Interes',
+  INTERES_ANUAL:      'Interes_Anual_%',
+  INTERES_MORA:       'Interes_Mora_%',
+  TASA_COMISION:      'Tasa_Comision_%',
+  IVA_COMISION:       'IVA_Comision_%',
+  RESERVA:            'Reserva_%',
+  DIA_PAGO_FIJO:      'Dia_Pago_Fijo',
+  VENTANA_ALERTA:     'Ventana_Alerta_Dias',
+  CON_RECURSO:        'Con_Recurso',
+  SERIE:              'Serie',
+  NUMERO:             'Numero',
+  PCT_AVANCE:         '%_Avance',                  // formula
+  DIAS_MORA:          'Dias_en_Mora',              // formula
+  SEMAFORO:           'Semaforo_Vencimiento',      // formula con emoji
+  MORA_ACUM:          'Mora_Acumulada',            // formula
+  NUM_PAGOS:          'Num_Pagos',                 // rollup
+  NOTAS:              'Notas',
+  NO_INCLUIR:         'No Incluir',                // checkbox
 } as const;
 
 // ============================================================
@@ -462,4 +476,261 @@ export async function getDeudasPorAcreedor(acreedorId: string): Promise<{ acreed
   const acreedor = acreedores.find(a => a.id === acreedorId) ?? null;
   const totalSaldo = deudas.reduce((s, d) => s + d.saldoPendiente, 0);
   return { acreedor, deudas, totalSaldo };
+}
+
+// ============================================================
+// CRUD de deudas — F-029
+// ============================================================
+
+// Opciones del singleSelect Tipo_Documento. Snapshot del schema.
+export const TIPOS_DOCUMENTO = [
+  'Factura',
+  'Préstamo',
+  'Tarjeta',
+  'Leasing',
+  'Nota Débito',
+  'Factoraje',
+  'Reembolso',
+  'Provisión',
+  'Nota de Crédito',
+  'Contrato/Pagaré',
+  'Administrativo',
+  'Obligación Seguridad Social',
+  'Devengo de Nómina',
+  'Estado de Cuenta',
+] as const;
+export type TipoDocumento = (typeof TIPOS_DOCUMENTO)[number];
+
+// Spec usa 'Q' | 'USD' en la UI, pero el singleSelect Moneda de DEUDAS
+// guarda 'GTQ' / 'USD'. Helper para mapear.
+export type MonedaDeudaUI = 'Q' | 'USD';
+const monedaUItoAirtable = (m: MonedaDeudaUI): 'GTQ' | 'USD' => m === 'Q' ? 'GTQ' : 'USD';
+
+export interface CrearDeudaInput {
+  acreedorId: string;
+  nombreDeuda?: string;
+  tipoDocumento: TipoDocumento;
+  centroCostoId?: string;
+  fechaEmision: string;           // YYYY-MM-DD
+  moneda: MonedaDeudaUI;
+  tipoCambio?: number;            // default 1
+  montoOriginal: number;
+  notas?: string;
+
+  // Específicos por tipo (todos opcionales; el form decide cuáles mostrar)
+  limite?: number;
+  ultimos4Tarjeta?: string;
+  tasaInteresAnual?: number;      // como número entre 0–1 (10% = 0.1)
+  diaPagoFijo?: number;           // 1–31
+  plazoMeses?: number;
+  fechaPrimerCuota?: string;
+  fechaVencimiento?: string;
+  tasaComision?: number;
+  ivaComision?: number;
+  reserva?: number;
+  plazoDias?: number;
+  conRecurso?: boolean;
+  numeroFactura?: string;
+  plazoCreditoDias?: number;
+  periodoMes?: string;            // ej "2026-05"
+}
+
+export type CrearDeudaResult =
+  | { ok: true;  deudaId: string; mensaje: string }
+  | { ok: false; error: string };
+
+export type EditarDeudaInput = Partial<Omit<CrearDeudaInput, 'acreedorId'>> & { acreedorId?: string };
+
+export type EditarDeudaResult =
+  | { ok: true;  mensaje: string }
+  | { ok: false; error: string };
+
+function calcularFechaVencimiento(args: { fechaEmision: string; plazoMeses?: number; plazoDias?: number; fechaVencimientoExplicita?: string }): string | null {
+  if (args.fechaVencimientoExplicita) return args.fechaVencimientoExplicita;
+  if (!args.fechaEmision) return null;
+  const [y, m, d] = args.fechaEmision.split('-').map(Number);
+  if (!y || !m || !d) return null;
+  if (args.plazoMeses && args.plazoMeses > 0) {
+    const base = new Date(Date.UTC(y, m - 1, d));
+    base.setUTCMonth(base.getUTCMonth() + args.plazoMeses);
+    return base.toISOString().slice(0, 10);
+  }
+  if (args.plazoDias && args.plazoDias > 0) {
+    const base = new Date(Date.UTC(y, m - 1, d));
+    base.setUTCDate(base.getUTCDate() + args.plazoDias);
+    return base.toISOString().slice(0, 10);
+  }
+  return null;
+}
+
+export async function crearDeuda(input: CrearDeudaInput): Promise<CrearDeudaResult> {
+  if (USE_MOCK || !airtable) return { ok: false, error: 'Airtable no está configurado.' };
+
+  // Validaciones críticas
+  if (!input.acreedorId)           return { ok: false, error: 'Acreedor es requerido.' };
+  if (!input.tipoDocumento)        return { ok: false, error: 'Tipo de documento es requerido.' };
+  if (!input.fechaEmision)         return { ok: false, error: 'Fecha de emisión es requerida.' };
+  if (!(input.montoOriginal > 0))  return { ok: false, error: 'El monto original debe ser mayor a 0.' };
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  if (input.fechaEmision > hoyISO) return { ok: false, error: 'La fecha de emisión no puede ser futura.' };
+
+  // Validar que el acreedor existe
+  const acreedores = await getAcreedores();
+  const ac = acreedores.find(a => a.id === input.acreedorId);
+  if (!ac) return { ok: false, error: 'El acreedor seleccionado no existe.' };
+
+  // Calcular fecha de vencimiento si no viene explícita
+  const fechaVenc = calcularFechaVencimiento({
+    fechaEmision: input.fechaEmision,
+    plazoMeses:   input.plazoMeses,
+    plazoDias:    input.plazoDias ?? input.plazoCreditoDias,
+    fechaVencimientoExplicita: input.fechaVencimiento,
+  });
+
+  // Validar fecha de vencimiento > emisión (si la calculamos o vino)
+  if (fechaVenc && fechaVenc < input.fechaEmision) {
+    return { ok: false, error: 'La fecha de vencimiento no puede ser anterior a la emisión.' };
+  }
+
+  // Nombre de la deuda: usa el explícito, o construye uno legible
+  const nombreDeuda = input.nombreDeuda?.trim() || (input.numeroFactura?.trim() ? `${input.tipoDocumento} ${input.numeroFactura.trim()}` : `${input.tipoDocumento} ${input.fechaEmision}`);
+
+  try {
+    type AField = string | number | boolean | string[] | undefined;
+    const fields: Record<string, AField> = {
+      [FD.ACREEDOR]:     [input.acreedorId],
+      [FD.NOMBRE_DEUDA]: nombreDeuda,
+      [FD.TIPO_DOC]:     input.tipoDocumento,
+      [FD.ESTADO]:       'Pendiente',
+      [FD.FECHA_EMI]:    input.fechaEmision,
+      [FD.MONEDA]:       monedaUItoAirtable(input.moneda),
+      [FD.TIPO_CAMBIO]:  input.tipoCambio ?? 1,
+      [FD.MONTO_ORIG]:   input.montoOriginal,
+    };
+    if (input.centroCostoId)         fields[FD.CENTRO_COSTO]      = [input.centroCostoId];
+    if (input.notas?.trim())         fields[FD.NOTAS]             = input.notas.trim();
+    if (fechaVenc)                   fields[FD.FECHA_VENC]        = fechaVenc;
+    if (input.plazoMeses)            fields[FD.PLAZO_MESES]       = input.plazoMeses;
+    if (input.fechaPrimerCuota)      fields[FD.FECHA_PRIMER_CUOTA] = input.fechaPrimerCuota;
+    if (typeof input.tasaInteresAnual === 'number') fields[FD.TASA_INTERES] = input.tasaInteresAnual;
+    if (typeof input.tasaInteresAnual === 'number') fields[FD.INTERES_ANUAL] = input.tasaInteresAnual;
+    if (typeof input.diaPagoFijo === 'number')      fields[FD.DIA_PAGO_FIJO] = input.diaPagoFijo;
+    if (typeof input.tasaComision === 'number')     fields[FD.TASA_COMISION] = input.tasaComision;
+    if (typeof input.ivaComision === 'number')      fields[FD.IVA_COMISION]  = input.ivaComision;
+    if (typeof input.reserva === 'number')          fields[FD.RESERVA]       = input.reserva;
+    if (typeof input.conRecurso === 'boolean')      fields[FD.CON_RECURSO]   = input.conRecurso;
+    if (input.numeroFactura?.trim())                fields[FD.NUMERO]        = input.numeroFactura.trim();
+
+    const created = await airtable(TABLES.DEUDAS).create(fields);
+    return {
+      ok: true,
+      deudaId: created.id,
+      mensaje: `Deuda "${nombreDeuda}" creada (saldo inicial Q${input.montoOriginal.toFixed(2)}).`,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Error creando deuda:', msg);
+    return { ok: false, error: `No se pudo crear la deuda en Airtable: ${msg}` };
+  }
+}
+
+export async function editarDeuda(deudaId: string, input: EditarDeudaInput): Promise<EditarDeudaResult> {
+  if (USE_MOCK || !airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!deudaId) return { ok: false, error: 'deudaId es requerido.' };
+
+  // Cargar la deuda actual para validaciones
+  const deuda = await getDeudaPorId(deudaId);
+  if (!deuda) return { ok: false, error: 'No se encontró la deuda.' };
+
+  // Si hay pagos registrados, no permitir cambiar el tipo de documento
+  if (input.tipoDocumento && input.tipoDocumento !== deuda.tipoDocumento && deuda.numPagos > 0) {
+    return { ok: false, error: `No se puede cambiar el tipo de documento: la deuda ya tiene ${deuda.numPagos} pago(s) registrado(s). Cambiar el tipo alteraría la semántica del histórico.` };
+  }
+
+  // Validaciones de campos editados
+  if (input.fechaEmision) {
+    const hoyISO = new Date().toISOString().slice(0, 10);
+    if (input.fechaEmision > hoyISO) return { ok: false, error: 'La fecha de emisión no puede ser futura.' };
+  }
+  if (input.montoOriginal !== undefined && !(input.montoOriginal > 0)) {
+    return { ok: false, error: 'El monto original debe ser mayor a 0.' };
+  }
+  if (input.acreedorId) {
+    const acreedores = await getAcreedores();
+    if (!acreedores.find(a => a.id === input.acreedorId)) {
+      return { ok: false, error: 'El acreedor seleccionado no existe.' };
+    }
+  }
+
+  // Recalcular vencimiento si cambia algún input relacionado
+  const fechaEmiCambia = input.fechaEmision && input.fechaEmision !== deuda.fechaEmision;
+  const debeRecalcVenc = input.fechaVencimiento !== undefined
+    || input.plazoMeses !== undefined
+    || input.plazoDias !== undefined
+    || input.plazoCreditoDias !== undefined
+    || fechaEmiCambia;
+  const fechaVencFinal = debeRecalcVenc
+    ? calcularFechaVencimiento({
+        fechaEmision: input.fechaEmision ?? deuda.fechaEmision,
+        plazoMeses:   input.plazoMeses,
+        plazoDias:    input.plazoDias ?? input.plazoCreditoDias,
+        fechaVencimientoExplicita: input.fechaVencimiento,
+      })
+    : null;
+
+  if (fechaVencFinal && (input.fechaEmision ?? deuda.fechaEmision) > fechaVencFinal) {
+    return { ok: false, error: 'La fecha de vencimiento no puede ser anterior a la emisión.' };
+  }
+
+  try {
+    type AField = string | number | boolean | string[] | undefined;
+    const fields: Record<string, AField> = {};
+    if (input.acreedorId)            fields[FD.ACREEDOR]           = [input.acreedorId];
+    if (input.nombreDeuda)           fields[FD.NOMBRE_DEUDA]       = input.nombreDeuda.trim();
+    if (input.tipoDocumento)         fields[FD.TIPO_DOC]           = input.tipoDocumento;
+    if (input.centroCostoId)         fields[FD.CENTRO_COSTO]       = [input.centroCostoId];
+    if (input.fechaEmision)          fields[FD.FECHA_EMI]          = input.fechaEmision;
+    if (input.moneda)                fields[FD.MONEDA]             = monedaUItoAirtable(input.moneda);
+    if (input.tipoCambio !== undefined) fields[FD.TIPO_CAMBIO]     = input.tipoCambio;
+    if (input.montoOriginal !== undefined) fields[FD.MONTO_ORIG]   = input.montoOriginal;
+    if (input.notas !== undefined)   fields[FD.NOTAS]              = input.notas.trim();
+    if (fechaVencFinal !== null)     fields[FD.FECHA_VENC]         = fechaVencFinal;
+    if (input.plazoMeses !== undefined) fields[FD.PLAZO_MESES]     = input.plazoMeses;
+    if (input.fechaPrimerCuota)      fields[FD.FECHA_PRIMER_CUOTA] = input.fechaPrimerCuota;
+    if (input.tasaInteresAnual !== undefined) {
+      fields[FD.TASA_INTERES]  = input.tasaInteresAnual;
+      fields[FD.INTERES_ANUAL] = input.tasaInteresAnual;
+    }
+    if (input.diaPagoFijo !== undefined) fields[FD.DIA_PAGO_FIJO] = input.diaPagoFijo;
+    if (input.tasaComision !== undefined) fields[FD.TASA_COMISION] = input.tasaComision;
+    if (input.ivaComision !== undefined)  fields[FD.IVA_COMISION]  = input.ivaComision;
+    if (input.reserva !== undefined)      fields[FD.RESERVA]       = input.reserva;
+    if (input.conRecurso !== undefined)   fields[FD.CON_RECURSO]   = input.conRecurso;
+    if (input.numeroFactura !== undefined) fields[FD.NUMERO]       = input.numeroFactura.trim();
+
+    if (Object.keys(fields).length === 0) {
+      return { ok: false, error: 'No se especificó ningún campo a editar.' };
+    }
+
+    await airtable(TABLES.DEUDAS).update(deudaId, fields);
+    return { ok: true, mensaje: 'Deuda actualizada.' };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('Error editando deuda:', msg);
+    return { ok: false, error: `No se pudo actualizar la deuda en Airtable: ${msg}` };
+  }
+}
+
+/** Borra una deuda (uso administrativo / tests). Bloquea si tiene pagos. */
+export async function eliminarDeuda(deudaId: string): Promise<{ ok: boolean; error?: string }> {
+  if (USE_MOCK || !airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  const deuda = await getDeudaPorId(deudaId);
+  if (!deuda) return { ok: false, error: 'No se encontró la deuda.' };
+  if (deuda.numPagos > 0) return { ok: false, error: `No se puede borrar: la deuda tiene ${deuda.numPagos} pago(s).` };
+  try {
+    await airtable(TABLES.DEUDAS).destroy(deudaId);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
