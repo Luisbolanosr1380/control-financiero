@@ -22,6 +22,22 @@ const CATEGORIA_LABELS: Record<CategoriaPasivo, string> = {
   asesores_relacionados: '🔵 Asesores / relacionados',
 };
 
+// Colores del bar chart de top acreedores, por categoría (alineados a los
+// emojis del select y de los KPIs del hero).
+const CATEGORIA_COLORS: Record<CategoriaPasivo, string> = {
+  externa:               '#8A2A2A',   // wine (rojo)
+  socios:                '#B8801C',   // burnt (amarillo/dorado)
+  ex_empleados:          '#D97A1A',   // naranja
+  asesores_relacionados: '#2B3A6B',   // azul navy
+};
+
+const CATEGORIA_ICONS: Record<CategoriaPasivo, string> = {
+  externa:               '',
+  socios:                '🤝',
+  ex_empleados:          '👤',
+  asesores_relacionados: '🤵',
+};
+
 const DONUT_COLORS = ['#8A2A2A', '#B8801C', '#5A6A2E', '#2B3A6B', '#7A857F', '#1A3B33', '#A8B0AB', '#4A5A53'];
 
 export function DeudasClient({ deudas, kpis, acreedores }: Props) {
@@ -230,7 +246,9 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
                   tick={(props) => {
                     const { x, y, payload } = props as { x: number; y: number; payload: { value: string } };
                     const it = barData.find(b => b.name === payload.value);
-                    const label = (it?.categoria === 'socios' ? '🤝 ' : '') + (payload.value.length > 18 ? payload.value.slice(0, 17) + '…' : payload.value);
+                    const icon = it ? CATEGORIA_ICONS[it.categoria] : '';
+                    const prefix = icon ? `${icon} ` : '';
+                    const label = prefix + (payload.value.length > 18 ? payload.value.slice(0, 17) + '…' : payload.value);
                     return <text x={x} y={y} dy={4} textAnchor="end" fontSize={10.5} fill="var(--ink-2)">{label}</text>;
                   }}
                 />
@@ -239,10 +257,18 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
                   contentStyle={{ background: 'var(--paper)', border: '1px solid var(--line-2)', borderRadius: 4, fontSize: 12 }}
                 />
                 <Bar dataKey="saldo" radius={[0, 3, 3, 0]} maxBarSize={22}>
-                  {barData.map((b, i) => <Cell key={i} fill={b.categoria === 'socios' ? '#B8801C' : '#1A3B33'} />)}
+                  {barData.map((b, i) => <Cell key={i} fill={CATEGORIA_COLORS[b.categoria]} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+          </div>
+          <div style={{ padding: '0 16px 12px', display: 'flex', gap: 12, fontSize: 10.5, color: 'var(--ink-3)', flexWrap: 'wrap' }}>
+            {(['externa', 'socios', 'ex_empleados', 'asesores_relacionados'] as CategoriaPasivo[]).map(c => (
+              <span key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                <span style={{ width: 8, height: 8, borderRadius: 2, background: CATEGORIA_COLORS[c] }} />
+                {CATEGORIA_LABELS[c]}
+              </span>
+            ))}
           </div>
         </div>
       </div>
