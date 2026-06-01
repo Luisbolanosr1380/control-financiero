@@ -47,4 +47,5 @@ export const TABLES = {
   MAPEO_ER: 'MAPEO_ER',
   MAPEO_BS: 'MAPEO_BS',
   ANALISIS_AI: 'ANALISIS_AI',
+  USO_AUROS:   'USO_AUROS',
 } as const;
