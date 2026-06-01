@@ -96,17 +96,27 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
         </div>
       </div>
 
-      {/* 1. HERO — 4 tarjetas */}
-      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 22 }}>
+      {/* 1. HERO — 6 tarjetas (3×2): 4 categorías de pasivo + mora + próximos */}
+      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 22 }}>
         <KpiCard
           label="🔴 Deuda externa"
           value={Q(kpis.porCategoria.externa.monto)}
-          hint="Bancos, tarjetas, proveedores, fisco"
+          hint={`${kpis.porCategoria.externa.cantidad} deudas · bancos, fisco, tarjetas, proveedores`}
         />
         <KpiCard
-          label="🤝 Cuenta con socios"
+          label="🟡 Con socios"
           value={Q(kpis.porCategoria.socios.monto)}
-          hint="Reembolsos / aportes de partes relacionadas"
+          hint={`${kpis.porCategoria.socios.cantidad} deudas · parte relacionada accionaria`}
+        />
+        <KpiCard
+          label="🟠 Con ex-empleados"
+          value={Q(kpis.porCategoria.ex_empleados.monto)}
+          hint={`${kpis.porCategoria.ex_empleados.cantidad} deudas · prioridad por riesgo laboral`}
+        />
+        <KpiCard
+          label="🔵 Asesores / relacionados"
+          value={Q(kpis.porCategoria.asesores_relacionados.monto)}
+          hint={`${kpis.porCategoria.asesores_relacionados.cantidad} deudas · proveedores con vínculo cercano`}
         />
         <KpiCard
           label={kpis.vencidas.cantidad > 0 ? '⚠️ Vencido y en mora' : '✓ Sin vencidas'}
