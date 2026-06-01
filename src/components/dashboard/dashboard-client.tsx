@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
 import { InfoTooltip } from '@/components/common/info-tooltip';
+import { BannerOperativo } from '@/components/dashboard/banner-operativo';
 import { Q } from '@/lib/utils';
 import { explicar } from '@/lib/explicaciones';
 import { LINES, MONTHLY, AI_INSIGHTS } from '@/lib/mock-data';
@@ -21,6 +22,7 @@ interface Props {
     cantidad: number;
     diasPromedio: number;
   } | null;
+  esOperativo?: boolean;
 }
 
 const RIESGO_BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
@@ -38,7 +40,7 @@ function TendenciaIcon({ t }: { t: Tendencia }) {
   return <span style={{ display: 'inline-block', width: 9, height: 2, background: 'var(--ink-4)', borderRadius: 1 }} />;
 }
 
-export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo, alertaDeudasVencidas }: Props) {
+export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo, alertaDeudasVencidas, esOperativo }: Props) {
   const router = useRouter();
 
   const agingTotal = aging.reduce((s, b) => s + b.amount, 0);
@@ -47,6 +49,9 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
 
   return (
     <div className="page">
+      {/* Banner educativo para operativos (F-030 parte I) */}
+      <BannerOperativo mostrar={!!esOperativo} />
+
       {/* Banner deudas vencidas (F-027 parte D) */}
       {alertaDeudasVencidas && (
         <button

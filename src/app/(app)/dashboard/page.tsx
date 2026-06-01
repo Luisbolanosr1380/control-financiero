@@ -1,13 +1,20 @@
+import { currentUser } from '@clerk/nextjs/server';
 import { getFacturas } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { getDashboardKPIs, getLineStats, getAging, getTopDeudores } from '@/lib/db/kpis';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getKPIsDeudas } from '@/lib/db/deudas';
+import { getRolUsuario } from '@/lib/auth/allowlist';
 import { DashboardClient } from '@/components/dashboard/dashboard-client';
 
 export const revalidate = 60;
 
 export default async function DashboardPage() {
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
+  const rol = getRolUsuario(email);
+  const esOperativo = rol === 'operativo';
+
   const [facturas, clientes] = await Promise.all([getFacturas(), getClientes()]);
 
   const [kpis, lineStats, aging, topDeudores, analisis, deudasKpis] = await Promise.all([
@@ -51,6 +58,7 @@ export default async function DashboardPage() {
       topDeudores={topDeudores}
       clientesRiesgo={clientesRiesgo}
       alertaDeudasVencidas={alertaDeudasVencidas}
+      esOperativo={esOperativo}
     />
   );
 }
