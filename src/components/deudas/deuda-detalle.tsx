@@ -1,10 +1,14 @@
 import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { RegistrarPagoButton } from '@/components/deudas/registrar-pago-button';
 import type { Deuda } from '@/lib/db/deudas';
+import type { PagoDeuda } from '@/lib/db/pagos-deudas';
 
 interface Props {
   deuda: Deuda;
+  pagos: PagoDeuda[];
+  cuentasBanco: string[];
 }
 
 function formatFecha(s: string): string {
@@ -15,14 +19,15 @@ function formatFecha(s: string): string {
   return `${day}/${m}/${y}`;
 }
 
-export function DeudaDetalle({ deuda: d }: Props) {
+export function DeudaDetalle({ deuda: d, pagos, cuentasBanco }: Props) {
   const pctAvance = Math.max(0, Math.min(100, d.pctAvance));
   const enMora = d.diasEnMora > 0;
   const proxima = !enMora && d.diasAVencer >= 0 && d.diasAVencer <= 30;
+  const estaLiquidada = /liquidada/i.test(d.estadoDeuda);
 
   return (
     <div className="page">
-      {/* 1. HEADER */}
+      {/* 1. HEADER con botón Registrar pago */}
       <div className="page-header">
         <div>
           <div style={{ marginBottom: 6 }}>
@@ -44,6 +49,16 @@ export function DeudaDetalle({ deuda: d }: Props) {
           <div className="page-subtitle" style={{ marginTop: 6 }}>
             {d.nombreDeuda || '—'} · Centro: {d.centroCostoNombre || '—'} · Moneda: {d.moneda || '—'}
           </div>
+        </div>
+        <div className="page-actions">
+          <RegistrarPagoButton
+            deudaId={d.id}
+            deudaNombre={d.nombreDeuda}
+            acreedorNombre={d.acreedorNombre}
+            saldoPendiente={d.saldoPendiente}
+            estaLiquidada={estaLiquidada}
+            cuentasBanco={cuentasBanco}
+          />
         </div>
       </div>
 
@@ -130,15 +145,80 @@ export function DeudaDetalle({ deuda: d }: Props) {
         </div>
       )}
 
-      {/* 5. AVISO REGISTRO DE PAGOS */}
-      <div className="card" style={{ background: 'var(--paper-2)', marginBottom: 22 }}>
-        <div className="card-pad" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.55 }}>
-          <I.Info size={14} style={{ color: 'var(--ink-3)', flexShrink: 0, marginTop: 2 }} />
-          <div>
-            Esta pantalla muestra la deuda en modo solo lectura. El <strong>registro de pagos</strong> contra esta deuda (con asiento Banco/CxP automático) se habilita en la próxima fase del módulo.
-          </div>
+      {/* 5. HISTORIAL DE PAGOS */}
+      <HistorialPagos pagos={pagos} />
+    </div>
+  );
+}
+
+function HistorialPagos({ pagos }: { pagos: PagoDeuda[] }) {
+  if (pagos.length === 0) {
+    return (
+      <div className="card" style={{ marginBottom: 22 }}>
+        <div className="card-head"><div className="card-title">Historial de pagos</div></div>
+        <div className="card-pad" style={{ padding: 32, textAlign: 'center', color: 'var(--ink-4)' }}>
+          <I.Coins size={26} style={{ opacity: 0.4, marginBottom: 8 }} />
+          <div style={{ fontSize: 13 }}>Aún no se han registrado pagos para esta deuda</div>
         </div>
       </div>
+    );
+  }
+
+  const totalCapital  = pagos.reduce((s, p) => s + p.capital, 0);
+  const totalInteres  = pagos.reduce((s, p) => s + p.interes, 0);
+  const totalMora     = pagos.reduce((s, p) => s + p.mora, 0);
+  const totalComision = pagos.reduce((s, p) => s + p.comision, 0);
+  const totalDesemb   = totalCapital + totalInteres + totalMora + totalComision;
+
+  return (
+    <div className="card" style={{ marginBottom: 22 }}>
+      <div className="card-head">
+        <div className="card-title">Historial de pagos</div>
+        <div className="card-actions" style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
+          {pagos.length} pago{pagos.length === 1 ? '' : 's'}
+        </div>
+      </div>
+      <table className="table">
+        <thead>
+          <tr>
+            <th className="num" style={{ width: 100 }}>Fecha</th>
+            <th className="num">Total</th>
+            <th className="num">Capital</th>
+            <th className="num">Interés</th>
+            <th className="num">Mora</th>
+            <th className="num">Comisión</th>
+            <th>Método</th>
+            <th>Referencia</th>
+            <th>Banco</th>
+            <th>Notas</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pagos.map(p => (
+            <tr key={p.id}>
+              <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{formatFecha(p.fecha)}</td>
+              <td className="num cell-strong">{Q(p.montoTotal)}</td>
+              <td className="num">{Q(p.capital)}</td>
+              <td className="num cell-mute">{p.interes ? Q(p.interes) : '—'}</td>
+              <td className="num cell-mute">{p.mora ? Q(p.mora) : '—'}</td>
+              <td className="num cell-mute">{p.comision ? Q(p.comision) : '—'}</td>
+              <td><span className="badge badge-outline" style={{ fontSize: 10.5 }}>{p.metodo}</span></td>
+              <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }} title={p.referencia}>{p.referencia || '—'}</td>
+              <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={p.cuentaBancoName}>{p.cuentaBancoName || '—'}</td>
+              <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={p.notas}>{p.notas || '—'}</td>
+            </tr>
+          ))}
+          <tr style={{ background: 'var(--paper-tint)', fontWeight: 600 }}>
+            <td className="num" style={{ textAlign: 'right', color: 'var(--ink-3)' }}>Totales</td>
+            <td className="num cell-strong">{Q(totalDesemb)}</td>
+            <td className="num cell-strong">{Q(totalCapital)}</td>
+            <td className="num">{totalInteres ? Q(totalInteres) : '—'}</td>
+            <td className="num">{totalMora ? Q(totalMora) : '—'}</td>
+            <td className="num">{totalComision ? Q(totalComision) : '—'}</td>
+            <td colSpan={4}></td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   );
 }

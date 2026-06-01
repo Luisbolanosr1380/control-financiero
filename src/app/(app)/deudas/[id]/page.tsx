@@ -1,13 +1,18 @@
 import Link from 'next/link';
 import { getDeudaPorId } from '@/lib/db/deudas';
+import { getPagosPorDeuda, getCuentasBancoParaPago } from '@/lib/db/pagos-deudas';
 import { DeudaDetalle } from '@/components/deudas/deuda-detalle';
 import { I } from '@/components/common/icons';
 
-export const revalidate = 60;
+export const revalidate = 30;
 
 export default async function DeudaDetallePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const deuda = await getDeudaPorId(id);
+  const [deuda, pagos, cuentasBanco] = await Promise.all([
+    getDeudaPorId(id),
+    getPagosPorDeuda(id),
+    getCuentasBancoParaPago(),
+  ]);
 
   if (!deuda) {
     return (
@@ -25,5 +30,5 @@ export default async function DeudaDetallePage({ params }: { params: Promise<{ i
     );
   }
 
-  return <DeudaDetalle deuda={deuda} />;
+  return <DeudaDetalle deuda={deuda} pagos={pagos} cuentasBanco={cuentasBanco} />;
 }
