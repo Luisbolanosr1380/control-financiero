@@ -282,19 +282,52 @@ export async function getAcreedores(): Promise<Acreedor[]> {
   }
 }
 
+/**
+ * Mapa deudaId → suma de Monto_Pago de PAGOS_PROVEEDORES vinculados.
+ * Lo calculamos en código porque el rollup Total_Pagado de Airtable
+ * no está sumando correctamente (verificado en smoke F-028). El rollup
+ * Num_Pagos sí cuenta records bien, pero el de monto está mal apuntado.
+ * Esto nos vuelve independientes de la configuración del rollup.
+ */
+async function getTotalPagadoPorDeuda(): Promise<Map<string, { suma: number; count: number }>> {
+  if (USE_MOCK || !airtable) return new Map();
+  try {
+    const recs = await airtable(TABLES.PAGOS_PROVEEDORES)
+      .select({ fields: ['Deuda', 'Monto_Pago'], maxRecords: 5000 })
+      .all();
+    const m = new Map<string, { suma: number; count: number }>();
+    for (const r of recs) {
+      const f = r.fields as Record<string, unknown>;
+      const deudaIds = Array.isArray(f.Deuda) ? f.Deuda as string[] : [];
+      const monto = Number(f.Monto_Pago ?? 0);
+      for (const id of deudaIds) {
+        const e = m.get(id) ?? { suma: 0, count: 0 };
+        e.suma += monto;
+        e.count += 1;
+        m.set(id, e);
+      }
+    }
+    return m;
+  } catch {
+    return new Map();
+  }
+}
+
 export async function getDeudas(filtros: DeudasFiltros = {}): Promise<Deuda[]> {
   if (USE_MOCK || !airtable) return [];
   try {
-    const [recs, acreedores, centrosById] = await Promise.all([
+    const [recs, acreedores, centrosById, pagadosPorDeuda] = await Promise.all([
       airtable(TABLES.DEUDAS).select({ maxRecords: 500 }).all(),
       getAcreedores(),
       getCentrosNombreById(),
+      getTotalPagadoPorDeuda(),
     ]);
     const acreedoresById = new Map(acreedores.map(a => [a.id, a]));
 
     let deudas = recs
       .filter(r => !bool((r.fields as Record<string, unknown>)[FD.NO_INCLUIR]))
-      .map(r => deudaFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }, acreedoresById, centrosById));
+      .map(r => deudaFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }, acreedoresById, centrosById))
+      .map(d => recomputeFromPagos(d, pagadosPorDeuda.get(d.id)));
 
     if (filtros.estado)         deudas = deudas.filter(d => d.estado === filtros.estado);
     if (filtros.tipoDocumento)  deudas = deudas.filter(d => d.tipoDocumento === filtros.tipoDocumento);
@@ -316,18 +349,42 @@ export async function getDeudas(filtros: DeudasFiltros = {}): Promise<Deuda[]> {
 export async function getDeudaPorId(id: string): Promise<Deuda | null> {
   if (USE_MOCK || !airtable) return null;
   try {
-    const [rec, acreedores, centrosById] = await Promise.all([
+    const [rec, acreedores, centrosById, pagadosPorDeuda] = await Promise.all([
       airtable(TABLES.DEUDAS).find(id),
       getAcreedores(),
       getCentrosNombreById(),
+      getTotalPagadoPorDeuda(),
     ]);
     if (!rec) return null;
     const acreedoresById = new Map(acreedores.map(a => [a.id, a]));
-    return deudaFromRecord({ id: rec.id, fields: rec.fields as Record<string, unknown> }, acreedoresById, centrosById);
+    const d = deudaFromRecord({ id: rec.id, fields: rec.fields as Record<string, unknown> }, acreedoresById, centrosById);
+    return recomputeFromPagos(d, pagadosPorDeuda.get(d.id));
   } catch (err) {
     console.error('Error fetching deuda:', err);
     return null;
   }
+}
+
+/**
+ * Recalcula totalPagado / saldoPendiente / pctAvance / numPagos / estadoDeuda
+ * a partir de los pagos reales en PAGOS_PROVEEDORES (suma de Monto_Pago).
+ * Si una deuda no tiene pagos, los rollups Airtable de 0 quedan como están.
+ * Si Saldo_Pendiente queda en <=0.01, marcamos estadoDeuda='Liquidada'.
+ */
+function recomputeFromPagos(d: Deuda, agg: { suma: number; count: number } | undefined): Deuda {
+  if (!agg || agg.count === 0) return d;
+  const totalPagado = agg.suma;
+  const saldoPendiente = Math.max(0, d.montoGTQ - totalPagado);
+  const pctAvance = d.montoGTQ > 0 ? Math.min(100, (totalPagado / d.montoGTQ) * 100) : 0;
+  const estadoDeuda = saldoPendiente <= 0.01 ? 'Liquidada' : d.estadoDeuda;
+  return {
+    ...d,
+    totalPagado,
+    saldoPendiente,
+    pctAvance,
+    numPagos: agg.count,
+    estadoDeuda,
+  };
 }
 
 const VENTANA_PROXIMOS_DIAS = 30;
