@@ -5,12 +5,14 @@ import { useRouter } from 'next/navigation';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid } from 'recharts';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { NuevaDeudaButton } from '@/components/deudas/nueva-deuda-button';
 import type { Acreedor, Deuda, KPIsDeudas, CategoriaPasivo } from '@/lib/db/deudas';
 
 interface Props {
   deudas: Deuda[];
   kpis: KPIsDeudas;
   acreedores: Acreedor[];
+  centros: Array<{ id: string; nombre: string }>;
 }
 
 type EstadoFiltro = 'todas' | 'vigentes' | 'vencidas';
@@ -40,7 +42,7 @@ const CATEGORIA_ICONS: Record<CategoriaPasivo, string> = {
 
 const DONUT_COLORS = ['#8A2A2A', '#B8801C', '#5A6A2E', '#2B3A6B', '#7A857F', '#1A3B33', '#A8B0AB', '#4A5A53'];
 
-export function DeudasClient({ deudas, kpis, acreedores }: Props) {
+export function DeudasClient({ deudas, kpis, acreedores, centros }: Props) {
   const router = useRouter();
 
   const [estado, setEstado] = useState<EstadoFiltro>('todas');
@@ -53,11 +55,8 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
 
   // Opciones únicas para filtros
   const tiposDoc = useMemo(() => [...new Set(deudas.map(d => d.tipoDocumento).filter(Boolean))].sort(), [deudas]);
-  const centros  = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const d of deudas) if (d.centroCostoId) m.set(d.centroCostoId, d.centroCostoNombre || d.centroCostoId);
-    return [...m.entries()].map(([id, n]) => ({ id, nombre: n })).sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [deudas]);
+  // Usa la lista completa de centros activos (prop) — incluye centros sin deudas todavía.
+  const centrosFiltro = useMemo(() => [...centros].sort((a, b) => a.nombre.localeCompare(b.nombre)), [centros]);
 
   const vencidas = useMemo(() => deudas.filter(d => d.vencida || d.diasEnMora > 0).sort((a, b) => b.diasEnMora - a.diasEnMora), [deudas]);
 
@@ -114,6 +113,9 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
           <div className="page-subtitle">
             Pasivo total: <span className="num">{Q(kpis.totalPasivo)}</span> · <span className="num">{deudas.length}</span> deudas vigentes
           </div>
+        </div>
+        <div className="page-actions">
+          <NuevaDeudaButton acreedores={acreedores} centros={centros} />
         </div>
       </div>
 
@@ -308,7 +310,7 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
           </select>
           <select value={centroId} onChange={(e) => setCentroId(e.target.value)} style={inputStyle}>
             <option value="">Centro de costo (todos)</option>
-            {centros.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+            {centrosFiltro.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
           </select>
           <select value={categoria} onChange={(e) => setCategoria((e.target.value || '') as CategoriaPasivo | '')} style={inputStyle}>
             <option value="">Categoría (todas)</option>

@@ -2,13 +2,16 @@ import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { RegistrarPagoButton } from '@/components/deudas/registrar-pago-button';
-import type { Deuda } from '@/lib/db/deudas';
+import { EditarDeudaButton } from '@/components/deudas/editar-deuda-button';
+import type { Deuda, Acreedor } from '@/lib/db/deudas';
 import type { PagoDeuda } from '@/lib/db/pagos-deudas';
 
 interface Props {
   deuda: Deuda;
   pagos: PagoDeuda[];
   cuentasBanco: string[];
+  acreedores: Acreedor[];
+  centros: Array<{ id: string; nombre: string }>;
 }
 
 function formatFecha(s: string): string {
@@ -19,7 +22,7 @@ function formatFecha(s: string): string {
   return `${day}/${m}/${y}`;
 }
 
-export function DeudaDetalle({ deuda: d, pagos, cuentasBanco }: Props) {
+export function DeudaDetalle({ deuda: d, pagos, cuentasBanco, acreedores, centros }: Props) {
   const pctAvance = Math.max(0, Math.min(100, d.pctAvance));
   const enMora = d.diasEnMora > 0;
   const proxima = !enMora && d.diasAVencer >= 0 && d.diasAVencer <= 30;
@@ -51,6 +54,12 @@ export function DeudaDetalle({ deuda: d, pagos, cuentasBanco }: Props) {
           </div>
         </div>
         <div className="page-actions">
+          <EditarDeudaButton
+            deuda={d}
+            acreedores={acreedores}
+            centros={centros}
+            numPagos={d.numPagos}
+          />
           <RegistrarPagoButton
             deudaId={d.id}
             deudaNombre={d.nombreDeuda}
