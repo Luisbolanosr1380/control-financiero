@@ -385,8 +385,8 @@ export const aiTools = {
       const k = await getKPIsDeudas();
       return {
         totalPasivoQ: Math.round(k.totalPasivo),
-        deudaExternaQ: Math.round(k.deudaExterna),
-        cuentaConSociosQ: Math.round(k.cuentaConSocios),
+        deudaExternaQ: Math.round(k.porCategoria.externa.monto),
+        cuentaConSociosQ: Math.round(k.porCategoria.socios.monto),
         vencidas: {
           cantidad: k.vencidas.cantidad,
           montoTotalQ: Math.round(k.vencidas.montoTotal),
@@ -400,7 +400,7 @@ export const aiTools = {
         topAcreedores: k.porAcreedor.map(a => ({
           acreedor: a.acreedor,
           saldoQ: Math.round(a.saldo),
-          esSocio: a.esSocio,
+          esSocio: a.categoria === 'socios',
         })),
         porTipo: k.porTipo.map(t => ({ tipo: t.tipo, saldoQ: Math.round(t.saldo), cantidad: t.cantidad })),
       };

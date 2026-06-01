@@ -66,6 +66,26 @@ export interface Acreedor {
   notas: string;
 }
 
+/**
+ * Categoría derivada del pasivo (4 buckets), pensada para distinguir la
+ * naturaleza legal/operativa de la obligación. Mapea desde Tipo_Acreedor
+ * + Es_Parte_Relacionada del acreedor:
+ *  - 'socios'                → Tipo_Acreedor === 'Socio' OR Es_Parte_Relacionada === true
+ *  - 'ex_empleados'          → Tipo_Acreedor === 'Ex-Empleado'
+ *  - 'asesores_relacionados' → Tipo_Acreedor === 'Asesor Relacionado'
+ *  - 'externa'               → el resto (bancos, fisco, tarjetas, proveedores).
+ */
+export type CategoriaPasivo = 'externa' | 'socios' | 'ex_empleados' | 'asesores_relacionados';
+
+export const CATEGORIAS_PASIVO: readonly CategoriaPasivo[] = ['externa', 'socios', 'ex_empleados', 'asesores_relacionados'];
+
+export function clasificarPasivo(tipoAcreedor: string, esParteRelacionada: boolean): CategoriaPasivo {
+  if (tipoAcreedor === 'Socio' || esParteRelacionada) return 'socios';
+  if (tipoAcreedor === 'Ex-Empleado')                return 'ex_empleados';
+  if (tipoAcreedor === 'Asesor Relacionado')         return 'asesores_relacionados';
+  return 'externa';
+}
+
 export interface Deuda {
   id: string;
   claveDeuda: string;
@@ -74,6 +94,7 @@ export interface Deuda {
   acreedorNombre: string;
   tipoAcreedor: string;
   esParteRelacionada: boolean;
+  categoriaPasivo: CategoriaPasivo;
   tipoDocumento: string;
   centroCostoId: string;
   centroCostoNombre: string;
@@ -104,14 +125,14 @@ export interface DeudasFiltros {
   acreedorId?: string;
   centroCostoId?: string;
   vencidasOnly?: boolean;
-  soloSocios?: boolean;
-  soloExternas?: boolean;
+  categoria?: CategoriaPasivo;      // filtro nuevo (reemplaza soloSocios/soloExternas)
+  /** @deprecated usar categoria='socios' */  soloSocios?: boolean;
+  /** @deprecated usar categoria='externa' */ soloExternas?: boolean;
 }
 
 export interface KPIsDeudas {
   totalPasivo: number;
-  deudaExterna: number;
-  cuentaConSocios: number;
+  porCategoria: Record<CategoriaPasivo, { monto: number; cantidad: number }>;
   vencidas: {
     cantidad: number;
     montoTotal: number;
@@ -120,7 +141,7 @@ export interface KPIsDeudas {
   };
   proximosVencimientos: { cantidad: number; montoTotal: number };
   porTipo: Array<{ tipo: string; saldo: number; cantidad: number }>;
-  porAcreedor: Array<{ acreedor: string; saldo: number; esSocio: boolean }>;
+  porAcreedor: Array<{ acreedor: string; saldo: number; categoria: CategoriaPasivo }>;
 }
 
 // ============================================================
@@ -191,14 +212,18 @@ function deudaFromRecord(
   const saldo         = num(f[FD.SALDO]);
   const pctAvanceRaw  = num(f[FD.PCT_AVANCE]);
 
+  const tipoAcreedor = ac?.tipoAcreedor ?? '';
+  const esParteRelacionada = ac?.esParteRelacionada ?? false;
+
   return {
     id:                  r.id,
     claveDeuda:          str(f[FD.CLAVE]),
     nombreDeuda:         str(f[FD.NOMBRE_DEUDA]),
     acreedorId,
     acreedorNombre:      ac?.nombre ?? arrFirstName(f[FD.ACREEDOR]),
-    tipoAcreedor:        ac?.tipoAcreedor ?? '',
-    esParteRelacionada:  ac?.esParteRelacionada ?? false,
+    tipoAcreedor,
+    esParteRelacionada,
+    categoriaPasivo:     clasificarPasivo(tipoAcreedor, esParteRelacionada),
     tipoDocumento:       selectName(f[FD.TIPO_DOC]),
     centroCostoId:       centroId,
     centroCostoNombre:   centrosById.get(centroId) ?? arrFirstName(f[FD.CENTRO_COSTO]),
@@ -276,8 +301,10 @@ export async function getDeudas(filtros: DeudasFiltros = {}): Promise<Deuda[]> {
     if (filtros.acreedorId)     deudas = deudas.filter(d => d.acreedorId === filtros.acreedorId);
     if (filtros.centroCostoId)  deudas = deudas.filter(d => d.centroCostoId === filtros.centroCostoId);
     if (filtros.vencidasOnly)   deudas = deudas.filter(d => d.vencida || d.diasEnMora > 0);
-    if (filtros.soloSocios)     deudas = deudas.filter(d => d.esParteRelacionada);
-    if (filtros.soloExternas)   deudas = deudas.filter(d => !d.esParteRelacionada);
+    if (filtros.categoria)      deudas = deudas.filter(d => d.categoriaPasivo === filtros.categoria);
+    // Legacy flags (mantenidos por compatibilidad — usar `categoria` en su lugar)
+    if (filtros.soloSocios)     deudas = deudas.filter(d => d.categoriaPasivo === 'socios');
+    if (filtros.soloExternas)   deudas = deudas.filter(d => d.categoriaPasivo === 'externa');
 
     return deudas;
   } catch (err) {
@@ -309,17 +336,26 @@ export async function getKPIsDeudas(): Promise<KPIsDeudas> {
   const deudas = await getDeudas();
   const vigentes = deudas.filter(d => d.saldoPendiente > 0);
 
-  const totalPasivo     = vigentes.reduce((s, d) => s + d.saldoPendiente, 0);
-  const cuentaConSocios = vigentes.filter(d => d.esParteRelacionada).reduce((s, d) => s + d.saldoPendiente, 0);
-  const deudaExterna    = totalPasivo - cuentaConSocios;
+  const totalPasivo = vigentes.reduce((s, d) => s + d.saldoPendiente, 0);
+
+  const porCategoria: KPIsDeudas['porCategoria'] = {
+    externa:               { monto: 0, cantidad: 0 },
+    socios:                { monto: 0, cantidad: 0 },
+    ex_empleados:          { monto: 0, cantidad: 0 },
+    asesores_relacionados: { monto: 0, cantidad: 0 },
+  };
+  for (const d of vigentes) {
+    const b = porCategoria[d.categoriaPasivo];
+    b.monto += d.saldoPendiente;
+    b.cantidad += 1;
+  }
 
   const venc = vigentes.filter(d => d.vencida || d.diasEnMora > 0);
-  const sumaMora       = venc.reduce((s, d) => s + d.diasEnMora, 0);
-  const masAntigua     = venc.reduce((m, d) => Math.max(m, d.diasEnMora), 0);
+  const sumaMora   = venc.reduce((s, d) => s + d.diasEnMora, 0);
+  const masAntigua = venc.reduce((m, d) => Math.max(m, d.diasEnMora), 0);
 
   const proximos = vigentes.filter(d => !d.vencida && d.diasAVencer >= 0 && d.diasAVencer <= VENTANA_PROXIMOS_DIAS);
 
-  // Breakdowns
   const porTipoMap = new Map<string, { saldo: number; cantidad: number }>();
   for (const d of vigentes) {
     const k = d.tipoDocumento || 'Sin tipo';
@@ -331,22 +367,21 @@ export async function getKPIsDeudas(): Promise<KPIsDeudas> {
     .map(([tipo, v]) => ({ tipo, saldo: v.saldo, cantidad: v.cantidad }))
     .sort((a, b) => b.saldo - a.saldo);
 
-  const porAcrMap = new Map<string, { saldo: number; esSocio: boolean }>();
+  const porAcrMap = new Map<string, { saldo: number; categoria: CategoriaPasivo }>();
   for (const d of vigentes) {
     const k = d.acreedorNombre || 'Sin acreedor';
-    const a = porAcrMap.get(k) ?? { saldo: 0, esSocio: d.esParteRelacionada };
+    const a = porAcrMap.get(k) ?? { saldo: 0, categoria: d.categoriaPasivo };
     a.saldo += d.saldoPendiente;
     porAcrMap.set(k, a);
   }
   const porAcreedor = [...porAcrMap.entries()]
-    .map(([acreedor, v]) => ({ acreedor, saldo: v.saldo, esSocio: v.esSocio }))
+    .map(([acreedor, v]) => ({ acreedor, saldo: v.saldo, categoria: v.categoria }))
     .sort((a, b) => b.saldo - a.saldo)
     .slice(0, 10);
 
   return {
     totalPasivo,
-    deudaExterna,
-    cuentaConSocios,
+    porCategoria,
     vencidas: {
       cantidad: venc.length,
       montoTotal: venc.reduce((s, d) => s + d.saldoPendiente, 0),

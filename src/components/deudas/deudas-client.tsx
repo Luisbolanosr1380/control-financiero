@@ -83,7 +83,7 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
   }
 
   const donutData = kpis.porTipo.map((p, i) => ({ name: p.tipo, value: p.saldo, color: DONUT_COLORS[i % DONUT_COLORS.length] }));
-  const barData   = kpis.porAcreedor.map(p => ({ name: p.acreedor, saldo: p.saldo, esSocio: p.esSocio }));
+  const barData   = kpis.porAcreedor.map(p => ({ name: p.acreedor, saldo: p.saldo, categoria: p.categoria }));
 
   return (
     <div className="page">
@@ -100,12 +100,12 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 22 }}>
         <KpiCard
           label="🔴 Deuda externa"
-          value={Q(kpis.deudaExterna)}
+          value={Q(kpis.porCategoria.externa.monto)}
           hint="Bancos, tarjetas, proveedores, fisco"
         />
         <KpiCard
           label="🤝 Cuenta con socios"
-          value={Q(kpis.cuentaConSocios)}
+          value={Q(kpis.porCategoria.socios.monto)}
           hint="Reembolsos / aportes de partes relacionadas"
         />
         <KpiCard
@@ -215,7 +215,7 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
                   tick={(props) => {
                     const { x, y, payload } = props as { x: number; y: number; payload: { value: string } };
                     const it = barData.find(b => b.name === payload.value);
-                    const label = (it?.esSocio ? '🤝 ' : '') + (payload.value.length > 18 ? payload.value.slice(0, 17) + '…' : payload.value);
+                    const label = (it?.categoria === 'socios' ? '🤝 ' : '') + (payload.value.length > 18 ? payload.value.slice(0, 17) + '…' : payload.value);
                     return <text x={x} y={y} dy={4} textAnchor="end" fontSize={10.5} fill="var(--ink-2)">{label}</text>;
                   }}
                 />
@@ -224,7 +224,7 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
                   contentStyle={{ background: 'var(--paper)', border: '1px solid var(--line-2)', borderRadius: 4, fontSize: 12 }}
                 />
                 <Bar dataKey="saldo" radius={[0, 3, 3, 0]} maxBarSize={22}>
-                  {barData.map((b, i) => <Cell key={i} fill={b.esSocio ? '#B8801C' : '#1A3B33'} />)}
+                  {barData.map((b, i) => <Cell key={i} fill={b.categoria === 'socios' ? '#B8801C' : '#1A3B33'} />)}
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
