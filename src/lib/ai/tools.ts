@@ -20,6 +20,7 @@ import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getAnaliticaIngresos, getFacturadoPorRango, type FiltroNaturaleza } from '@/lib/db/analitica';
 import { getProyeccionMesActual } from '@/lib/db/proyecciones';
 import { getKPIsDeudas, getDeudas, getAcreedores, clasificarPasivo } from '@/lib/db/deudas';
+import { getPagosPorDeuda, getPagosPorAcreedor, getPagosRecientes } from '@/lib/db/pagos-deudas';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -494,6 +495,151 @@ export const aiTools = {
           diasEnMora: d.diasEnMora,
           fechaVencimiento: d.fechaVencimientoReal || d.fechaVencimiento,
           moraAcumuladaQ: Math.round(d.moraAcumulada),
+        })),
+      };
+    },
+  }),
+
+  // ===========================================================================
+  // PAGOS A ACREEDORES (F-028)
+  // ===========================================================================
+
+  getPagosPorDeuda: tool({
+    description:
+      'Historial de pagos hechos contra UNA deuda específica. Devuelve cantidad, total pagado en capital, y detalle de cada pago (fecha, capital, interés, mora, comisión, método, referencia, banco, notas). ' +
+      'USAR cuando el usuario pregunte "¿qué cuotas llevo del préstamo X?", "¿cuándo pagué la última cuota de Y?".',
+    parameters: z.object({
+      nombreDeuda: z.string().describe('Nombre o fragmento del nombre de la deuda (o nombre del acreedor para encontrarla)'),
+    }),
+    execute: async ({ nombreDeuda }) => {
+      const deudas = await getDeudas();
+      const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      const q = norm(nombreDeuda);
+      const matches = deudas.filter(d =>
+        norm(d.nombreDeuda).includes(q) ||
+        norm(d.acreedorNombre).includes(q) ||
+        norm(d.claveDeuda).includes(q)
+      );
+      if (matches.length === 0) return { ok: false, motivo: 'deuda_no_encontrada' };
+      if (matches.length > 1) {
+        return {
+          ok: false,
+          motivo: 'multiples_candidatos',
+          candidatos: matches.slice(0, 8).map(d => ({
+            id: d.id,
+            nombre: d.nombreDeuda,
+            acreedor: d.acreedorNombre,
+            saldoQ: Math.round(d.saldoPendiente),
+          })),
+        };
+      }
+      const d = matches[0];
+      const pagos = await getPagosPorDeuda(d.id);
+      return {
+        ok: true,
+        deuda: {
+          nombre: d.nombreDeuda,
+          acreedor: d.acreedorNombre,
+          saldoPendienteQ: Math.round(d.saldoPendiente),
+          montoOriginalQ: Math.round(d.montoOriginal),
+          pctAvance: Number(d.pctAvance.toFixed(1)),
+        },
+        totalPagos: pagos.length,
+        totalCapitalPagadoQ: Math.round(pagos.reduce((s, p) => s + p.capital, 0)),
+        pagos: pagos.map(p => ({
+          fecha: p.fecha,
+          montoTotalQ: Math.round(p.montoTotal),
+          capitalQ: Math.round(p.capital),
+          interesQ: Math.round(p.interes),
+          moraQ: Math.round(p.mora),
+          comisionQ: Math.round(p.comision),
+          metodo: p.metodo,
+          referencia: p.referencia || null,
+          banco: p.cuentaBancoName || null,
+        })),
+      };
+    },
+  }),
+
+  getPagosPorAcreedor: tool({
+    description:
+      'Consolidado de todos los pagos hechos a UN acreedor a través de todas sus deudas. ' +
+      'USAR cuando el usuario pregunte "¿cuánto le pagué a Mónica este año?", "¿cuándo fue mi último pago a Banco Industrial?".',
+    parameters: z.object({
+      nombreAcreedor: z.string(),
+      desde: z.string().describe('YYYY-MM-DD para filtrar pagos desde esa fecha. Pasar "" si no se filtra por desde.'),
+      hasta: z.string().describe('YYYY-MM-DD para filtrar pagos hasta esa fecha. Pasar "" si no se filtra por hasta.'),
+    }),
+    execute: async ({ nombreAcreedor, desde, hasta }) => {
+      const acreedores = await getAcreedores();
+      const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      const q = norm(nombreAcreedor);
+      const matches = acreedores.filter(a => norm(a.nombre).includes(q) || norm(a.nombreLegal).includes(q));
+      if (matches.length === 0) return { ok: false, motivo: 'acreedor_no_encontrado' };
+      if (matches.length > 1) {
+        return {
+          ok: false,
+          motivo: 'multiples_candidatos',
+          candidatos: matches.slice(0, 8).map(a => ({ nombre: a.nombre || a.nombreLegal, tipo: a.tipoAcreedor, categoria: clasificarPasivo(a.tipoAcreedor, a.esParteRelacionada) })),
+        };
+      }
+      const ac = matches[0];
+      let pagos = await getPagosPorAcreedor(ac.id);
+      if (desde) pagos = pagos.filter(p => p.fecha >= desde);
+      if (hasta) pagos = pagos.filter(p => p.fecha <= hasta);
+      return {
+        ok: true,
+        acreedor: {
+          nombre: ac.nombre || ac.nombreLegal,
+          tipoAcreedor: ac.tipoAcreedor,
+          categoria: clasificarPasivo(ac.tipoAcreedor, ac.esParteRelacionada),
+        },
+        rango: { desde: desde ?? null, hasta: hasta ?? null },
+        totalPagos: pagos.length,
+        totalCapitalQ: Math.round(pagos.reduce((s, p) => s + p.capital, 0)),
+        totalDesembolsadoQ: Math.round(pagos.reduce((s, p) => s + p.montoTotal, 0)),
+        pagos: pagos.slice(0, 50).map(p => ({
+          fecha: p.fecha,
+          montoTotalQ: Math.round(p.montoTotal),
+          capitalQ: Math.round(p.capital),
+          metodo: p.metodo,
+          referencia: p.referencia || null,
+        })),
+      };
+    },
+  }),
+
+  getPagosRecientes: tool({
+    description:
+      'Lista los últimos pagos a deudas (cualquier acreedor). Útil para "¿qué pagos hice esta semana?", "¿los últimos pagos por transferencia?", "¿pagos de mayo?". ' +
+      'Permite filtros opcionales por método, banco y rango de fechas.',
+    parameters: z.object({
+      limite: z.number().int().min(1).max(100).describe('Cuántos devolver (típicamente 10-30)'),
+      metodo: z.string().describe('Método de pago para filtrar, o "" para no filtrar. Valores: Transferencia / Cheque / Efectivo / Tarjeta / Domiciliado / Compensación.'),
+      banco: z.string().describe('Nombre del singleSelect Cuenta_Banco, o "" para no filtrar.'),
+      desde: z.string().describe('YYYY-MM-DD, o "" para no filtrar.'),
+      hasta: z.string().describe('YYYY-MM-DD, o "" para no filtrar.'),
+    }),
+    execute: async ({ limite, metodo, banco, desde, hasta }) => {
+      let pagos = await getPagosRecientes(200);
+      if (metodo) pagos = pagos.filter(p => p.metodo === metodo);
+      if (banco)  pagos = pagos.filter(p => p.cuentaBancoName === banco);
+      if (desde)  pagos = pagos.filter(p => p.fecha >= desde);
+      if (hasta)  pagos = pagos.filter(p => p.fecha <= hasta);
+      const top = pagos.slice(0, limite);
+      return {
+        totalPagos: pagos.length,
+        totalCapitalQ: Math.round(pagos.reduce((s, p) => s + p.capital, 0)),
+        totalDesembolsadoQ: Math.round(pagos.reduce((s, p) => s + p.montoTotal, 0)),
+        pagos: top.map(p => ({
+          fecha: p.fecha,
+          acreedor: p.acreedorNombre,
+          deuda: p.deudaNombre,
+          montoTotalQ: Math.round(p.montoTotal),
+          capitalQ: Math.round(p.capital),
+          metodo: p.metodo,
+          referencia: p.referencia || null,
+          banco: p.cuentaBancoName || null,
         })),
       };
     },
