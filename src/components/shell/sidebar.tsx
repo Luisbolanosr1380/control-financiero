@@ -29,10 +29,11 @@ function buildNav(opts: { deudasVencidasCount?: number } = {}): NavGroup[] {
       { href: '/clientes',     label: 'Clientes',     icon: 'Users' },
     ]},
     { group: 'Gastos', items: [
-      { href: '/gastos',   label: 'Gastos',   icon: 'Expense' },
-      { href: '/bancos',   label: 'Bancos',   icon: 'Bank' },
-      { href: '/planilla', label: 'Planilla', icon: 'Payroll' },
-      { href: '/deudas',   label: 'Deudas',   icon: 'Debt', badge: deudasBadge },
+      { href: '/gastos',       label: 'Gastos',         icon: 'Expense' },
+      { href: '/bancos',       label: 'Bancos',         icon: 'Bank' },
+      { href: '/planilla',     label: 'Planilla',       icon: 'Payroll' },
+      { href: '/deudas',       label: 'Deudas',         icon: 'Debt', badge: deudasBadge },
+      { href: '/pagos-deudas', label: 'Pagos a deudas', icon: 'Coins' },
     ]},
     { group: 'Contabilidad', items: [
       { href: '/asientos', label: 'Asientos',            icon: 'Journal' },
