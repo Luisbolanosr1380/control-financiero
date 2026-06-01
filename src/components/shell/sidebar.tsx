@@ -16,32 +16,42 @@ interface NavGroup {
   items: NavItem[];
 }
 
-const NAV: NavGroup[] = [
-  { group: 'Operación', items: [
-    { href: '/dashboard',    label: 'Dashboard',    icon: 'Dashboard' },
-    { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: { text: '5 vencidas', kind: 'wine' } },
-    { href: '/cobros',       label: 'Cobros',       icon: 'Coins' },
-    { href: '/cobros/identificar', label: 'Identificar pago', icon: 'Search' },
-    { href: '/clientes',     label: 'Clientes',     icon: 'Users' },
-  ]},
-  { group: 'Gastos', items: [
-    { href: '/gastos',   label: 'Gastos',   icon: 'Expense' },
-    { href: '/bancos',   label: 'Bancos',   icon: 'Bank' },
-    { href: '/planilla', label: 'Planilla', icon: 'Payroll' },
-    { href: '/deudas',   label: 'Deudas',   icon: 'Debt' },
-  ]},
-  { group: 'Contabilidad', items: [
-    { href: '/asientos', label: 'Asientos',            icon: 'Journal' },
-    { href: '/estados',  label: 'Estados Financieros', icon: 'Statement' },
-  ]},
-  { group: 'Inteligencia', items: [
-    { href: '/analitica', label: 'Analítica',           icon: 'TrendUp' },
-    { href: '/ai',        label: 'AI Insights',         icon: 'Sparkles', badge: { text: '3 alertas', kind: 'warn' } },
-  ]},
-];
+function buildNav(opts: { deudasVencidasCount?: number } = {}): NavGroup[] {
+  const deudasBadge = opts.deudasVencidasCount && opts.deudasVencidasCount > 0
+    ? { text: `${opts.deudasVencidasCount} vencidas`, kind: 'wine' as const }
+    : undefined;
+  return [
+    { group: 'Operación', items: [
+      { href: '/dashboard',    label: 'Dashboard',    icon: 'Dashboard' },
+      { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: { text: '5 vencidas', kind: 'wine' } },
+      { href: '/cobros',       label: 'Cobros',       icon: 'Coins' },
+      { href: '/cobros/identificar', label: 'Identificar pago', icon: 'Search' },
+      { href: '/clientes',     label: 'Clientes',     icon: 'Users' },
+    ]},
+    { group: 'Gastos', items: [
+      { href: '/gastos',   label: 'Gastos',   icon: 'Expense' },
+      { href: '/bancos',   label: 'Bancos',   icon: 'Bank' },
+      { href: '/planilla', label: 'Planilla', icon: 'Payroll' },
+      { href: '/deudas',   label: 'Deudas',   icon: 'Debt', badge: deudasBadge },
+    ]},
+    { group: 'Contabilidad', items: [
+      { href: '/asientos', label: 'Asientos',            icon: 'Journal' },
+      { href: '/estados',  label: 'Estados Financieros', icon: 'Statement' },
+    ]},
+    { group: 'Inteligencia', items: [
+      { href: '/analitica', label: 'Analítica',           icon: 'TrendUp' },
+      { href: '/ai',        label: 'AI Insights',         icon: 'Sparkles', badge: { text: '3 alertas', kind: 'warn' } },
+    ]},
+  ];
+}
 
-export function Sidebar() {
+interface SidebarProps {
+  deudasVencidasCount?: number;
+}
+
+export function Sidebar({ deudasVencidasCount }: SidebarProps = {}) {
   const pathname = usePathname();
+  const NAV = buildNav({ deudasVencidasCount });
 
   // El item activo es el de href más específico que matchea (evita que
   // /cobros y /cobros/identificar se marquen ambos a la vez).

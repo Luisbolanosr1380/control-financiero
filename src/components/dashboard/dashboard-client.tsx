@@ -16,6 +16,11 @@ interface Props {
   aging: AgingEntry[];
   topDeudores: TopDeudor[];
   clientesRiesgo: AnalisisCliente[];
+  alertaDeudasVencidas?: {
+    montoTotal: number;
+    cantidad: number;
+    diasPromedio: number;
+  } | null;
 }
 
 const RIESGO_BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
@@ -33,7 +38,7 @@ function TendenciaIcon({ t }: { t: Tendencia }) {
   return <span style={{ display: 'inline-block', width: 9, height: 2, background: 'var(--ink-4)', borderRadius: 1 }} />;
 }
 
-export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo }: Props) {
+export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo, alertaDeudasVencidas }: Props) {
   const router = useRouter();
 
   const agingTotal = aging.reduce((s, b) => s + b.amount, 0);
@@ -42,6 +47,32 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
 
   return (
     <div className="page">
+      {/* Banner deudas vencidas (F-027 parte D) */}
+      {alertaDeudasVencidas && (
+        <button
+          type="button"
+          onClick={() => router.push('/deudas')}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            width: '100%', textAlign: 'left',
+            background: 'rgba(138, 42, 42, 0.08)', border: '1px solid var(--wine)',
+            borderLeft: '4px solid var(--wine)', borderRadius: 6,
+            padding: '12px 16px', marginBottom: 18, cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--wine)' }}>
+            <I.Alert size={16} />
+            <span style={{ fontSize: 13.5, fontWeight: 600 }}>
+              {Q(alertaDeudasVencidas.montoTotal)} en mora — {alertaDeudasVencidas.cantidad} deudas, {alertaDeudasVencidas.diasPromedio.toFixed(0)} días promedio.
+            </span>
+          </div>
+          <span style={{ fontSize: 12.5, color: 'var(--wine)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            Ver detalle <I.ChevDown size={12} style={{ transform: 'rotate(-90deg)' }} />
+          </span>
+        </button>
+      )}
+
       {/* Header / saludo */}
       <div className="page-header">
         <div>

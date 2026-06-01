@@ -6,7 +6,12 @@ import { Topbar } from '@/components/shell/topbar';
 import { AIPanel, type ChatMensaje } from '@/components/shell/ai-panel';
 import { CommandPalette } from '@/components/shell/command-palette';
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+interface AppShellProps {
+  children: React.ReactNode;
+  deudasVencidasCount?: number;
+}
+
+export function AppShell({ children, deudasVencidasCount }: AppShellProps) {
   const [aiOpen, setAiOpen] = useState(false);
   const [showCmdK, setShowCmdK] = useState(false);
 
@@ -29,7 +34,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={'app' + (aiOpen ? ' ai-open' : '')}>
-      <Sidebar />
+      <Sidebar deudasVencidasCount={deudasVencidasCount} />
 
       <div className="main">
         <Topbar aiOpen={aiOpen} setAiOpen={setAiOpen} onSearch={() => setShowCmdK(true)} />
