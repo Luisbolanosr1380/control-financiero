@@ -1,10 +1,19 @@
 import { generateText } from 'ai';
 import { google } from '@ai-sdk/google';
 import { revalidatePath } from 'next/cache';
+import { currentUser } from '@clerk/nextjs/server';
 import { getAnaliticaIngresos } from '@/lib/db/analitica';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { guardarAnalisis, calcularCostoUSD } from '@/lib/db/ai-analisis';
 import { Q } from '@/lib/utils';
+import { getRolUsuario } from '@/lib/auth/allowlist';
+import {
+  PERMISSIONS,
+  estaEnVentanaAnalisisManual,
+  proximaVentanaAnalisisManual,
+  fechaLegible,
+} from '@/lib/auth/permissions';
+import { registrarUsoAuros } from '@/lib/db/uso-auros';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -22,6 +31,40 @@ export async function POST() {
     return Response.json(
       { ok: false, error: 'Falta GOOGLE_GENERATIVE_AI_API_KEY en .env.local' },
       { status: 500 },
+    );
+  }
+
+  // ──────────────────────────────────────────────────────────
+  // F-030 parte F: permisos + ventana de tiempo
+  // ──────────────────────────────────────────────────────────
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
+  const rol = getRolUsuario(email);
+  if (!rol) {
+    return Response.json(
+      { ok: false, error: 'NO_AUTORIZADO', mensaje: 'Tu correo no está autorizado.' },
+      { status: 401 },
+    );
+  }
+  const perms = PERMISSIONS[rol];
+  if (!perms.analisisManual) {
+    return Response.json(
+      { ok: false, error: 'SIN_PERMISO', mensaje: 'Tu rol no incluye la generación de análisis manual. Podés leer los análisis ya generados en /ai.' },
+      { status: 403 },
+    );
+  }
+  if (perms.analisisManualVentanaTiempo && !estaEnVentanaAnalisisManual()) {
+    const proxima = proximaVentanaAnalisisManual();
+    const hoy = new Date();
+    const diasSem = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+    return Response.json(
+      {
+        ok: false,
+        error: 'FUERA_DE_VENTANA',
+        mensaje: `El análisis manual está disponible solo los lunes y los últimos 2 días del mes. Hoy es ${diasSem[hoy.getDay()]}. Próxima ventana: ${fechaLegible(proxima)}.`,
+        proximaVentana: proxima,
+      },
+      { status: 403 },
     );
   }
 
@@ -120,6 +163,17 @@ No incluyas otras secciones ni preámbulo. Empezá directamente con "## Diagnós
     } catch (e) {
       console.error('Error guardando análisis AI en Airtable:', e);
     }
+
+    // Tracking F-030 parte D — silencioso si falla.
+    await registrarUsoAuros({
+      email,
+      tipo: 'analisis_manual',
+      tokensIn: tokensInput,
+      tokensOut: tokensOutput,
+      costoUsd: costoUSD,
+      durSeg: duracionSeg,
+      queryPreview: 'Análisis manual (botón)',
+    });
 
     return Response.json({
       ok: true,
