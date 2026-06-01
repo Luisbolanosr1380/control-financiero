@@ -19,6 +19,7 @@ import { getTopDeudores } from '@/lib/db/kpis';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getAnaliticaIngresos, getFacturadoPorRango, type FiltroNaturaleza } from '@/lib/db/analitica';
 import { getProyeccionMesActual } from '@/lib/db/proyecciones';
+import { getKPIsDeudas, getDeudas, getAcreedores } from '@/lib/db/deudas';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -365,6 +366,131 @@ export const aiTools = {
           .filter(b => b.cantidad > 0)
           .slice(-3)
           .map(b => ({ mes: b.mes, cantidad: b.cantidad, montoPerdidoQ: Math.round(b.montoPerdido) })),
+      };
+    },
+  }),
+
+  // ===========================================================================
+  // DEUDAS Y PASIVOS (F-027)
+  // ===========================================================================
+
+  getKPIsDeudas: tool({
+    description:
+      'Resumen del PASIVO: total adeudado, separado en deuda externa (bancos, tarjetas, proveedores, fisco) vs cuenta con socios (parte relacionada). ' +
+      'Incluye vencidas (cantidad, monto, mora promedio, peor caso) y próximos vencimientos a 30 días. ' +
+      'USAR cuando el usuario pregunte "¿cuánto debo?", "¿cómo viene el pasivo?", "¿tengo deudas vencidas?". ' +
+      'IMPORTANTE: SIEMPRE distinguir deuda externa vs cuenta con socios — son obligaciones de naturaleza diferente.',
+    parameters: z.object({}),
+    execute: async () => {
+      const k = await getKPIsDeudas();
+      return {
+        totalPasivoQ: Math.round(k.totalPasivo),
+        deudaExternaQ: Math.round(k.deudaExterna),
+        cuentaConSociosQ: Math.round(k.cuentaConSocios),
+        vencidas: {
+          cantidad: k.vencidas.cantidad,
+          montoTotalQ: Math.round(k.vencidas.montoTotal),
+          diasPromedioMora: Number(k.vencidas.diasPromedioMora.toFixed(1)),
+          deudaMasAntiguaDias: k.vencidas.deudaMasAntigua,
+        },
+        proximosVencimientos30d: {
+          cantidad: k.proximosVencimientos.cantidad,
+          montoTotalQ: Math.round(k.proximosVencimientos.montoTotal),
+        },
+        topAcreedores: k.porAcreedor.map(a => ({
+          acreedor: a.acreedor,
+          saldoQ: Math.round(a.saldo),
+          esSocio: a.esSocio,
+        })),
+        porTipo: k.porTipo.map(t => ({ tipo: t.tipo, saldoQ: Math.round(t.saldo), cantidad: t.cantidad })),
+      };
+    },
+  }),
+
+  getDeudasPorAcreedor: tool({
+    description:
+      'Lista las deudas de un acreedor identificado por nombre (match parcial, case+acento insensible). ' +
+      'Útil para "¿cuánto le debo a Banco G&T?", "¿qué deudas tengo con Mónica?". ' +
+      'Si el match es ambiguo devuelve la lista de candidatos para que preguntes.',
+    parameters: z.object({
+      nombreAcreedor: z.string().describe('Nombre o fragmento del nombre del acreedor'),
+    }),
+    execute: async ({ nombreAcreedor }) => {
+      const acreedores = await getAcreedores();
+      const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      const q = norm(nombreAcreedor);
+      const matches = acreedores.filter(a =>
+        norm(a.nombre).includes(q) || norm(a.nombreLegal).includes(q)
+      );
+      if (matches.length === 0) {
+        return { ok: false, motivo: 'acreedor_no_encontrado' };
+      }
+      if (matches.length > 1) {
+        return {
+          ok: false,
+          motivo: 'multiples_candidatos',
+          candidatos: matches.slice(0, 8).map(a => ({
+            nombre: a.nombre || a.nombreLegal,
+            tipo: a.tipoAcreedor,
+            esSocio: a.esParteRelacionada,
+          })),
+        };
+      }
+      const ac = matches[0];
+      const deudas = await getDeudas({ acreedorId: ac.id });
+      const vigentes = deudas.filter(d => d.saldoPendiente > 0);
+      return {
+        ok: true,
+        acreedor: {
+          nombre: ac.nombre || ac.nombreLegal,
+          tipoAcreedor: ac.tipoAcreedor,
+          esSocio: ac.esParteRelacionada,
+          totalDeudaInicialQ: Math.round(ac.totalDeudaInicial),
+        },
+        totalSaldoQ: Math.round(vigentes.reduce((s, d) => s + d.saldoPendiente, 0)),
+        cantidadDeudas: vigentes.length,
+        deudas: vigentes.map(d => ({
+          nombre: d.nombreDeuda,
+          tipoDocumento: d.tipoDocumento,
+          saldoQ: Math.round(d.saldoPendiente),
+          montoOriginalQ: Math.round(d.montoOriginal),
+          pctAvance: Number(d.pctAvance.toFixed(1)),
+          fechaVencimiento: d.fechaVencimientoReal || d.fechaVencimiento,
+          diasEnMora: d.diasEnMora,
+          vencida: d.vencida || d.diasEnMora > 0,
+          tasaInteresPct: d.tasaInteres > 0 ? Number((d.tasaInteres * 100).toFixed(2)) : null,
+        })),
+      };
+    },
+  }),
+
+  getDeudasVencidas: tool({
+    description:
+      'Lista TODAS las deudas vencidas o en mora, ordenadas por días en mora descendente. ' +
+      'USAR cuando el usuario pregunte "¿qué deudas están en mora?", "¿qué tengo vencido?", "¿qué pasivos hay que pagar ya?".',
+    parameters: z.object({
+      limite: z.number().int().min(1).max(50).describe('Cuántas devolver (típicamente 10-20)'),
+    }),
+    execute: async ({ limite }) => {
+      const deudas = await getDeudas({ vencidasOnly: true });
+      const ord = deudas.sort((a, b) => b.diasEnMora - a.diasEnMora).slice(0, limite);
+      const totalMontoQ = Math.round(deudas.reduce((s, d) => s + d.saldoPendiente, 0));
+      const promedioMora = deudas.length
+        ? Number((deudas.reduce((s, d) => s + d.diasEnMora, 0) / deudas.length).toFixed(1))
+        : 0;
+      return {
+        totalVencidas: deudas.length,
+        totalMontoQ,
+        diasPromedioMora: promedioMora,
+        deudas: ord.map(d => ({
+          acreedor: d.acreedorNombre,
+          esSocio: d.esParteRelacionada,
+          tipoDocumento: d.tipoDocumento,
+          saldoQ: Math.round(d.saldoPendiente),
+          diasEnMora: d.diasEnMora,
+          fechaVencimiento: d.fechaVencimientoReal || d.fechaVencimiento,
+          moraAcumuladaQ: Math.round(d.moraAcumulada),
+        })),
       };
     },
   }),
