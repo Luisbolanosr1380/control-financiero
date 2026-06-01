@@ -18,9 +18,11 @@ export type Role = 'admin' | 'gerencia' | 'operativo';
  */
 export const ROLES_USUARIOS: Record<string, Role> = {
   'luisbolanosr1380@gmail.com': 'admin',
+  'luis@goldentalent.org': 'admin',
   // 'monica@goldentalent.org': 'gerencia',
   // 'operativo1@goldentalent.org': 'operativo',
 };
+
 
 /** Devuelve el rol del usuario, o null si no está autorizado. */
 export function getRolUsuario(email: string | null | undefined): Role | null {
