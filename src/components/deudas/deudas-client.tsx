@@ -191,7 +191,12 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
                   <tr key={d.id} className="clickable" onClick={() => router.push(`/deudas/${d.id}`)}>
                     <td className="cell-strong" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       {d.esParteRelacionada && <span title="Parte relacionada (socio)">🤝</span>}
-                      {d.acreedorNombre}
+                      <span
+                        onClick={(e) => { e.stopPropagation(); router.push(`/acreedores/${d.acreedorId}`); }}
+                        style={{ cursor: 'pointer', textDecoration: 'underline dotted' }}
+                      >
+                        {d.acreedorNombre}
+                      </span>
                     </td>
                     <td><span className="badge badge-outline">{d.tipoDocumento}</span></td>
                     <td className="num cell-strong">{Q(d.saldoPendiente)}</td>
@@ -347,7 +352,12 @@ export function DeudasClient({ deudas, kpis, acreedores }: Props) {
                   <tr key={d.id} className="clickable" onClick={() => router.push(`/deudas/${d.id}`)}>
                     <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.acreedorNombre}>
                       {d.esParteRelacionada && <span style={{ marginRight: 4 }} title="Parte relacionada (socio)">🤝</span>}
-                      {d.acreedorNombre}
+                      <span
+                        onClick={(e) => { e.stopPropagation(); router.push(`/acreedores/${d.acreedorId}`); }}
+                        style={{ cursor: 'pointer', textDecoration: 'underline dotted' }}
+                      >
+                        {d.acreedorNombre}
+                      </span>
                     </td>
                     <td><span className="badge badge-outline" style={{ fontSize: 10.5 }}>{d.tipoDocumento || '—'}</span></td>
                     <td className="num cell-strong">{Q(d.saldoPendiente)}</td>
