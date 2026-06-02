@@ -1,5 +1,5 @@
 import type { FieldSet } from 'airtable';
-import type { Invoice, InvoiceLine, LineKey, InvoiceStatus } from '../types';
+import type { Invoice, InvoiceLine, LineKey, InvoiceStatus, InvoiceEstadoBruto } from '../types';
 
 export const F = {
   FACTURA_ID:       'FACTURA_ID',
@@ -55,14 +55,31 @@ function ccToLineKey(cc: unknown): LineKey {
   return 'poligrafo';
 }
 
+/**
+ * F-032: mapeo 1-a-1 del ESTADO singleSelect a InvoiceEstadoBruto.
+ * Independiente de fecha. REFACTURADO ya NO se mezcla con anulado.
+ */
+function estadoToBruto(estado: unknown): InvoiceEstadoBruto {
+  const s = String(estado ?? '').toUpperCase().trim();
+  if (s === 'COBRADO' || s === 'COBRADA')         return 'cobrado';
+  if (s === 'ANULADO' || s === 'ANULADA')         return 'anulado';
+  if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'refacturado';
+  if (s === 'PENDIENTE')                          return 'pendiente';
+  if (s === 'EMITIDA' || s === 'EMITIDO')         return 'emitida';
+  return 'otro';
+}
+
 // Replica la fórmula real del campo Estatus_Cobranza de Airtable.
 // El ESTADO manda; Saldo_Por_Cobrar NO es confiable y no se usa para clasificar.
+// LEGACY (status): se mantiene como derivado de estadoBruto + vencida para
+// que el resto del código que ya usa `status` siga compilando. Los tabs y
+// el dashboard pasan a usar estadoBruto + vencida (ver F-032).
 function estadoToStatus(estado: unknown, diasVencidos: number): InvoiceStatus {
   const s = String(estado ?? '').toUpperCase().trim();
 
   if (s === 'COBRADO' || s === 'COBRADA')         return 'cobrado';
   if (s === 'ANULADO' || s === 'ANULADA')         return 'anulado';
-  if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'anulado';
+  if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'anulado';   // legacy: lo seguimos colapsando aquí
   if (s === 'PENDIENTE')                          return 'pendiente';
 
   // EMITIDA y cualquier otro estado activo: se evalúa por fecha (como la fórmula)
@@ -80,6 +97,8 @@ interface RawRow {
   line: LineKey;
   centroCostoId: string;
   status: InvoiceStatus;
+  estadoBruto: InvoiceEstadoBruto;   // F-032
+  vencida: boolean;                  // F-032
   emisionAgo: number;
   dueAgo: number;
   // para el detalle
@@ -105,6 +124,12 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
   const diasEmision = Math.floor((hoy.getTime() - fechaEmision.getTime()) / (1000 * 60 * 60 * 24));
 
   const status = estadoToStatus(f[F.ESTADO], diasVencido);
+  const estadoBruto = estadoToBruto(f[F.ESTADO]);
+  // Vencida: usa el campo Estatus_Cobranza (fórmula de Airtable). Solo aplica
+  // a estados ACTIVOS (emitida/pendiente). Cobradas/anuladas/refacturadas no
+  // tienen "vencida" relevante.
+  const estatusCobranza = String(f[F.ESTATUS_COBRANZA] ?? '').toUpperCase().trim();
+  const vencida = (estadoBruto === 'emitida' || estadoBruto === 'pendiente') && estatusCobranza === 'VENCIDA';
 
   // Saldo_Por_Cobrar está roto: el balance se deriva del estado y el TOTAL.
   // Cobrada/anulada/pendiente → 0; EMITIDA (vencido/por_cobrar) → TOTAL completo.
@@ -123,6 +148,8 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
     line:      cc,
     centroCostoId: ccId,
     status,
+    estadoBruto,
+    vencida,
     emisionAgo: diasEmision,
     dueAgo:     diasVencido,
     fechaEmision: fechaEmisionStr,
@@ -146,13 +173,33 @@ function worstStatus(statuses: InvoiceStatus[]): InvoiceStatus {
   return statuses.reduce((acc, s) => priority[s] > priority[acc] ? s : acc, statuses[0]);
 }
 
+/**
+ * F-032: consolidación del estadoBruto cuando una factura tiene múltiples
+ * líneas con ESTADO distinto. Prioridad: pendiente > emitida > cobrado >
+ * anulado > refacturado > otro. (Pendiente arriba porque queremos que el
+ * tab "Pendientes" capture TODA factura con alguna línea PENDIENTE.)
+ */
+function dominanteBruto(brutos: InvoiceEstadoBruto[]): InvoiceEstadoBruto {
+  const prio: Record<InvoiceEstadoBruto, number> = {
+    pendiente: 5,
+    emitida: 4,
+    cobrado: 3,
+    anulado: 1,
+    refacturado: 0,
+    otro: 0,
+  };
+  return brutos.reduce((acc, b) => prio[b] > prio[acc] ? b : acc, brutos[0]);
+}
+
 export function consolidateRecords(records: { id: string; fields: FieldSet }[]): Invoice[] {
   const raw = records.map(recordToRaw);
   const buckets = new Map<string, RawRow[]>();
 
   for (const r of raw) {
-    const key = r.status === 'anulado'
-      ? `${r.noFactura}__anulada__${r.recordId}`
+    // Anuladas y refacturadas se mantienen como rows separadas (no se
+    // consolidan con las activas, son históricas).
+    const key = r.estadoBruto === 'anulado' || r.estadoBruto === 'refacturado'
+      ? `${r.noFactura}__${r.estadoBruto}__${r.recordId}`
       : r.noFactura;
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(r);
@@ -173,6 +220,10 @@ export function consolidateRecords(records: { id: string; fields: FieldSet }[]):
     // El PDF suele ir en el principal; si no, tomar el primero que tenga adjunto
     const conAdjunto = rows.find(r => r.adjuntoUrl) ?? principal;
 
+    const brutoDominante = dominanteBruto(rows.map(r => r.estadoBruto));
+    const vencidaConsolidada = (brutoDominante === 'emitida' || brutoDominante === 'pendiente')
+      && rows.some(r => r.vencida);
+
     invoices.push({
       id:              principal.recordId,
       noFactura:       principal.noFactura,
@@ -183,6 +234,8 @@ export function consolidateRecords(records: { id: string; fields: FieldSet }[]):
       emisionAgo:      principal.emisionAgo,
       dueAgo:          principal.dueAgo,
       status:          worstStatus(rows.map(r => r.status)),
+      estadoBruto:     brutoDominante,
+      vencida:         vencidaConsolidada,
       lineas,
       line:            principal.line,
       isMixed:         uniqueCCs.size > 1,

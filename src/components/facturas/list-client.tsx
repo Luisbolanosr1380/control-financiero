@@ -8,8 +8,24 @@ import { LINES } from '@/lib/mock-data';
 import { cargarMasFacturasAction } from '@/app/(app)/facturacion/actions';
 import type { Invoice, Customer } from '@/lib/types';
 
-export const FACTURAS_TABS = ['todas', 'vencidas', 'por_cobrar', 'cobradas', 'anuladas', 'pendientes'] as const;
+// F-032: orden y tabs reescritos. "Refacturadas" es nuevo.
+export const FACTURAS_TABS = ['todas', 'por_cobrar', 'vencidas', 'pendientes', 'cobradas', 'anuladas', 'refacturadas'] as const;
 export type FacturasTab = (typeof FACTURAS_TABS)[number];
+
+// Predicados centralizados (también los usa el dashboard y getAnaliticaIngresos)
+function esPorCobrar(i: { estadoBruto: string }) {
+  return i.estadoBruto === 'emitida' || i.estadoBruto === 'pendiente';
+}
+
+const TAB_LABELS: Record<FacturasTab, string> = {
+  todas: 'Todas',
+  por_cobrar: 'Por cobrar',
+  vencidas: 'Vencidas',
+  pendientes: 'Pendientes',
+  cobradas: 'Cobradas',
+  anuladas: 'Anuladas',
+  refacturadas: 'Refacturadas',
+};
 
 interface Props {
   initialInvoices: Invoice[];
@@ -33,13 +49,18 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
 
   const custById = Object.fromEntries(clientes.map(c => [c.id, c]));
 
+  // F-032: counts usando estadoBruto + vencida (no `status` que tenía el bug).
+  // "Por cobrar" = TODAS las no cobradas (emitida + pendiente), incluyendo vencidas.
+  // "Vencidas" = subset de Por cobrar con vencida=true.
+  // "Pendientes" = TODAS las ESTADO=PENDIENTE (vencidas o por vencer).
   const counts = {
-    todas:      facturas.length,
-    vencidas:   facturas.filter(i => i.status === 'vencido').length,
-    por_cobrar: facturas.filter(i => i.status === 'por_cobrar').length,
-    cobradas:   facturas.filter(i => i.status === 'cobrado').length,
-    anuladas:   facturas.filter(i => i.status === 'anulado').length,
-    pendientes: facturas.filter(i => i.status === 'pendiente').length,
+    todas:        facturas.length,
+    por_cobrar:   facturas.filter(esPorCobrar).length,
+    vencidas:     facturas.filter(i => esPorCobrar(i) && i.vencida).length,
+    pendientes:   facturas.filter(i => i.estadoBruto === 'pendiente').length,
+    cobradas:     facturas.filter(i => i.estadoBruto === 'cobrado').length,
+    anuladas:     facturas.filter(i => i.estadoBruto === 'anulado').length,
+    refacturadas: facturas.filter(i => i.estadoBruto === 'refacturado').length,
   };
 
   const cargarMas = async () => {
@@ -60,11 +81,14 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
   };
 
   let rows = facturas;
-  if (tab === 'vencidas')   rows = rows.filter(i => i.status === 'vencido');
-  if (tab === 'por_cobrar') rows = rows.filter(i => i.status === 'por_cobrar');
-  if (tab === 'cobradas')   rows = rows.filter(i => i.status === 'cobrado');
-  if (tab === 'anuladas')   rows = rows.filter(i => i.status === 'anulado');
-  if (tab === 'pendientes') rows = rows.filter(i => i.status === 'pendiente');
+  // F-032: filtros corregidos. "Por cobrar" = emitida+pendiente (todas). Vencidas y
+  // Pendientes son sub-categorías que NO se excluyen mutuamente con "Por cobrar".
+  if (tab === 'por_cobrar')   rows = rows.filter(esPorCobrar);
+  if (tab === 'vencidas')     rows = rows.filter(i => esPorCobrar(i) && i.vencida);
+  if (tab === 'pendientes')   rows = rows.filter(i => i.estadoBruto === 'pendiente');
+  if (tab === 'cobradas')     rows = rows.filter(i => i.estadoBruto === 'cobrado');
+  if (tab === 'anuladas')     rows = rows.filter(i => i.estadoBruto === 'anulado');
+  if (tab === 'refacturadas') rows = rows.filter(i => i.estadoBruto === 'refacturado');
 
   if (search) {
     rows = rows.filter(i =>
@@ -101,7 +125,7 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
       <div className="tabs">
         {FACTURAS_TABS.map(t => (
           <button key={t} className={'tab' + (tab === t ? ' active' : '')} onClick={() => setTab(t)}>
-            {t === 'todas' ? 'Todas' : t === 'vencidas' ? 'Vencidas' : t === 'por_cobrar' ? 'Por cobrar' : t === 'cobradas' ? 'Cobradas' : t === 'anuladas' ? 'Anuladas' : 'Pendientes'}
+            {TAB_LABELS[t]}
             <span className="tab-count num">{counts[t]}</span>
           </button>
         ))}
@@ -157,12 +181,18 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
               else if (agingDays > 0)             agingBadge = { cls: 'badge-warn', text: `${agingDays} d` };
               else                                agingBadge = { cls: 'badge-mute', text: `${Math.abs(agingDays)} d` };
 
-              const statusBadgeMap: Record<string, { cls: string; text: string }> = {
-                vencido:    { cls: 'badge-wine',    text: 'Vencida' },
-                por_cobrar: { cls: 'badge-outline', text: 'Por cobrar' },
-                cobrado:    { cls: 'badge-olive',   text: 'Cobrada' },
+              // F-032: badge derivado de estadoBruto + vencida (no del legacy `status`)
+              const brutoBadgeMap: Record<string, { cls: string; text: string }> = {
+                cobrado:     { cls: 'badge-olive',   text: 'Cobrada' },
+                emitida:     { cls: 'badge-outline', text: 'Emitida' },
+                pendiente:   { cls: 'badge-warn',    text: 'Pendiente' },
+                anulado:     { cls: 'badge-mute',    text: 'Anulada' },
+                refacturado: { cls: 'badge-mute',    text: 'Refacturada' },
+                otro:        { cls: 'badge-mute',    text: '—' },
               };
-              const statusBadge = statusBadgeMap[inv.status] ?? { cls: 'badge-mute', text: inv.status };
+              const statusBadge = inv.vencida
+                ? { cls: 'badge-wine', text: 'Vencida' }
+                : brutoBadgeMap[inv.estadoBruto] ?? { cls: 'badge-mute', text: inv.estadoBruto };
 
               return (
                 <tr key={inv.id} className="clickable" onClick={() => router.push(`/facturacion/${inv.id}`)}>

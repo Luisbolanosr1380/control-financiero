@@ -63,6 +63,13 @@ const inv = (
   balance,
   daysSinceIssued,
   status,
+  // F-032: derivar estadoBruto + vencida desde el legacy status del mock
+  estadoBruto:
+    status === 'cobrado' ? 'cobrado'
+    : status === 'anulado' ? 'anulado'
+    : status === 'pendiente' ? 'pendiente'
+    : 'emitida',
+  vencida: status === 'vencido' || due > 0,
   emisionAgo: daysSinceIssued,
   dueAgo: due,
 });

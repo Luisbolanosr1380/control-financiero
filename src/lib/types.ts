@@ -8,6 +8,15 @@ export type LineKey = 'poligrafo' | 'socio' | 'talenttrack' | 'administrativo';
 
 export type InvoiceStatus = 'pendiente' | 'emitida' | 'contabilizado' | 'cobrado' | 'por_cobrar' | 'vencido' | 'anulado';
 
+/**
+ * Estado bruto (F-032): mapeo 1-a-1 con el ESTADO del singleSelect en
+ * FACTURAS_CLIENTES (normalizado, sin espacios). NO depende de fecha.
+ * El campo `vencida: boolean` se calcula aparte desde Estatus_Cobranza.
+ * `status` (legacy) se mantiene como derivado de estos dos para
+ * compatibilidad con código que ya lo usa.
+ */
+export type InvoiceEstadoBruto = 'emitida' | 'pendiente' | 'cobrado' | 'anulado' | 'refacturado' | 'otro';
+
 export type AgingBucket = 'corriente' | '1-30' | '31-60' | '61-90' | '90+';
 
 export type HealthStatus = 'good' | 'warn' | 'bad';
@@ -56,6 +65,10 @@ export interface Invoice {
   emisionAgo: number;
   dueAgo: number;
   status: InvoiceStatus;
+  /** F-032: estado bruto del ESTADO de Airtable (sin combinar con fecha). */
+  estadoBruto: InvoiceEstadoBruto;
+  /** F-032: true si Estatus_Cobranza='VENCIDA' en alguna línea Y estadoBruto ∈ {emitida, pendiente}. */
+  vencida: boolean;
   lineas: InvoiceLine[];
   line: LineKey;
   isMixed: boolean;
