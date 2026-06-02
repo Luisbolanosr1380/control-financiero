@@ -132,8 +132,9 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
   const vencida = (estadoBruto === 'emitida' || estadoBruto === 'pendiente') && estatusCobranza === 'VENCIDA';
 
   // Saldo_Por_Cobrar está roto: el balance se deriva del estado y el TOTAL.
-  // Cobrada/anulada/pendiente → 0; EMITIDA (vencido/por_cobrar) → TOTAL completo.
-  const balance = status === 'vencido' || status === 'por_cobrar' ? totalRaw : 0;
+  // F-032: PENDIENTE también es "por cobrar" → balance = TOTAL completo. Antes
+  // las pendientes quedaban en 0 (bug: subreportaban el saldo de cartera).
+  const balance = (estadoBruto === 'emitida' || estadoBruto === 'pendiente') ? totalRaw : 0;
 
   const adjunto = (f[F.ADJUNTO] as Array<{ url?: string; filename?: string }> | undefined)?.[0];
   const ccId = String((f[F.CENTRO_COSTO] as string[] | undefined)?.[0] ?? '');

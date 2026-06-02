@@ -9,7 +9,12 @@ import { getClientes } from './clientes';
 import { LINES } from '../mock-data';
 import type { Invoice, Customer, LineKey, LineStats, AgingEntry, HealthStatus } from '../types';
 
-const isActiva = (i: Invoice) => i.status !== 'anulado';
+// F-032: usar estadoBruto directo para excluir anuladas Y refacturadas
+// (antes solo se excluían anuladas vía `status !== 'anulado'`, pero las
+// REFACTURADAS también se mapeaban a 'anulado' legacy — colateralmente
+// se excluían, hoy ya no porque estadoBruto las distingue).
+const isActiva = (i: Invoice) => i.estadoBruto !== 'anulado' && i.estadoBruto !== 'refacturado';
+const esPorCobrar = (i: Invoice) => i.estadoBruto === 'emitida' || i.estadoBruto === 'pendiente';
 
 export interface DashboardKPIs {
   porCobrarTotal: number;
@@ -26,12 +31,15 @@ export async function getDashboardKPIs(facturas?: Invoice[]): Promise<DashboardK
   const all = facturas ?? await getFacturas();
   const activas = all.filter(isActiva);
 
+  // F-032: "Por cobrar" = TODAS las activas no cobradas (emitida + pendiente),
+  // incluyendo vencidas y por vencer. Mismo criterio que el tab /facturacion.
   const porCobrarTotal = activas
-    .filter(i => i.status === 'vencido' || i.status === 'por_cobrar')
+    .filter(esPorCobrar)
     .reduce((s, i) => s + i.balance, 0);
 
+  // F-032: "Vencido" = subset de porCobrar con vencida=true (incluye PENDIENTE-vencida).
   const vencidoTotal = activas
-    .filter(i => i.status === 'vencido')
+    .filter(i => esPorCobrar(i) && i.vencida)
     .reduce((s, i) => s + i.balance, 0);
 
   const facturadoTotal = activas.reduce((s, i) => s + i.total, 0);
@@ -44,9 +52,9 @@ export async function getDashboardKPIs(facturas?: Invoice[]): Promise<DashboardK
     cobradoTotal,
     facturadoTotal,
     tasaCobranza,
-    numVencidas:   activas.filter(i => i.status === 'vencido').length,
-    numPorCobrar:  activas.filter(i => i.status === 'por_cobrar').length,
-    numCobradas:   activas.filter(i => i.status === 'cobrado').length,
+    numVencidas:   activas.filter(i => esPorCobrar(i) && i.vencida).length,
+    numPorCobrar:  activas.filter(esPorCobrar).length,
+    numCobradas:   activas.filter(i => i.estadoBruto === 'cobrado').length,
   };
 }
 
@@ -137,7 +145,7 @@ export async function getTopDeudores(n = 5, facturas?: Invoice[], clientes?: Cus
     if (inv.balance <= 0) continue;
     const g = grupo.get(inv.custId) ?? { balance: 0, vencido: 0, numFacturas: 0 };
     g.balance += inv.balance;
-    if (inv.status === 'vencido') g.vencido += inv.balance;
+    if (inv.vencida) g.vencido += inv.balance;
     g.numFacturas += 1;
     grupo.set(inv.custId, g);
   }
