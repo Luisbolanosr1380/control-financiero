@@ -59,12 +59,23 @@ export function ClientesListClient({ clientes }: Props) {
   // Ordenar por impacto descendente: monto promedio
   rows = [...rows].sort((a, b) => b.montoPromedio - a.montoPromedio);
 
+  // F-033: agregado del tab actual + búsqueda. Promedio mensual sumado es el
+  // proxy más útil aquí: "facturación recurrente esperada por mes" del segmento.
+  const sumaPromedio = rows.reduce((s, c) => s + c.montoPromedio, 0);
+  const tabLabel = tab === 'todos' ? 'Total' : tab === 'riesgo' ? 'En riesgo' : tab === 'sanos' ? 'Sanos' : 'Episódicos';
+
   return (
     <div className="page">
       <div className="page-header">
         <div>
           <h1 className="page-title">Clientes</h1>
-          <div className="page-subtitle">
+          <div className="page-subtitle" style={{ fontSize: 14, color: 'var(--ink-2)' }}>
+            <span style={{ fontWeight: 500 }}>{tabLabel}:</span>{' '}
+            <span className="num" style={{ fontWeight: 500 }}>{rows.length}</span> clientes
+            {' · '}
+            <span className="num" style={{ fontWeight: 500 }}>{Q(sumaPromedio)}/mes</span> promedio
+          </div>
+          <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-4)', marginTop: 2 }}>
             <span className="num">{clientes.length}</span> clientes con actividad (12 meses) · análisis de retención
           </div>
         </div>

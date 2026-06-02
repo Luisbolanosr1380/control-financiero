@@ -7,6 +7,7 @@ import { Q, formatDateDDMMYYYY } from '@/lib/utils';
 import { LINES } from '@/lib/mock-data';
 import { cargarMasFacturasAction } from '@/app/(app)/facturacion/actions';
 import type { Invoice, Customer } from '@/lib/types';
+import type { InvoiceLiviano } from '@/lib/db/facturas';
 
 // F-032: orden y tabs reescritos. "Refacturadas" es nuevo.
 export const FACTURAS_TABS = ['todas', 'por_cobrar', 'vencidas', 'pendientes', 'cobradas', 'anuladas', 'refacturadas'] as const;
@@ -27,11 +28,11 @@ const TAB_LABELS: Record<FacturasTab, string> = {
   refacturadas: 'Refacturadas',
 };
 
-function PorCobrarSummary({ facturas }: { facturas: Invoice[] }) {
+function PorCobrarSummary({ facturas }: { facturas: { total: number; estadoBruto: string; vencida: boolean }[] }) {
   const porCobrar  = facturas.filter(esPorCobrar);
   const vencidas   = porCobrar.filter(i => i.vencida);
   const porVencer  = porCobrar.filter(i => !i.vencida);
-  const sumar = (arr: Invoice[]) => arr.reduce((s, i) => s + i.total, 0);
+  const sumar = (arr: { total: number }[]) => arr.reduce((s, i) => s + i.total, 0);
   return (
     <div className="card" style={{
       margin: '10px 0 14px', padding: '12px 16px',
@@ -66,12 +67,12 @@ interface Props {
   initialInvoices: Invoice[];
   initialHayMas: boolean;
   initialUltimaFecha: string | null;
-  totalConsolidadas: number;
+  facturasLivianas: InvoiceLiviano[];
   clientes: Customer[];
   initialTab?: FacturasTab;
 }
 
-export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, totalConsolidadas, clientes, initialTab = 'todas' }: Props) {
+export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes, initialTab = 'todas' }: Props) {
   const router = useRouter();
   const [facturas, setFacturas] = useState<Invoice[]>(initialInvoices);
   const [hayMas, setHayMas] = useState<boolean>(initialHayMas);
@@ -84,18 +85,17 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
 
   const custById = Object.fromEntries(clientes.map(c => [c.id, c]));
 
-  // F-032: counts usando estadoBruto + vencida (no `status` que tenía el bug).
-  // "Por cobrar" = TODAS las no cobradas (emitida + pendiente), incluyendo vencidas.
-  // "Vencidas" = subset de Por cobrar con vencida=true.
-  // "Pendientes" = TODAS las ESTADO=PENDIENTE (vencidas o por vencer).
+  // F-033: counts y sumas se computan SIEMPRE sobre el dataset liviano completo
+  // (no sobre las facturas paginadas). Así el header refleja el universo real
+  // bajo el tab actual, no "lo cargado en pantalla".
   const counts = {
-    todas:        facturas.length,
-    por_cobrar:   facturas.filter(esPorCobrar).length,
-    vencidas:     facturas.filter(i => esPorCobrar(i) && i.vencida).length,
-    pendientes:   facturas.filter(i => i.estadoBruto === 'pendiente').length,
-    cobradas:     facturas.filter(i => i.estadoBruto === 'cobrado').length,
-    anuladas:     facturas.filter(i => i.estadoBruto === 'anulado').length,
-    refacturadas: facturas.filter(i => i.estadoBruto === 'refacturado').length,
+    todas:        facturasLivianas.length,
+    por_cobrar:   facturasLivianas.filter(esPorCobrar).length,
+    vencidas:     facturasLivianas.filter(i => esPorCobrar(i) && i.vencida).length,
+    pendientes:   facturasLivianas.filter(i => i.estadoBruto === 'pendiente').length,
+    cobradas:     facturasLivianas.filter(i => i.estadoBruto === 'cobrado').length,
+    anuladas:     facturasLivianas.filter(i => i.estadoBruto === 'anulado').length,
+    refacturadas: facturasLivianas.filter(i => i.estadoBruto === 'refacturado').length,
   };
 
   const cargarMas = async () => {
@@ -115,24 +115,40 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
     }
   };
 
-  let rows = facturas;
-  // F-032: filtros corregidos. "Por cobrar" = emitida+pendiente (todas). Vencidas y
-  // Pendientes son sub-categorías que NO se excluyen mutuamente con "Por cobrar".
-  if (tab === 'por_cobrar')   rows = rows.filter(esPorCobrar);
-  if (tab === 'vencidas')     rows = rows.filter(i => esPorCobrar(i) && i.vencida);
-  if (tab === 'pendientes')   rows = rows.filter(i => i.estadoBruto === 'pendiente');
-  if (tab === 'cobradas')     rows = rows.filter(i => i.estadoBruto === 'cobrado');
-  if (tab === 'anuladas')     rows = rows.filter(i => i.estadoBruto === 'anulado');
-  if (tab === 'refacturadas') rows = rows.filter(i => i.estadoBruto === 'refacturado');
+  // Filtro del listado paginado (lo visible) usando el mismo predicado por tab.
+  const filtroTab = <T extends { estadoBruto: string; vencida: boolean }>(arr: T[]): T[] => {
+    if (tab === 'por_cobrar')   return arr.filter(esPorCobrar);
+    if (tab === 'vencidas')     return arr.filter(i => esPorCobrar(i) && i.vencida);
+    if (tab === 'pendientes')   return arr.filter(i => i.estadoBruto === 'pendiente');
+    if (tab === 'cobradas')     return arr.filter(i => i.estadoBruto === 'cobrado');
+    if (tab === 'anuladas')     return arr.filter(i => i.estadoBruto === 'anulado');
+    if (tab === 'refacturadas') return arr.filter(i => i.estadoBruto === 'refacturado');
+    return arr;
+  };
 
+  let rows = filtroTab(facturas);
   if (search) {
     rows = rows.filter(i =>
       i.noFactura.toLowerCase().includes(search.toLowerCase()) ||
       (custById[i.custId]?.name ?? '').toLowerCase().includes(search.toLowerCase())
     );
   }
-
   const totalSaldo = rows.reduce((s, i) => s + i.balance, 0);
+
+  // F-033: agregado REAL del tab actual (sobre TODAS las facturas, no solo las cargadas).
+  // El search también filtra el agregado para coherencia visual cuando el usuario busca.
+  let livianasTab = filtroTab(facturasLivianas);
+  if (search) {
+    const q = search.toLowerCase();
+    livianasTab = livianasTab.filter(i =>
+      i.noFactura.toLowerCase().includes(q) ||
+      (custById[i.custId]?.name ?? '').toLowerCase().includes(q)
+    );
+  }
+  const agregadoTab = {
+    cantidad: livianasTab.length,
+    suma:     livianasTab.reduce((s, i) => s + i.total, 0),
+  };
 
   const toggleAll = () => {
     if (selected.size === rows.length) setSelected(new Set());
@@ -144,8 +160,16 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
       <div className="page-header">
         <div>
           <h1 className="page-title">Facturación</h1>
-          <div className="page-subtitle">
-            Mostrando <span className="num">{facturas.length}</span> de <span className="num">{totalConsolidadas}</span> facturas · ordenadas por fecha (más recientes arriba)
+          <div className="page-subtitle" style={{ fontSize: 14, color: 'var(--ink-2)' }}>
+            <span style={{ fontWeight: 500 }}>{TAB_LABELS[tab]}:</span>{' '}
+            <span className="num" style={{ fontWeight: 500 }}>{agregadoTab.cantidad}</span> facturas
+            {' · '}
+            <span className="num" style={{ fontWeight: 500 }}>{Q(agregadoTab.suma)}</span>
+          </div>
+          <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-4)', marginTop: 2 }}>
+            Mostrando <span className="num">{rows.length}</span> de <span className="num">{agregadoTab.cantidad}</span>
+            {agregadoTab.cantidad > rows.length && <> · faltan <span className="num">{agregadoTab.cantidad - rows.length}</span> por cargar</>}
+            {' · '}ordenadas por fecha
           </div>
         </div>
         <div className="page-actions">
@@ -166,8 +190,9 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
         ))}
       </div>
 
-      {/* F-032 parte B: summary del tab "Por cobrar" con sub-categorización. */}
-      {tab === 'por_cobrar' && <PorCobrarSummary facturas={facturas} />}
+      {/* F-032 parte B: summary del tab "Por cobrar" con sub-categorización.
+          F-033: usa livianas para incluir TODAS las facturas, no solo las cargadas. */}
+      {tab === 'por_cobrar' && <PorCobrarSummary facturas={facturasLivianas} />}
 
       <div className="toolbar">
         <div className="toolbar-search">
@@ -280,7 +305,8 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
         padding: '18px 12px', borderTop: '1px solid var(--line-3)', flexWrap: 'wrap',
       }}>
         <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-          Mostrando <span className="num" style={{ color: 'var(--ink-2)' }}>{facturas.length}</span> de <span className="num" style={{ color: 'var(--ink-2)' }}>{totalConsolidadas}</span> facturas
+          Mostrando <span className="num" style={{ color: 'var(--ink-2)' }}>{rows.length}</span> de <span className="num" style={{ color: 'var(--ink-2)' }}>{agregadoTab.cantidad}</span>
+          {agregadoTab.cantidad > rows.length && <> · <span className="num">{agregadoTab.cantidad - rows.length}</span> más por cargar</>}
         </span>
         {hayMas ? (
           <button

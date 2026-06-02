@@ -67,17 +67,21 @@ export function PagosDeudasClient({ pagos, acreedores }: Props) {
       <div className="page-header">
         <div>
           <h1 className="page-title">Pagos a acreedores</h1>
-          <div className="page-subtitle">
-            {sinPagos
-              ? 'Sin pagos registrados todavía'
-              : <>
-                  Mostrando <span className="num">{filtrados.length}</span> de <span className="num">{pagos.length}</span> pagos recientes
+          {sinPagos
+            ? <div className="page-subtitle">Sin pagos registrados todavía</div>
+            : <>
+                <div className="page-subtitle" style={{ fontSize: 14, color: 'var(--ink-2)' }}>
+                  <span style={{ fontWeight: 500 }}>{filtrosActivos ? 'Filtrado' : 'Total'}:</span>{' '}
+                  <span className="num" style={{ fontWeight: 500 }}>{filtrados.length}</span> pagos
                   {' · '}
-                  <span className="num">Total filtrado: {Q(sumaTotal)}</span>
-                  {sumaCapital !== sumaTotal && <> · <span className="num">Capital: {Q(sumaCapital)}</span></>}
-                </>
-            }
-          </div>
+                  <span className="num" style={{ fontWeight: 500 }}>{Q(sumaTotal)}</span>
+                  {sumaCapital !== sumaTotal && <> · <span className="num" style={{ color: 'var(--ink-3)' }}>Capital {Q(sumaCapital)}</span></>}
+                </div>
+                <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-4)', marginTop: 2 }}>
+                  Mostrando <span className="num">{filtrados.length}</span> de <span className="num">{pagos.length}</span> pagos recientes
+                </div>
+              </>
+          }
         </div>
       </div>
 

@@ -1,10 +1,10 @@
-import { getFacturasPagina, getFacturasCountTotal } from '@/lib/db/facturas';
+import { getFacturasPagina, getFacturasLiviano } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { FacturasListClient, type FacturasTab } from '@/components/facturas/list-client';
 
 export const revalidate = 30;
 
-const TABS_VALIDOS: readonly FacturasTab[] = ['todas', 'vencidas', 'por_cobrar', 'cobradas', 'anuladas', 'pendientes'];
+const TABS_VALIDOS: readonly FacturasTab[] = ['todas', 'vencidas', 'por_cobrar', 'cobradas', 'anuladas', 'pendientes', 'refacturadas'];
 
 export default async function FacturacionPage({
   searchParams,
@@ -14,9 +14,13 @@ export default async function FacturacionPage({
   const { tab } = await searchParams;
   const initialTab: FacturasTab = TABS_VALIDOS.includes(tab as FacturasTab) ? (tab as FacturasTab) : 'todas';
 
-  const [pagina, totalConsolidadas, clientes] = await Promise.all([
+  // F-033: livianas en paralelo con la paginación. Livianas es el dataset
+  // completo (mínimo) que alimenta los totales agregados del header sin
+  // depender de cuántas filas están "cargadas". `totalConsolidadas` legacy
+  // se deriva de livianas.length para evitar otro round-trip.
+  const [pagina, livianas, clientes] = await Promise.all([
     getFacturasPagina({ limit: 50 }),
-    getFacturasCountTotal(),
+    getFacturasLiviano(),
     getClientes(),
   ]);
   return (
@@ -24,7 +28,7 @@ export default async function FacturacionPage({
       initialInvoices={pagina.invoices}
       initialHayMas={pagina.hayMas}
       initialUltimaFecha={pagina.ultimaFecha}
-      totalConsolidadas={totalConsolidadas}
+      facturasLivianas={livianas}
       clientes={clientes}
       initialTab={initialTab}
     />

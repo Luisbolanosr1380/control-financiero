@@ -12,11 +12,11 @@ interface Props {
   initialCobros: CobroListado[];
   initialHayMas: boolean;
   initialUltimaFecha: string | null;
-  totalConsolidados: number;
+  cobrosCompletos: CobroListado[];
   clientes: Customer[];
 }
 
-export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFecha, totalConsolidados, clientes }: Props) {
+export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFecha, cobrosCompletos, clientes }: Props) {
   const [cobros, setCobros] = useState<CobroListado[]>(initialCobros);
   const [hayMas, setHayMas] = useState(initialHayMas);
   const [ultimaFecha, setUltimaFecha] = useState<string | null>(initialUltimaFecha);
@@ -25,14 +25,23 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
 
   const nombreById = new Map(clientes.map(c => [c.id, c.name]));
 
+  const matchSearch = (c: CobroListado, q: string) =>
+    c.noFactura.toLowerCase().includes(q)
+    || (nombreById.get(c.custId) ?? '').toLowerCase().includes(q)
+    || c.referencia.toLowerCase().includes(q);
+
   const filtrados = search.trim()
-    ? cobros.filter(c => {
-        const q = search.toLowerCase();
-        return c.noFactura.toLowerCase().includes(q)
-            || (nombreById.get(c.custId) ?? '').toLowerCase().includes(q)
-            || c.referencia.toLowerCase().includes(q);
-      })
+    ? cobros.filter(c => matchSearch(c, search.toLowerCase()))
     : cobros;
+
+  // F-033: agregado real bajo filtros, sobre TODOS los cobros (no solo los cargados).
+  const completosFiltrados = search.trim()
+    ? cobrosCompletos.filter(c => matchSearch(c, search.toLowerCase()))
+    : cobrosCompletos;
+  const agregado = {
+    cantidad: completosFiltrados.length,
+    suma:     completosFiltrados.reduce((s, c) => s + c.monto, 0),
+  };
 
   const totalMonto = filtrados.reduce((s, c) => s + c.monto, 0);
 
@@ -58,8 +67,16 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
       <div className="page-header">
         <div>
           <h1 className="page-title">Cobros y recibos</h1>
-          <div className="page-subtitle">
-            Mostrando <span className="num">{cobros.length}</span> de <span className="num">{totalConsolidados}</span> cobros · ordenados por fecha (más recientes arriba)
+          <div className="page-subtitle" style={{ fontSize: 14, color: 'var(--ink-2)' }}>
+            <span style={{ fontWeight: 500 }}>Total{search.trim() && ' filtrado'}:</span>{' '}
+            <span className="num" style={{ fontWeight: 500 }}>{agregado.cantidad}</span> cobros
+            {' · '}
+            <span className="num" style={{ fontWeight: 500 }}>{Q(agregado.suma)}</span>
+          </div>
+          <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-4)', marginTop: 2 }}>
+            Mostrando <span className="num">{filtrados.length}</span> de <span className="num">{agregado.cantidad}</span>
+            {agregado.cantidad > filtrados.length && <> · faltan <span className="num">{agregado.cantidad - filtrados.length}</span> por cargar</>}
+            {' · '}ordenados por fecha
           </div>
         </div>
         <div className="page-actions">
@@ -148,7 +165,8 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
         padding: '18px 12px', borderTop: '1px solid var(--line-3)', flexWrap: 'wrap',
       }}>
         <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-          Mostrando <span className="num" style={{ color: 'var(--ink-2)' }}>{cobros.length}</span> de <span className="num" style={{ color: 'var(--ink-2)' }}>{totalConsolidados}</span> cobros
+          Mostrando <span className="num" style={{ color: 'var(--ink-2)' }}>{filtrados.length}</span> de <span className="num" style={{ color: 'var(--ink-2)' }}>{agregado.cantidad}</span>
+          {agregado.cantidad > filtrados.length && <> · <span className="num">{agregado.cantidad - filtrados.length}</span> más por cargar</>}
         </span>
         {hayMas ? (
           <button
