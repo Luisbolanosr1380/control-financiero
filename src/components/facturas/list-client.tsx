@@ -27,6 +27,41 @@ const TAB_LABELS: Record<FacturasTab, string> = {
   refacturadas: 'Refacturadas',
 };
 
+function PorCobrarSummary({ facturas }: { facturas: Invoice[] }) {
+  const porCobrar  = facturas.filter(esPorCobrar);
+  const vencidas   = porCobrar.filter(i => i.vencida);
+  const porVencer  = porCobrar.filter(i => !i.vencida);
+  const sumar = (arr: Invoice[]) => arr.reduce((s, i) => s + i.total, 0);
+  return (
+    <div className="card" style={{
+      margin: '10px 0 14px', padding: '12px 16px',
+      background: 'var(--paper-2)', border: '1px solid var(--line-3)',
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
+        <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink-2)' }}>
+          Por cobrar · <span className="num">{porCobrar.length}</span> facturas · <span className="num">{Q(sumar(porCobrar))}</span>
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-3)' }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--olive)' }} />
+          <span>Por vencer:</span>
+          <span className="num" style={{ marginLeft: 'auto', color: 'var(--ink-2)' }}>
+            {porVencer.length} facturas · {Q(sumar(porVencer))}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-3)' }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--wine)' }} />
+          <span>Vencidas:</span>
+          <span className="num" style={{ marginLeft: 'auto', color: 'var(--wine)', fontWeight: 500 }}>
+            {vencidas.length} facturas · {Q(sumar(vencidas))}
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   initialInvoices: Invoice[];
   initialHayMas: boolean;
@@ -130,6 +165,9 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
           </button>
         ))}
       </div>
+
+      {/* F-032 parte B: summary del tab "Por cobrar" con sub-categorización. */}
+      {tab === 'por_cobrar' && <PorCobrarSummary facturas={facturas} />}
 
       <div className="toolbar">
         <div className="toolbar-search">
