@@ -206,10 +206,21 @@ export interface AnularFacturaResult {
 
 /**
  * Anula TODAS las filas (líneas) de una factura por NO.FACTURA en una operación.
- * ESTADO → 'ANULADO' (sin espacio final). Si hay motivo, lo anexa a Observaciones:
- * con la fecha de anulación. Las anuladas quedan fuera de KPIs/listados via consolidateRecords.
+ *
+ * F-032 parte C: acepta `motivoTipo` opcional.
+ * - 'Refacturación' → ESTADO = 'REFACTURADO' (será sustituida por otra factura).
+ * - 'Error en datos' o 'Cancelación del cliente' o cualquier otro → ESTADO = 'ANULADO'.
+ *
+ * Si hay motivo (texto libre o motivoTipo), se anexa a Observaciones: con la fecha.
+ * Las anuladas y refacturadas quedan fuera de tabs activos via consolidateRecords.
  */
-export async function anularFactura(noFactura: string, motivo?: string): Promise<AnularFacturaResult> {
+export type MotivoAnulacion = 'Error en datos' | 'Cancelación del cliente' | 'Refacturación';
+
+export async function anularFactura(
+  noFactura: string,
+  motivo?: string,
+  motivoTipo?: MotivoAnulacion,
+): Promise<AnularFacturaResult> {
   if (!airtable) throw new Error('Airtable no está configurado.');
   const nf = (noFactura ?? '').trim();
   if (!nf) return { ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: 0, error: 'NO.FACTURA es requerido.' };
@@ -224,10 +235,21 @@ export async function anularFactura(noFactura: string, motivo?: string): Promise
       return { ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: 0, error: `No se encontró la factura ${nf}.` };
     }
 
+    const esRefacturacion = motivoTipo === 'Refacturación';
+    const estadoTarget = esRefacturacion ? 'REFACTURADO' : 'ANULADO';
+    const verbo = esRefacturacion ? 'Refacturado' : 'Anulado';
+
     const fechaAnulacion = new Date().toISOString().slice(0, 10);
-    const nota = motivo?.trim()
-      ? `[Anulado ${fechaAnulacion}: ${motivo.trim()}]`
-      : `[Anulado ${fechaAnulacion}]`;
+    // El motivoTipo se incluye explícito en la nota cuando se eligió uno;
+    // un motivo libre adicional se agrega después del ":".
+    const etiqueta = motivoTipo
+      ? motivo?.trim()
+        ? `${motivoTipo} — ${motivo.trim()}`
+        : motivoTipo
+      : motivo?.trim() ?? '';
+    const nota = etiqueta
+      ? `[${verbo} ${fechaAnulacion}: ${etiqueta}]`
+      : `[${verbo} ${fechaAnulacion}]`;
 
     const payloads = records.map(r => {
       const existing = String(r.fields[F.OBSERVACIONES] ?? '').trim();
@@ -235,7 +257,7 @@ export async function anularFactura(noFactura: string, motivo?: string): Promise
       return {
         id: r.id,
         fields: {
-          [F.ESTADO]: 'ANULADO',         // exacto, sin espacio final
+          [F.ESTADO]: estadoTarget,
           [F.OBSERVACIONES]: newObs,
         },
       };

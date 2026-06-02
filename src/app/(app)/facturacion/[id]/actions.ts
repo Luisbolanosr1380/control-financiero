@@ -1,7 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { anularFactura, type AnularFacturaResult } from '@/lib/db/facturas';
+import { anularFactura, type AnularFacturaResult, type MotivoAnulacion } from '@/lib/db/facturas';
 import { registrarCobro, type RegistrarCobroInput, type RegistrarCobroResult } from '@/lib/db/cobros';
 
 export type AnularResult = AnularFacturaResult;
@@ -17,8 +17,12 @@ function revalidarTodo() {
   revalidatePath('/cobros/identificar');
 }
 
-export async function anularFacturaAction(noFactura: string, motivo?: string): Promise<AnularResult> {
-  const result = await anularFactura(noFactura, motivo);
+export async function anularFacturaAction(
+  noFactura: string,
+  motivo?: string,
+  motivoTipo?: MotivoAnulacion,
+): Promise<AnularResult> {
+  const result = await anularFactura(noFactura, motivo, motivoTipo);
   if (result.ok || result.recordsActualizados > 0) revalidarTodo();
   return result;
 }

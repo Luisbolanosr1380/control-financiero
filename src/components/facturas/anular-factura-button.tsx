@@ -7,6 +7,9 @@ import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { anularFacturaAction } from '@/app/(app)/facturacion/[id]/actions';
 import type { InvoiceStatus } from '@/lib/types';
+import type { MotivoAnulacion } from '@/lib/db/facturas';
+
+const MOTIVOS: MotivoAnulacion[] = ['Error en datos', 'Cancelación del cliente', 'Refacturación'];
 
 interface Props {
   noFactura: string;
@@ -26,6 +29,7 @@ export function AnularFacturaButton({ noFactura, status }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [motivo, setMotivo] = useState('');
+  const [motivoTipo, setMotivoTipo] = useState<MotivoAnulacion | ''>('');
   const [loading, setLoading] = useState(false);
 
   if (status === 'anulado') {
@@ -51,16 +55,20 @@ export function AnularFacturaButton({ noFactura, status }: Props) {
           advertenciaReforzada={advertenciaReforzada}
           motivo={motivo}
           setMotivo={setMotivo}
+          motivoTipo={motivoTipo}
+          setMotivoTipo={setMotivoTipo}
           loading={loading}
-          onClose={() => { if (!loading) { setOpen(false); setMotivo(''); } }}
+          onClose={() => { if (!loading) { setOpen(false); setMotivo(''); setMotivoTipo(''); } }}
           onConfirm={async () => {
             setLoading(true);
             try {
-              const res = await anularFacturaAction(noFactura, motivo || undefined);
+              const res = await anularFacturaAction(noFactura, motivo || undefined, motivoTipo || undefined);
+              const accion = motivoTipo === 'Refacturación' ? 'refacturada' : 'anulada';
               if (res.ok) {
-                toast.success(`Factura ${noFactura} anulada · ${res.recordsActualizados} línea(s)`);
+                toast.success(`Factura ${noFactura} ${accion} · ${res.recordsActualizados} línea(s)`);
                 setOpen(false);
                 setMotivo('');
+                setMotivoTipo('');
                 router.refresh();
               } else if (res.recordsActualizados > 0) {
                 toast.warning(res.error ?? `Anulación parcial: ${res.recordsActualizados}/${res.recordsTotal}. Revisá Airtable.`);
@@ -86,12 +94,14 @@ interface ConfirmProps {
   advertenciaReforzada: boolean;
   motivo: string;
   setMotivo: (v: string) => void;
+  motivoTipo: MotivoAnulacion | '';
+  setMotivoTipo: (v: MotivoAnulacion | '') => void;
   loading: boolean;
   onClose: () => void;
   onConfirm: () => void;
 }
 
-function ConfirmModal({ noFactura, status, advertenciaReforzada, motivo, setMotivo, loading, onClose, onConfirm }: ConfirmProps) {
+function ConfirmModal({ noFactura, status, advertenciaReforzada, motivo, setMotivo, motivoTipo, setMotivoTipo, loading, onClose, onConfirm }: ConfirmProps) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !loading) onClose(); };
     window.addEventListener('keydown', onKey);
@@ -124,7 +134,7 @@ function ConfirmModal({ noFactura, status, advertenciaReforzada, motivo, setMoti
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <I.Alert size={15} style={{ color: 'var(--wine)' }} />
           <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>
-            Anular factura <span className="num">{noFactura}</span>
+            {motivoTipo === 'Refacturación' ? 'Refacturar' : 'Anular'} factura <span className="num">{noFactura}</span>
           </div>
           <button type="button" className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={onClose} disabled={loading} title="Cerrar (Esc)">
             <I.X size={15} />
@@ -143,11 +153,31 @@ function ConfirmModal({ noFactura, status, advertenciaReforzada, motivo, setMoti
           )}
 
           <p style={{ fontSize: 13.5, color: 'var(--ink-2)', lineHeight: 1.55, margin: '0 0 14px' }}>
-            La factura pasará a <strong>ANULADO</strong> en Airtable. Se actualizan <strong>todas las líneas</strong> que comparten este NO.FACTURA. La factura quedará fuera de KPIs y listados activos. <span style={{ color: 'var(--ink-4)' }}>No se puede des-anular desde la app (se hace manual en Airtable si hace falta).</span>
+            La factura pasará a <strong>{motivoTipo === 'Refacturación' ? 'REFACTURADO' : 'ANULADO'}</strong> en Airtable. Se actualizan <strong>todas las líneas</strong> que comparten este NO.FACTURA. La factura quedará fuera de KPIs y listados activos. <span style={{ color: 'var(--ink-4)' }}>No se puede des-anular desde la app (se hace manual en Airtable si hace falta).</span>
           </p>
 
+          <div className="field" style={{ marginBottom: 12 }}>
+            <label className="label" htmlFor="motivo-tipo-anular">Motivo de anulación (opcional)</label>
+            <select
+              id="motivo-tipo-anular"
+              className="input"
+              value={motivoTipo}
+              onChange={(e) => setMotivoTipo(e.target.value as MotivoAnulacion | '')}
+              disabled={loading}
+              style={{ fontFamily: 'inherit' }}
+            >
+              <option value="">— Sin motivo predefinido (queda como Anulada) —</option>
+              {MOTIVOS.map(m => <option key={m} value={m}>{m}</option>)}
+            </select>
+            {motivoTipo === 'Refacturación' && (
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4, lineHeight: 1.5 }}>
+                Esta factura quedará marcada como <strong>REFACTURADA</strong>. Tendrás que emitir la nueva factura por separado (todavía no la genera el sistema).
+              </div>
+            )}
+          </div>
+
           <div className="field" style={{ marginBottom: 0 }}>
-            <label className="label" htmlFor="motivo-anular">Motivo (opcional)</label>
+            <label className="label" htmlFor="motivo-anular">Detalle adicional (opcional)</label>
             <textarea
               id="motivo-anular"
               className="input"
@@ -159,7 +189,7 @@ function ConfirmModal({ noFactura, status, advertenciaReforzada, motivo, setMoti
               style={{ resize: 'vertical', fontFamily: 'inherit' }}
             />
             <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
-              Se guarda en el campo Observaciones con la fecha.
+              Se guarda en el campo Observaciones con la fecha y el motivo seleccionado.
             </div>
           </div>
         </div>
@@ -169,7 +199,9 @@ function ConfirmModal({ noFactura, status, advertenciaReforzada, motivo, setMoti
             Cancelar
           </button>
           <button type="button" className="btn btn-danger" onClick={onConfirm} disabled={loading}>
-            {loading ? <><I.Refresh size={13} /> Anulando…</> : <><I.X size={13} /> Confirmar anulación</>}
+            {loading
+              ? <><I.Refresh size={13} /> {motivoTipo === 'Refacturación' ? 'Refacturando' : 'Anulando'}…</>
+              : <><I.X size={13} /> Confirmar {motivoTipo === 'Refacturación' ? 'refacturación' : 'anulación'}</>}
           </button>
         </div>
       </div>
