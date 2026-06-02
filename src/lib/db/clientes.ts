@@ -38,8 +38,9 @@ export async function getClientes(): Promise<Customer[]> {
   if (USE_MOCK || !airtable) return CUSTOMERS;
 
   try {
+    // F-034: sin maxRecords — `.all()` agota todas las páginas.
     const records = await airtable(TABLES.CLIENTES)
-      .select({ maxRecords: 2000 })
+      .select()
       .all();
     return records.map(r => recordToCustomer({ id: r.id, fields: r.fields }));
   } catch (err) {

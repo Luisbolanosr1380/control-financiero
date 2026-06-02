@@ -17,10 +17,12 @@ export async function getFacturas(filters?: {
   }
 
   try {
+    // F-034: sin maxRecords. `.all()` pagina hasta agotar (eachPage interno).
+    // Antes el cap de 2000 cortaba líneas: 888 facturas consolidadas pueden
+    // tener > 2000 líneas (multi-línea), bajando count visible a ~757.
     const records = await airtable(TABLES.FACTURAS)
       .select({
         sort: [{ field: 'FECHA_EMISION', direction: 'desc' }],
-        maxRecords: 2000,
       })
       .all();
 
@@ -84,10 +86,10 @@ export async function getFacturasLiviano(): Promise<InvoiceLiviano[]> {
     }));
   }
   try {
+    // F-034: sin maxRecords — `.all()` agota todas las páginas.
     const records = await airtable(TABLES.FACTURAS)
       .select({
         fields: [F.NO_FACTURA, F.TOTAL, F.ESTADO, F.ESTATUS_COBRANZA, F.CLIENTE],
-        maxRecords: 2000,
       })
       .all();
 
@@ -198,8 +200,9 @@ export async function getFacturasPagina(args: { limit?: number; before?: string 
 export async function getFacturasCountTotal(): Promise<number> {
   if (USE_MOCK || !airtable) return MOCK_INVOICES.length;
   try {
+    // F-034: sin maxRecords (agota todas las páginas).
     const records = await airtable(TABLES.FACTURAS)
-      .select({ fields: [F.NO_FACTURA, F.ESTADO], maxRecords: 2000 })
+      .select({ fields: [F.NO_FACTURA, F.ESTADO] })
       .all();
     const noAnulNoFactura = new Set<string>();
     let anuladasYRef = 0;   // cada una cuenta individual (no se consolidan)
