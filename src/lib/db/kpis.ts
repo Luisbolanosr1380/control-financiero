@@ -14,16 +14,25 @@ import type { Invoice, Customer, LineKey, LineStats, AgingEntry, HealthStatus } 
 // REFACTURADAS también se mapeaban a 'anulado' legacy — colateralmente
 // se excluían, hoy ya no porque estadoBruto las distingue).
 const isActiva = (i: Invoice) => i.estadoBruto !== 'anulado' && i.estadoBruto !== 'refacturado';
-const esPorCobrar = (i: Invoice) => i.estadoBruto === 'emitida' || i.estadoBruto === 'pendiente';
+// F-034: nueva semántica.
+//   - Por cobrar = SOLO emitida (cartera activa de cobranza normal).
+//   - Cartera total = emitida + pendiente (todo lo no cobrado).
+//   - Vencidas = subset de Por cobrar (emitida + vencida=true). Pendiente NO
+//     se considera "vencida" en el sentido de cobranza — es un estado interno.
+const esPorCobrar    = (i: Invoice) => i.estadoBruto === 'emitida';
+const esCarteraTotal = (i: Invoice) => i.estadoBruto === 'emitida' || i.estadoBruto === 'pendiente';
 
 export interface DashboardKPIs {
   porCobrarTotal: number;
+  carteraTotal: number;        // F-034: EMITIDA + PENDIENTE
   vencidoTotal: number;
   cobradoTotal: number;
   facturadoTotal: number;
   tasaCobranza: number;
   numVencidas: number;
   numPorCobrar: number;
+  numCarteraTotal: number;     // F-034
+  numPendientes: number;       // F-034
   numCobradas: number;
 }
 
@@ -31,13 +40,14 @@ export async function getDashboardKPIs(facturas?: Invoice[]): Promise<DashboardK
   const all = facturas ?? await getFacturas();
   const activas = all.filter(isActiva);
 
-  // F-032: "Por cobrar" = TODAS las activas no cobradas (emitida + pendiente),
-  // incluyendo vencidas y por vencer. Mismo criterio que el tab /facturacion.
   const porCobrarTotal = activas
     .filter(esPorCobrar)
     .reduce((s, i) => s + i.balance, 0);
 
-  // F-032: "Vencido" = subset de porCobrar con vencida=true (incluye PENDIENTE-vencida).
+  const carteraTotal = activas
+    .filter(esCarteraTotal)
+    .reduce((s, i) => s + i.balance, 0);
+
   const vencidoTotal = activas
     .filter(i => esPorCobrar(i) && i.vencida)
     .reduce((s, i) => s + i.balance, 0);
@@ -48,13 +58,16 @@ export async function getDashboardKPIs(facturas?: Invoice[]): Promise<DashboardK
 
   return {
     porCobrarTotal,
+    carteraTotal,
     vencidoTotal,
     cobradoTotal,
     facturadoTotal,
     tasaCobranza,
-    numVencidas:   activas.filter(i => esPorCobrar(i) && i.vencida).length,
-    numPorCobrar:  activas.filter(esPorCobrar).length,
-    numCobradas:   activas.filter(i => i.estadoBruto === 'cobrado').length,
+    numVencidas:      activas.filter(i => esPorCobrar(i) && i.vencida).length,
+    numPorCobrar:     activas.filter(esPorCobrar).length,
+    numCarteraTotal:  activas.filter(esCarteraTotal).length,
+    numPendientes:    activas.filter(i => i.estadoBruto === 'pendiente').length,
+    numCobradas:      activas.filter(i => i.estadoBruto === 'cobrado').length,
   };
 }
 

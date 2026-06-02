@@ -23,7 +23,10 @@ export const explicar = {
     'Dinero que efectivamente ya entró (Total − saldo pendiente). Si está muy abajo del Facturado, la cobranza viene lenta.',
 
   porCobrarTotal: () =>
-    'Plata que ya facturaste pero todavía no entra a tu cuenta. Si crece mes a mes, la cobranza se está atrasando.',
+    'Saldo de facturas EMITIDA (cartera activa de cobranza normal). NO incluye PENDIENTES, que están en proceso interno retenido — esas viven en "Cartera total".',
+
+  carteraTotal: () =>
+    'TODO lo no cobrado = EMITIDA + PENDIENTE. Es la foto completa de lo que la empresa espera recibir; "Por cobrar" es solo el subset activo de cobranza.',
 
   vencidoTotal: (numVencidas: number) =>
     `Suma de saldos de facturas que ya pasaron su fecha de vencimiento (${numVencidas} factura${numVencidas === 1 ? '' : 's'}). Atención prioritaria — cuanto más tiempo pasa, más se pone difícil de cobrar.`,

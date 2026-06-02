@@ -99,7 +99,7 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
               Auros · Resumen del día
             </div>
             <p className="serif" style={{ fontSize: 19, lineHeight: 1.5, margin: 0, color: 'var(--ink)', maxWidth: 920, letterSpacing: '-0.005em' }}>
-              La cartera por cobrar suma <span className="num" style={{ fontWeight: 500 }}>{Q(kpis.porCobrarTotal)}</span>, de los cuales <span className="num" style={{ fontWeight: 500, color: 'var(--wine)' }}>{Q(kpis.vencidoTotal)}</span> están <em style={{ fontStyle: 'italic', fontWeight: 400 }}>vencidos</em> en <span className="num" style={{ fontWeight: 500 }}>{kpis.numVencidas}</span> facturas. La tasa de cobranza global es <span className="num" style={{ fontWeight: 500 }}>{kpis.tasaCobranza.toFixed(1)}%</span>.
+              La cartera total no cobrada suma <span className="num" style={{ fontWeight: 500 }}>{Q(kpis.carteraTotal)}</span> ({kpis.numCarteraTotal} facturas: {kpis.numPorCobrar} por cobrar + {kpis.numPendientes} pendientes), de los cuales <span className="num" style={{ fontWeight: 500, color: 'var(--wine)' }}>{Q(kpis.vencidoTotal)}</span> están <em style={{ fontStyle: 'italic', fontWeight: 400 }}>vencidos</em> en <span className="num" style={{ fontWeight: 500 }}>{kpis.numVencidas}</span> facturas. La tasa de cobranza global es <span className="num" style={{ fontWeight: 500 }}>{kpis.tasaCobranza.toFixed(1)}%</span>.
             </p>
             <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
               <button className="btn btn-primary" onClick={() => router.push('/ai')}>
@@ -114,10 +114,11 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
 
       {/* KPIs */}
       <div className="kpi-grid" style={{ marginBottom: 22 }}>
-        <Kpi label="Facturado · total"   value={kpis.facturadoTotal} info={explicar.facturadoTotal()} />
-        <Kpi label="Cobrado · total"     value={kpis.cobradoTotal}   info={explicar.cobradoTotal()} />
-        <Kpi label="Por cobrar · total"  value={kpis.porCobrarTotal} info={explicar.porCobrarTotal()} />
-        <Kpi label="Vencido · total"     value={kpis.vencidoTotal} tone="neg" note={`${kpis.numVencidas} facturas · crítico`} info={explicar.vencidoTotal(kpis.numVencidas)} />
+        <Kpi label="Facturado · total"      value={kpis.facturadoTotal} info={explicar.facturadoTotal()} />
+        <Kpi label="Cobrado · total"        value={kpis.cobradoTotal}   info={explicar.cobradoTotal()} />
+        <Kpi label="Cartera total"          value={kpis.carteraTotal}   note={`${kpis.numCarteraTotal} facturas (emitida + pendiente)`} info={explicar.carteraTotal()} />
+        <Kpi label="Por cobrar (emitida)"   value={kpis.porCobrarTotal} note={`${kpis.numPorCobrar} facturas activas`} info={explicar.porCobrarTotal()} />
+        <Kpi label="Vencido · total"        value={kpis.vencidoTotal} tone="neg" note={`${kpis.numVencidas} facturas · crítico`} info={explicar.vencidoTotal(kpis.numVencidas)} />
         <Kpi label="Tasa de cobranza"    value={kpis.tasaCobranza} format="percent" info={explicar.tasaCobranza(kpis.tasaCobranza)} />
         <Kpi label="Facturas vencidas"   value={kpis.numVencidas} format="count" info={explicar.numVencidas(kpis.numVencidas)} />
       </div>

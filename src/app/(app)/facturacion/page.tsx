@@ -1,10 +1,12 @@
-import { getFacturasPagina, getFacturasLiviano } from '@/lib/db/facturas';
+import { getFacturasPagina, getFacturasLiviano, type FiltroTabFactura } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { FacturasListClient, type FacturasTab } from '@/components/facturas/list-client';
 
 export const revalidate = 30;
 
-const TABS_VALIDOS: readonly FacturasTab[] = ['todas', 'vencidas', 'por_cobrar', 'cobradas', 'anuladas', 'pendientes', 'refacturadas'];
+const TABS_VALIDOS: readonly FacturasTab[] = [
+  'todas', 'cartera_total', 'por_cobrar', 'vencidas', 'pendientes', 'cobradas', 'anuladas', 'refacturadas',
+];
 
 export default async function FacturacionPage({
   searchParams,
@@ -13,18 +15,21 @@ export default async function FacturacionPage({
 }) {
   const { tab } = await searchParams;
   const initialTab: FacturasTab = TABS_VALIDOS.includes(tab as FacturasTab) ? (tab as FacturasTab) : 'todas';
+  const filtro: FiltroTabFactura = initialTab;
 
-  // F-033: livianas en paralelo con la paginación. Livianas es el dataset
-  // completo (mínimo) que alimenta los totales agregados del header sin
-  // depender de cuántas filas están "cargadas". `totalConsolidadas` legacy
-  // se deriva de livianas.length para evitar otro round-trip.
+  // F-034: la página filtra server-side por el tab activo. Tabs chicos
+  // (Pendientes, Refacturadas) traen TODOS sus records en una página y no
+  // dependen de la ventana FECHA_EMISION desc del default global.
+  // Las livianas siguen siendo el dataset completo: alimentan los counts
+  // por tab y el header agregado de F-033.
   const [pagina, livianas, clientes] = await Promise.all([
-    getFacturasPagina({ limit: 50 }),
+    getFacturasPagina({ limit: 50, filtro }),
     getFacturasLiviano(),
     getClientes(),
   ]);
   return (
     <FacturasListClient
+      key={initialTab}
       initialInvoices={pagina.invoices}
       initialHayMas={pagina.hayMas}
       initialUltimaFecha={pagina.ultimaFecha}

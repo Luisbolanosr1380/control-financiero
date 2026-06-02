@@ -140,7 +140,7 @@ export async function getFacturasLiviano(): Promise<InvoiceLiviano[]> {
   }
 }
 
-/* ===== Paginación (F-022) ===== */
+/* ===== Paginación (F-022 + F-034 filtros server-side por tab) ===== */
 
 export interface GetFacturasPaginaResult {
   invoices: Invoice[];
@@ -148,16 +148,67 @@ export interface GetFacturasPaginaResult {
   ultimaFecha: string | null;   // FECHA_EMISION de la última invoice del batch (para next page)
 }
 
+// F-034: tabs del listado /facturacion mapeados a filterByFormula de Airtable.
+// El filtro se aplica al server para que tabs chicos (Pendientes=5, Refacturadas=1)
+// no dependan de la ventana de paginación FECHA_EMISION desc.
+// TRIM(UPPER(...)) protege contra trailing spaces y mayúsculas inconsistentes
+// en el singleSelect ESTADO de Airtable (se vieron 'PENDIENTE ' con espacio).
+export type FiltroTabFactura =
+  | 'todas'
+  | 'cartera_total'
+  | 'por_cobrar'
+  | 'vencidas'
+  | 'pendientes'
+  | 'cobradas'
+  | 'anuladas'
+  | 'refacturadas';
+
+function filtroToFormula(filtro: FiltroTabFactura | undefined): string {
+  const E = `TRIM(UPPER({${F.ESTADO}}))`;
+  const V = `TRIM(UPPER({${F.ESTATUS_COBRANZA}}))`;
+  switch (filtro) {
+    case 'cartera_total': return `OR(${E}='EMITIDA',${E}='PENDIENTE')`;
+    case 'por_cobrar':    return `${E}='EMITIDA'`;
+    case 'vencidas':      return `AND(${E}='EMITIDA',${V}='VENCIDA')`;
+    case 'pendientes':    return `${E}='PENDIENTE'`;
+    case 'cobradas':      return `OR(${E}='COBRADO',${E}='COBRADA')`;
+    case 'anuladas':      return `OR(${E}='ANULADO',${E}='ANULADA')`;
+    case 'refacturadas':  return `OR(${E}='REFACTURADO',${E}='REFACTURADA')`;
+    case 'todas':
+    default:              return '';
+  }
+}
+
+// F-034: predicado equivalente al filtroToFormula para mock data y para
+// reusar en el client cuando filtra livianas localmente.
+export function predicadoFiltro(filtro: FiltroTabFactura | undefined) {
+  return (i: { estadoBruto: InvoiceEstadoBruto; vencida: boolean }): boolean => {
+    switch (filtro) {
+      case 'cartera_total': return i.estadoBruto === 'emitida' || i.estadoBruto === 'pendiente';
+      case 'por_cobrar':    return i.estadoBruto === 'emitida';
+      case 'vencidas':      return i.estadoBruto === 'emitida' && i.vencida;
+      case 'pendientes':    return i.estadoBruto === 'pendiente';
+      case 'cobradas':      return i.estadoBruto === 'cobrado';
+      case 'anuladas':      return i.estadoBruto === 'anulado';
+      case 'refacturadas':  return i.estadoBruto === 'refacturado';
+      case 'todas':
+      default:              return true;
+    }
+  };
+}
+
 /**
  * Trae las últimas N facturas consolidadas, ordenadas por FECHA_EMISION desc.
- * Si se pasa `before`, sigue la paginación: trae las que tengan fecha < before.
- * Como una factura puede ser multi-línea, sobre-fetchea records para garantizar `limit` facturas.
+ * F-034: acepta `filtro` opcional para filtrar por tab al nivel de Airtable.
+ * Una factura puede ser multi-línea: sobre-fetchea records para garantizar `limit` facturas.
  */
-export async function getFacturasPagina(args: { limit?: number; before?: string } = {}): Promise<GetFacturasPaginaResult> {
+export async function getFacturasPagina(args: { limit?: number; before?: string; filtro?: FiltroTabFactura } = {}): Promise<GetFacturasPaginaResult> {
   const limit = args.limit ?? 50;
 
   if (USE_MOCK || !airtable) {
-    const mock = [...MOCK_INVOICES].sort((a, b) => (b.fechaEmision ?? '').localeCompare(a.fechaEmision ?? ''));
+    const mock = [...MOCK_INVOICES]
+      .filter(predicadoFiltro(args.filtro))
+      .sort((a, b) => (b.fechaEmision ?? '').localeCompare(a.fechaEmision ?? ''));
     const filtered = args.before ? mock.filter(i => (i.fechaEmision ?? '') < args.before!) : mock;
     const page = filtered.slice(0, limit);
     return {
@@ -168,23 +219,30 @@ export async function getFacturasPagina(args: { limit?: number; before?: string 
   }
 
   try {
-    const overFetch = Math.min(2000, limit * 3 + 50);
+    // Sin maxRecords cuando hay filtro estrecho (pendientes/refacturadas): traen pocos
+    // records y el SDK pagina hasta agotar. Para 'todas'/'cobradas' mantenemos un cap
+    // generoso por seguridad (no romper la primera carga si el dataset crece sin tope).
+    const filtroFormula = filtroToFormula(args.filtro);
+    const conFiltroEstrecho = !!filtroFormula;
+    const overFetch = conFiltroEstrecho ? undefined : Math.min(5000, limit * 4 + 100);
     const select: Parameters<ReturnType<typeof airtable>['select']>[0] = {
       sort: [{ field: 'FECHA_EMISION', direction: 'desc' }],
-      maxRecords: overFetch,
     };
+    if (overFetch) select.maxRecords = overFetch;
+    const partes: string[] = [];
+    if (filtroFormula) partes.push(filtroFormula);
     if (args.before) {
-      // Estrictamente antes de la fecha cursor — para evitar re-fetch del cursor exacto.
-      // En el cliente deduplicamos por noFactura si hay empates de fecha.
       const beforeEsc = args.before.replace(/"/g, '');
-      select.filterByFormula = `IS_BEFORE({FECHA_EMISION}, DATETIME_PARSE("${beforeEsc}"))`;
+      partes.push(`IS_BEFORE({FECHA_EMISION}, DATETIME_PARSE("${beforeEsc}"))`);
     }
+    if (partes.length === 1) select.filterByFormula = partes[0];
+    else if (partes.length > 1) select.filterByFormula = `AND(${partes.join(',')})`;
 
     const records = await airtable(TABLES.FACTURAS).select(select).all();
     const invoices = consolidateRecords(records.map(r => ({ id: r.id, fields: r.fields })));
     // Ya vienen sorted desc por la query
     const page = invoices.slice(0, limit);
-    const hayMas = invoices.length > limit || records.length === overFetch;
+    const hayMas = invoices.length > limit || (overFetch !== undefined && records.length === overFetch);
     const ultimaFecha = page[page.length - 1]?.fechaEmision ?? null;
     return { invoices: page, hayMas, ultimaFecha };
   } catch (err) {
