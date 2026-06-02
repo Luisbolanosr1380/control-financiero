@@ -1,7 +1,7 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { consolidateRecords, F } from './mappers';
 import { INVOICES as MOCK_INVOICES } from '../mock-data';
-import type { Invoice } from '../types';
+import type { Invoice, InvoiceEstadoBruto } from '../types';
 
 export async function getFacturas(filters?: {
   status?: Invoice['status'];
@@ -40,6 +40,102 @@ export async function getFacturas(filters?: {
 export async function getFactura(id: string): Promise<Invoice | null> {
   const facturas = await getFacturas();
   return facturas.find(f => f.id === id) ?? null;
+}
+
+/* ===== F-033: dataset liviano para agregados en headers ===== */
+
+/**
+ * Versión mínima de Invoice: solo lo necesario para clasificar (tab + filtros)
+ * y para sumas. Se usa para que los headers paginados muestren el TOTAL real
+ * (cantidad + suma) bajo filtros, independiente de cuántos rows estén
+ * cargados visualmente.
+ */
+export interface InvoiceLiviano {
+  id: string;
+  noFactura: string;
+  custId: string;
+  total: number;
+  estadoBruto: InvoiceEstadoBruto;
+  vencida: boolean;
+}
+
+const norm = (e: unknown) => String(e ?? '').toUpperCase().trim();
+function brutoFromEstado(estado: unknown): InvoiceEstadoBruto {
+  const s = norm(estado);
+  if (s === 'COBRADO' || s === 'COBRADA')         return 'cobrado';
+  if (s === 'ANULADO' || s === 'ANULADA')         return 'anulado';
+  if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'refacturado';
+  if (s === 'PENDIENTE')                          return 'pendiente';
+  if (s === 'EMITIDA' || s === 'EMITIDO')         return 'emitida';
+  return 'otro';
+}
+
+/**
+ * Trae TODAS las facturas con solo los campos mínimos para clasificar y sumar.
+ * Consolida por NO.FACTURA (anuladas y refacturadas se mantienen como records
+ * separados, mismo criterio que consolidateRecords). Pensada para los headers
+ * agregados de F-033 — ~890 records → ~300-500ms.
+ */
+export async function getFacturasLiviano(): Promise<InvoiceLiviano[]> {
+  if (USE_MOCK || !airtable) {
+    return MOCK_INVOICES.map(i => ({
+      id: i.id, noFactura: i.noFactura, custId: i.custId, total: i.total,
+      estadoBruto: i.estadoBruto, vencida: i.vencida,
+    }));
+  }
+  try {
+    const records = await airtable(TABLES.FACTURAS)
+      .select({
+        fields: [F.NO_FACTURA, F.TOTAL, F.ESTADO, F.ESTATUS_COBRANZA, F.CLIENTE],
+        maxRecords: 2000,
+      })
+      .all();
+
+    type Row = { id: string; fields: Record<string, unknown> };
+    // Bucket key igual a consolidateRecords: anuladas/refacturadas como rows individuales.
+    const PRIO: Record<InvoiceEstadoBruto, number> = {
+      pendiente: 5, emitida: 4, cobrado: 3, anulado: 1, refacturado: 0, otro: 0,
+    };
+    const buckets = new Map<string, { records: Row[]; brutos: InvoiceEstadoBruto[] }>();
+    for (const r of records) {
+      const row: Row = { id: r.id, fields: r.fields as Record<string, unknown> };
+      const bruto = brutoFromEstado(row.fields[F.ESTADO]);
+      const nf = String(row.fields[F.NO_FACTURA] ?? row.id);
+      const key = bruto === 'anulado' || bruto === 'refacturado'
+        ? `${nf}__${bruto}__${row.id}`
+        : nf;
+      const b = buckets.get(key) ?? { records: [] as Row[], brutos: [] };
+      b.records.push(row);
+      b.brutos.push(bruto);
+      buckets.set(key, b);
+    }
+
+    const out: InvoiceLiviano[] = [];
+    for (const [, bucket] of buckets) {
+      const principal = bucket.records.reduce((a, b) =>
+        Number(b.fields[F.TOTAL] ?? 0) > Number(a.fields[F.TOTAL] ?? 0) ? b : a,
+      );
+      const brutoDominante = bucket.brutos.reduce((acc, b) =>
+        PRIO[b] > PRIO[acc] ? b : acc, bucket.brutos[0],
+      );
+      const vencida = (brutoDominante === 'emitida' || brutoDominante === 'pendiente')
+        && bucket.records.some(r => norm(r.fields[F.ESTATUS_COBRANZA]) === 'VENCIDA');
+      const total = bucket.records.reduce((s, r) => s + Number(r.fields[F.TOTAL] ?? 0), 0);
+
+      out.push({
+        id: principal.id,
+        noFactura: String(principal.fields[F.NO_FACTURA] ?? principal.id),
+        custId: String((principal.fields[F.CLIENTE] as string[] | undefined)?.[0] ?? ''),
+        total,
+        estadoBruto: brutoDominante,
+        vencida,
+      });
+    }
+    return out;
+  } catch (err) {
+    console.error('Error fetching facturas liviano:', err);
+    return [];
+  }
 }
 
 /* ===== Paginación (F-022) ===== */
