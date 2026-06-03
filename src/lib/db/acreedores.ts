@@ -9,12 +9,15 @@ import { airtable, USE_MOCK, TABLES } from './airtable';
 import { getAcreedores, type Acreedor } from './deudas';
 
 // Opciones del singleSelect Tipo_Acreedor (ACREEDORES). Snapshot de Airtable.
+// F-037: 'Empleado' agregado para vincular ACREEDORES auto-generados a empleados
+// activos que tienen salarios pendientes diferidos.
 export const TIPOS_ACREEDOR = [
   'Socio',
   'Banco',
   'Tarjeta',
   'Financiera',
   'Proveedor',
+  'Empleado',
   'Ex-Empleado',
   'Asesor Relacionado',
   'Nómina',
