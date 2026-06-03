@@ -89,12 +89,15 @@ export interface Acreedor {
  *  - 'asesores_relacionados' → Tipo_Acreedor === 'Asesor Relacionado'
  *  - 'externa'               → el resto (bancos, fisco, tarjetas, proveedores).
  */
-export type CategoriaPasivo = 'externa' | 'socios' | 'ex_empleados' | 'asesores_relacionados';
+// F-037: 5ta categoría 'empleados' para salarios diferidos a empleados ACTIVOS.
+// Ex-empleados es distinta (riesgo reputacional al ya no estar en la empresa).
+export type CategoriaPasivo = 'externa' | 'socios' | 'empleados' | 'ex_empleados' | 'asesores_relacionados';
 
-export const CATEGORIAS_PASIVO: readonly CategoriaPasivo[] = ['externa', 'socios', 'ex_empleados', 'asesores_relacionados'];
+export const CATEGORIAS_PASIVO: readonly CategoriaPasivo[] = ['externa', 'socios', 'empleados', 'ex_empleados', 'asesores_relacionados'];
 
 export function clasificarPasivo(tipoAcreedor: string, esParteRelacionada: boolean): CategoriaPasivo {
   if (tipoAcreedor === 'Socio' || esParteRelacionada) return 'socios';
+  if (tipoAcreedor === 'Empleado')                   return 'empleados';     // F-037
   if (tipoAcreedor === 'Ex-Empleado')                return 'ex_empleados';
   if (tipoAcreedor === 'Asesor Relacionado')         return 'asesores_relacionados';
   return 'externa';
@@ -412,6 +415,7 @@ export async function getKPIsDeudas(): Promise<KPIsDeudas> {
   const porCategoria: KPIsDeudas['porCategoria'] = {
     externa:               { monto: 0, cantidad: 0 },
     socios:                { monto: 0, cantidad: 0 },
+    empleados:             { monto: 0, cantidad: 0 },   // F-037
     ex_empleados:          { monto: 0, cantidad: 0 },
     asesores_relacionados: { monto: 0, cantidad: 0 },
   };

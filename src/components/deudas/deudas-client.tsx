@@ -20,15 +20,16 @@ type EstadoFiltro = 'todas' | 'vigentes' | 'vencidas';
 const CATEGORIA_LABELS: Record<CategoriaPasivo, string> = {
   externa:               '🔴 Externa',
   socios:                '🟡 Socios',
+  empleados:             '🟢 Empleados (salarios)',   // F-037
   ex_empleados:          '🟠 Ex-empleados',
   asesores_relacionados: '🔵 Asesores / relacionados',
 };
 
-// Colores del bar chart de top acreedores, por categoría (alineados a los
-// emojis del select y de los KPIs del hero).
+// Colores del bar chart de top acreedores, por categoría.
 const CATEGORIA_COLORS: Record<CategoriaPasivo, string> = {
   externa:               '#8A2A2A',   // wine (rojo)
   socios:                '#B8801C',   // burnt (amarillo/dorado)
+  empleados:             '#3D7A4E',   // verde — F-037
   ex_empleados:          '#D97A1A',   // naranja
   asesores_relacionados: '#2B3A6B',   // azul navy
 };
@@ -36,6 +37,7 @@ const CATEGORIA_COLORS: Record<CategoriaPasivo, string> = {
 const CATEGORIA_ICONS: Record<CategoriaPasivo, string> = {
   externa:               '',
   socios:                '🤝',
+  empleados:             '👥',         // F-037
   ex_empleados:          '👤',
   asesores_relacionados: '🤵',
 };
@@ -119,8 +121,9 @@ export function DeudasClient({ deudas, kpis, acreedores, centros }: Props) {
         </div>
       </div>
 
-      {/* 1. HERO — 6 tarjetas (3×2): 4 categorías de pasivo + mora + próximos */}
-      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 22 }}>
+      {/* 1. HERO — 7 KPIs (5 categorías + mora + próximos) en grid 4×2.
+            F-037: nueva categoría "Empleados" para salarios diferidos a activos. */}
+      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 22 }}>
         <KpiCard
           label="🔴 Deuda externa"
           value={Q(kpis.porCategoria.externa.monto)}
@@ -130,6 +133,12 @@ export function DeudasClient({ deudas, kpis, acreedores, centros }: Props) {
           label="🟡 Con socios"
           value={Q(kpis.porCategoria.socios.monto)}
           hint={`${kpis.porCategoria.socios.cantidad} deudas · parte relacionada accionaria`}
+        />
+        <KpiCard
+          label="🟢 Salarios pendientes"
+          value={Q(kpis.porCategoria.empleados.monto)}
+          hint={`${kpis.porCategoria.empleados.cantidad} deudas · empleados activos (riesgo laboral)`}
+          alarma={kpis.porCategoria.empleados.monto > 0}
         />
         <KpiCard
           label="🟠 Con ex-empleados"
@@ -153,6 +162,11 @@ export function DeudasClient({ deudas, kpis, acreedores, centros }: Props) {
           label="📅 Vence en 30 días"
           value={Q(kpis.proximosVencimientos.montoTotal)}
           hint={`${kpis.proximosVencimientos.cantidad} deudas próximas`}
+        />
+        <KpiCard
+          label="💼 Total pasivo"
+          value={Q(kpis.totalPasivo)}
+          hint="Suma de todas las categorías"
         />
       </div>
 

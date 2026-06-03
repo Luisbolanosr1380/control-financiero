@@ -14,6 +14,7 @@ interface Props {
 const CATEGORIA_BADGE: Record<CategoriaPasivo, { cls: string; text: string; icon: string }> = {
   externa:               { cls: 'badge-wine',    text: 'Externa',              icon: '🔴' },
   socios:                { cls: 'badge-warn',    text: 'Socio',                icon: '🤝' },
+  empleados:             { cls: 'badge-olive',   text: 'Empleado (salario)',   icon: '👥' },   // F-037
   ex_empleados:          { cls: 'badge-outline', text: 'Ex-empleado',          icon: '👤' },
   asesores_relacionados: { cls: 'badge-mute',    text: 'Asesor / relacionado', icon: '🤵' },
 };
