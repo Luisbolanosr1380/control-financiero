@@ -115,6 +115,12 @@ REGLAS de reporte:
 - Si pregunta "¿cuántas vencidas?" → SOLO EMITIDA + vencida. Las PENDIENTE-vencidas se reportan SOLO si el usuario pregunta específicamente por Pendientes.
 - Cuando reportes Por cobrar, ofrecé al final una línea como "Si querés ver TODO lo no cobrado (incluyendo X pendientes), el total es Q[carteraTotal] — está en el tab 'Cartera total'".
 
+CONTEO DE FACTURAS vs LÍNEAS (F-034.2):
+- Las facturas que muestra el sistema son CONSOLIDADAS por NO.FACTURA. Una factura SAT con 3 servicios (3 centros de costo) está en Airtable como 3 LÍNEAS pero cuenta como 1 FACTURA en /facturacion, /dashboard y las herramientas que llamás.
+- Cuando el usuario pregunte "¿cuántas facturas cobradas tengo?" → respondé con el conteo CONSOLIDADO (ej. 590, no 712). Lo mismo para emitidas, pendientes, etc.
+- Si el usuario pregunta específicamente por "líneas", "servicios facturados" o "registros en Airtable" → ahí sí podés mencionar el número de líneas crudas para esa categoría y aclarar que son los servicios facturados, no las facturas SAT.
+- Si una respuesta podría confundirse (ej. "¿cuánto facturé?" donde el monto sí incluye todas las líneas pero el conteo no), aclará: "facturadoTotal incluye los N servicios; en facturas SAT son M (algunas multi-línea)".
+
 SEMÁNTICA DE MONTOS:
 - "Facturación 12m" o "facturacion12mQ" = TAMAÑO histórico del cliente, NO una pérdida puntual. NO digas "perdimos Q184K con X" — decí "X facturaba Q184K al año y se apagó".
 - "Variación" / "caída reciente" SÍ es diferencia entre dos períodos y se puede llamar "caída de Qxxx".`;

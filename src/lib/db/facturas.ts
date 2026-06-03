@@ -59,6 +59,7 @@ export interface InvoiceLiviano {
   total: number;
   estadoBruto: InvoiceEstadoBruto;
   vencida: boolean;
+  numLineas: number;   // F-034.2: líneas crudas que se consolidaron en esta factura
 }
 
 const norm = (e: unknown) => String(e ?? '').toUpperCase().trim();
@@ -83,6 +84,7 @@ export async function getFacturasLiviano(): Promise<InvoiceLiviano[]> {
     return MOCK_INVOICES.map(i => ({
       id: i.id, noFactura: i.noFactura, custId: i.custId, total: i.total,
       estadoBruto: i.estadoBruto, vencida: i.vencida,
+      numLineas: i.lineas?.length ?? 1,
     }));
   }
   try {
@@ -131,6 +133,7 @@ export async function getFacturasLiviano(): Promise<InvoiceLiviano[]> {
         total,
         estadoBruto: brutoDominante,
         vencida,
+        numLineas: bucket.records.length,
       });
     }
     return out;

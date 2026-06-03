@@ -190,6 +190,10 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
   const agregadoTab = {
     cantidad: livianasTab.length,
     suma:     livianasTab.reduce((s, i) => s + i.total, 0),
+    // F-034.2: líneas crudas en Airtable. Cuando difiere de `cantidad`, hay
+    // multi-línea (una factura SAT con N servicios = N líneas). El header
+    // muestra una aclaración para evitar que parezca que faltan datos.
+    lineasCrudas: livianasTab.reduce((s, i) => s + i.numLineas, 0),
   };
 
   const toggleAll = () => {
@@ -208,6 +212,11 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
             {' · '}
             <span className="num" style={{ fontWeight: 500 }}>{Q(agregadoTab.suma)}</span>
           </div>
+          {agregadoTab.lineasCrudas > agregadoTab.cantidad && (
+            <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-4)', marginTop: 2, fontStyle: 'italic' }}>
+              Algunas facturas tienen múltiples servicios (<span className="num">{agregadoTab.lineasCrudas}</span> servicios facturados en total)
+            </div>
+          )}
           <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-4)', marginTop: 2 }}>
             Mostrando <span className="num">{rows.length}</span> de <span className="num">{agregadoTab.cantidad}</span>
             {agregadoTab.cantidad > rows.length && <> · faltan <span className="num">{agregadoTab.cantidad - rows.length}</span> por cargar</>}

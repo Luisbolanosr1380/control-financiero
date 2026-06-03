@@ -34,6 +34,10 @@ export interface DashboardKPIs {
   numCarteraTotal: number;     // F-034
   numPendientes: number;       // F-034
   numCobradas: number;
+  // F-034.2: líneas crudas (servicios facturados) en el universo activo.
+  // Una factura SAT con 3 servicios suma 3 a numServiciosActivos y 1 a numFacturasActivas.
+  numFacturasActivas: number;
+  numServiciosActivos: number;
 }
 
 export async function getDashboardKPIs(facturas?: Invoice[]): Promise<DashboardKPIs> {
@@ -68,6 +72,8 @@ export async function getDashboardKPIs(facturas?: Invoice[]): Promise<DashboardK
     numCarteraTotal:  activas.filter(esCarteraTotal).length,
     numPendientes:    activas.filter(i => i.estadoBruto === 'pendiente').length,
     numCobradas:      activas.filter(i => i.estadoBruto === 'cobrado').length,
+    numFacturasActivas:  activas.length,
+    numServiciosActivos: activas.reduce((s, i) => s + (i.lineas?.length ?? 1), 0),
   };
 }
 

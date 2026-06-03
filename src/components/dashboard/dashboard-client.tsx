@@ -113,7 +113,7 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
       </div>
 
       {/* KPIs */}
-      <div className="kpi-grid" style={{ marginBottom: 22 }}>
+      <div className="kpi-grid" style={{ marginBottom: 6 }}>
         <Kpi label="Facturado · total"      value={kpis.facturadoTotal} info={explicar.facturadoTotal()} />
         <Kpi label="Cobrado · total"        value={kpis.cobradoTotal}   info={explicar.cobradoTotal()} />
         <Kpi label="Cartera total"          value={kpis.carteraTotal}   note={`${kpis.numCarteraTotal} facturas (emitida + pendiente)`} info={explicar.carteraTotal()} />
@@ -122,6 +122,13 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
         <Kpi label="Tasa de cobranza"    value={kpis.tasaCobranza} format="percent" info={explicar.tasaCobranza(kpis.tasaCobranza)} />
         <Kpi label="Facturas vencidas"   value={kpis.numVencidas} format="count" info={explicar.numVencidas(kpis.numVencidas)} />
       </div>
+      {kpis.numServiciosActivos > kpis.numFacturasActivas && (
+        <div style={{ fontSize: 11, color: 'var(--ink-4)', fontStyle: 'italic', marginBottom: 22 }}>
+          * Los conteos son facturas consolidadas por NO.FACTURA. Algunas facturas incluyen múltiples servicios
+          ({kpis.numServiciosActivos} servicios facturados en {kpis.numFacturasActivas} facturas activas).
+        </div>
+      )}
+      {kpis.numServiciosActivos <= kpis.numFacturasActivas && <div style={{ marginBottom: 22 }} />}
 
       {/* Dos columnas: líneas + alertas */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, marginBottom: 22 }}>
