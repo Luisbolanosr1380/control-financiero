@@ -47,7 +47,19 @@ const FP = {
   ESTADO:       'Estado',
   NOTAS:        'Notas',
   COMPROBANTE:  'Comprobante',
+  // F-036: campos de anulación.
+  ESTADO_PAGO:      'Estado_Pago',
+  FECHA_ANULACION:  'Fecha_Anulacion',
+  MOTIVO_ANULACION: 'Motivo_Anulacion',
+  ANULADO_POR:      'Anulado_Por',
 } as const;
+
+/** F-036: pago activo = Estado_Pago != 'Anulado'. Vacío = Activo (compat
+ *  con pagos pre-F-036 que no tenían el campo). */
+function esPagoActivoFields(f: Record<string, unknown>): boolean {
+  const e = String(f[FP.ESTADO_PAGO] ?? '').trim().toUpperCase();
+  return e !== 'ANULADO';
+}
 
 // ============================================================
 // Tipos públicos
@@ -91,6 +103,11 @@ export interface PagoDeuda {
   tipoCambio: number;
   estado: string;
   notas: string;
+  // F-036.
+  estadoPago: 'Activo' | 'Anulado';
+  fechaAnulacion?: string;
+  motivoAnulacion?: string;
+  anuladoPor?: string;
 }
 
 // ============================================================
@@ -114,6 +131,8 @@ function pagoFromRecord(r: { id: string; fields: Record<string, unknown> }): Pag
   const interes  = num(f[FP.MONTO_INT]);
   const mora     = num(f[FP.MONTO_MORA]);
   const comision = num(f[FP.MONTO_COMI]);
+  const estadoPagoRaw = String(f[FP.ESTADO_PAGO] ?? '').trim();
+  const estadoPago: 'Activo' | 'Anulado' = estadoPagoRaw.toUpperCase() === 'ANULADO' ? 'Anulado' : 'Activo';
   return {
     id: r.id,
     deudaId: arrFirst(f[FP.DEUDA]),
@@ -130,6 +149,10 @@ function pagoFromRecord(r: { id: string; fields: Record<string, unknown> }): Pag
     tipoCambio: num(f[FP.TIPO_CAMBIO]) || 1,
     estado: selectName(f[FP.ESTADO]),
     notas: str(f[FP.NOTAS]),
+    estadoPago,
+    fechaAnulacion:  str(f[FP.FECHA_ANULACION]) || undefined,
+    motivoAnulacion: str(f[FP.MOTIVO_ANULACION]) || undefined,
+    anuladoPor:      str(f[FP.ANULADO_POR]) || undefined,
   };
 }
 
@@ -206,6 +229,7 @@ export async function registrarPagoDeuda(input: RegistrarPagoInput): Promise<Reg
       [FP.MONEDA]:       moneda,
       [FP.TIPO_CAMBIO]:  tipoCambio,
       [FP.ESTADO]:       'Pendiente',
+      [FP.ESTADO_PAGO]:  'Activo',   // F-036
     };
     if (input.referencia?.trim()) fields[FP.REFERENCIA] = input.referencia.trim();
     if (input.notas?.trim())       fields[FP.NOTAS]      = input.notas.trim();
@@ -256,15 +280,18 @@ export async function eliminarPagoDeuda(pagoId: string): Promise<{ ok: boolean; 
  * names (la fórmula Clave_Deuda), no record IDs — un filterByFormula con
  * FIND no encuentra nada (verificado en smoke).
  */
-export async function getPagosPorDeuda(deudaId: string): Promise<PagoDeuda[]> {
+export async function getPagosPorDeuda(deudaId: string, opts: { incluirAnulados?: boolean } = {}): Promise<PagoDeuda[]> {
   if (USE_MOCK || !airtable) return [];
   try {
     const recs = await airtable(TABLES.PAGOS_PROVEEDORES)
       .select({ maxRecords: 5000 })
       .all();
-    const pagos = recs
+    let pagos = recs
       .map(r => pagoFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }))
       .filter(p => p.deudaId === deudaId);
+    // F-036: por default ocultamos anulados; el detalle de la deuda y los
+    // listados con toggle pasan { incluirAnulados: true } cuando quieren todos.
+    if (!opts.incluirAnulados) pagos = pagos.filter(p => p.estadoPago === 'Activo');
     pagos.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
     return pagos;
   } catch (err) {
@@ -295,7 +322,7 @@ export async function getPagosPorAcreedor(acreedorId: string): Promise<PagoDeuda
       .all();
     const pagos = pagosRecs
       .map(r => pagoFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }))
-      .filter(p => deudaIds.has(p.deudaId));
+      .filter(p => deudaIds.has(p.deudaId) && p.estadoPago === 'Activo');   // F-036
     pagos.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
     return pagos;
   } catch (err) {
@@ -311,13 +338,15 @@ export interface PagoEnriquecido extends PagoDeuda {
   deudaNombre: string;
 }
 
-export async function getPagosRecientes(limite = 20): Promise<PagoEnriquecido[]> {
+export async function getPagosRecientes(limite = 20, opts: { incluirAnulados?: boolean } = {}): Promise<PagoEnriquecido[]> {
   if (USE_MOCK || !airtable) return [];
   try {
     const pagosRecs = await airtable(TABLES.PAGOS_PROVEEDORES)
       .select({ maxRecords: 5000 })
       .all();
-    const pagos = pagosRecs.map(r => pagoFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }));
+    let pagos = pagosRecs.map(r => pagoFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }));
+    // F-036: por default ocultamos anulados.
+    if (!opts.incluirAnulados) pagos = pagos.filter(p => p.estadoPago === 'Activo');
     pagos.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
     const top = pagos.slice(0, limite);
 
@@ -381,4 +410,95 @@ export async function getCuentasBancoParaPago(): Promise<string[]> {
  */
 export async function getBancosActivosParaUI(): Promise<Banco[]> {
   return (await getBancos()).filter(b => b.activo);
+}
+
+/* ============================================================
+ * F-036: anular un pago a deuda — reversión de saldo automática.
+ *
+ * Estrategia: el rollup Total_Pagado en DEUDAS suma Monto_Pago_Conciliado
+ * de TODOS los pagos sin filtrar por Estado_Pago. Para que la fórmula
+ * Saldo_Pendiente recalcule sola al anular, seteamos los montos del record
+ * a 0 (Monto_Pago, Monto_Interes, Monto_Mora, Monto_Comision) y guardamos
+ * el monto original como prefijo del motivo (auditoría). El record se
+ * mantiene (no se destruye); Estado_Pago='Anulado' lo distingue.
+ * ============================================================ */
+
+export interface AnularPagoResult {
+  ok: boolean;
+  pagoId: string;
+  deudaId: string;
+  montoAnulado: number;
+  saldoAnterior: number;
+  saldoNuevo: number;
+  estadoDeuda: string;     // recalculado por Airtable (Vigente / Liquidada / Vencida)
+  error?: string;
+}
+
+export async function anularPagoDeuda(
+  pagoId: string,
+  motivo: string,
+  usuarioEmail: string,
+): Promise<AnularPagoResult> {
+  const empty = (error: string): AnularPagoResult => ({
+    ok: false, pagoId, deudaId: '', montoAnulado: 0,
+    saldoAnterior: 0, saldoNuevo: 0, estadoDeuda: '', error,
+  });
+
+  if (USE_MOCK || !airtable) return empty('Airtable no está configurado.');
+  if (!pagoId) return empty('pagoId requerido.');
+  if (!motivo?.trim()) return empty('El motivo de anulación es requerido.');
+
+  try {
+    const record = await airtable(TABLES.PAGOS_PROVEEDORES).find(pagoId);
+    const f = record.fields as Record<string, unknown>;
+    if (!esPagoActivoFields(f)) return empty('El pago ya estaba anulado.');
+
+    const deudaId = arrFirst(f[FP.DEUDA]);
+    if (!deudaId) return empty('El pago no tiene deuda asociada.');
+
+    const capitalOriginal  = num(f[FP.MONTO_PAGO]);
+    const interesOriginal  = num(f[FP.MONTO_INT]);
+    const moraOriginal     = num(f[FP.MONTO_MORA]);
+    const comisionOriginal = num(f[FP.MONTO_COMI]);
+    const totalOriginal    = capitalOriginal + interesOriginal + moraOriginal + comisionOriginal;
+
+    // Snapshot del saldo antes (para el response)
+    const deudaAntes = await getDeudaPorId(deudaId);
+    const saldoAnterior = deudaAntes?.saldoPendiente ?? 0;
+
+    const hoy = new Date().toISOString().slice(0, 10);
+    const auditoria = `[Anulado ${hoy} · monto original Q${totalOriginal.toFixed(2)} (capital Q${capitalOriginal.toFixed(2)}, interés Q${interesOriginal.toFixed(2)}, mora Q${moraOriginal.toFixed(2)}, comisión Q${comisionOriginal.toFixed(2)})]`;
+    const motivoCompleto = `${auditoria}\n${motivo.trim()}`;
+
+    await airtable(TABLES.PAGOS_PROVEEDORES).update([{
+      id: pagoId,
+      fields: {
+        [FP.ESTADO_PAGO]:      'Anulado',
+        [FP.FECHA_ANULACION]:  hoy,
+        [FP.MOTIVO_ANULACION]: motivoCompleto,
+        [FP.ANULADO_POR]:      (usuarioEmail ?? '').trim() || 'sistema',
+        // F-036: poner montos a 0 hace que el rollup natural de Airtable
+        // (Total_Pagado) recalcule sin filtrar por Estado_Pago.
+        [FP.MONTO_PAGO]:    0,
+        [FP.MONTO_INT]:     0,
+        [FP.MONTO_MORA]:    0,
+        [FP.MONTO_COMI]:    0,
+      },
+    }]);
+
+    // Releer la deuda para devolver saldo + estado actualizados (Airtable
+    // recomputó la fórmula al instante).
+    const deudaDespues = await getDeudaPorId(deudaId);
+    return {
+      ok: true,
+      pagoId,
+      deudaId,
+      montoAnulado: capitalOriginal,    // lo que importa para reversión de saldo
+      saldoAnterior,
+      saldoNuevo:   deudaDespues?.saldoPendiente ?? saldoAnterior,
+      estadoDeuda:  deudaDespues?.estadoDeuda ?? '',
+    };
+  } catch (err) {
+    return empty(err instanceof Error ? err.message : String(err));
+  }
 }
