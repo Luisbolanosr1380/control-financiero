@@ -31,11 +31,15 @@ export function PagosDeudasClient({ pagos, acreedores }: Props) {
   const [desde, setDesde] = useState('');
   const [hasta, setHasta] = useState('');
   const [search, setSearch] = useState('');
+  // F-036: toggle anulados.
+  const [mostrarAnulados, setMostrarAnulados] = useState(false);
 
   const bancos = useMemo(() => [...new Set(pagos.map(p => p.cuentaBancoName).filter(Boolean))].sort(), [pagos]);
+  const numAnulados = useMemo(() => pagos.filter(p => p.estadoPago === 'Anulado').length, [pagos]);
 
   const filtrados = useMemo(() => {
     let r = pagos;
+    if (!mostrarAnulados) r = r.filter(p => p.estadoPago === 'Activo');
     if (metodo)     r = r.filter(p => p.metodo === metodo);
     if (banco)      r = r.filter(p => p.cuentaBancoName === banco);
     if (acreedorId) r = r.filter(p => p.acreedorId === acreedorId);
@@ -50,7 +54,7 @@ export function PagosDeudasClient({ pagos, acreedores }: Props) {
       );
     }
     return r;
-  }, [pagos, metodo, banco, acreedorId, desde, hasta, search]);
+  }, [pagos, metodo, banco, acreedorId, desde, hasta, search, mostrarAnulados]);
 
   const sumaTotal   = filtrados.reduce((s, p) => s + p.montoTotal, 0);
   const sumaCapital = filtrados.reduce((s, p) => s + p.capital, 0);
@@ -123,6 +127,15 @@ export function PagosDeudasClient({ pagos, acreedores }: Props) {
             <I.Search size={13} style={{ color: 'var(--ink-4)' }} />
             <input placeholder="Acreedor, deuda, referencia..." value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ink-3)', cursor: numAnulados === 0 ? 'default' : 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={mostrarAnulados}
+              onChange={(e) => setMostrarAnulados(e.target.checked)}
+              disabled={numAnulados === 0}
+            />
+            <span>Mostrar anulados {numAnulados > 0 && <span className="num" style={{ color: 'var(--ink-4)' }}>({numAnulados})</span>}</span>
+          </label>
           <button className="btn btn-ghost" onClick={limpiar} style={{ fontSize: 11 }}>Limpiar</button>
         </div>
       </div>
@@ -148,9 +161,11 @@ export function PagosDeudasClient({ pagos, acreedores }: Props) {
                 <I.Coins size={26} style={{ opacity: 0.4, marginBottom: 6 }} />
                 <div style={{ fontSize: 13 }}>No hay pagos que coincidan con el filtro</div>
               </td></tr>
-            ) : filtrados.map(p => (
-              <tr key={p.id} className="clickable" onClick={() => router.push(`/deudas/${p.deudaId}`)}>
-                <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{formatFecha(p.fecha)}</td>
+            ) : filtrados.map(p => {
+              const anulado = p.estadoPago === 'Anulado';
+              return (
+              <tr key={p.id} className="clickable" onClick={() => router.push(`/deudas/${p.deudaId}`)} style={{ opacity: anulado ? 0.55 : 1 }} title={anulado ? `Anulado: ${p.motivoAnulacion ?? ''}` : undefined}>
+                <td className="num cell-strong" style={{ whiteSpace: 'nowrap', textDecoration: anulado ? 'line-through' : 'none' }}>{formatFecha(p.fecha)}</td>
                 <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.acreedorNombre}>
                   <span
                     onClick={(e) => { e.stopPropagation(); router.push(`/acreedores/${p.acreedorId}`); }}
@@ -160,13 +175,17 @@ export function PagosDeudasClient({ pagos, acreedores }: Props) {
                   </span>
                 </td>
                 <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.deudaNombre}>{p.deudaNombre || '—'}</td>
-                <td className="num cell-strong">{Q(p.montoTotal)}</td>
+                <td className="num cell-strong" style={{ textDecoration: anulado ? 'line-through' : 'none' }}>{Q(p.montoTotal)}</td>
                 <td className="num">{Q(p.capital)}</td>
-                <td><span className="badge badge-outline" style={{ fontSize: 10.5 }}>{p.metodo}</span></td>
+                <td>
+                  <span className="badge badge-outline" style={{ fontSize: 10.5 }}>{p.metodo}</span>
+                  {anulado && <span className="badge badge-wine" style={{ fontSize: 9.5, padding: '1px 6px', marginLeft: 4 }}>Anulado</span>}
+                </td>
                 <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.referencia}>{p.referencia || '—'}</td>
                 <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.cuentaBancoName}>{p.cuentaBancoName || '—'}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>

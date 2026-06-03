@@ -22,6 +22,8 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
   const [ultimaFecha, setUltimaFecha] = useState<string | null>(initialUltimaFecha);
   const [cargandoMas, setCargandoMas] = useState(false);
   const [search, setSearch] = useState('');
+  // F-036: por default OCULTAMOS anulados. Toggle para verlos.
+  const [mostrarAnulados, setMostrarAnulados] = useState(false);
 
   const nombreById = new Map(clientes.map(c => [c.id, c.name]));
 
@@ -30,18 +32,21 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
     || (nombreById.get(c.custId) ?? '').toLowerCase().includes(q)
     || c.referencia.toLowerCase().includes(q);
 
+  const visibles = mostrarAnulados ? cobros : cobros.filter(c => c.estadoCobro === 'Activo');
   const filtrados = search.trim()
-    ? cobros.filter(c => matchSearch(c, search.toLowerCase()))
-    : cobros;
+    ? visibles.filter(c => matchSearch(c, search.toLowerCase()))
+    : visibles;
 
-  // F-033: agregado real bajo filtros, sobre TODOS los cobros (no solo los cargados).
+  // F-033 + F-036: agregado sobre TODOS los cobros bajo filtros + toggle anulados.
+  const completosBase = mostrarAnulados ? cobrosCompletos : cobrosCompletos.filter(c => c.estadoCobro === 'Activo');
   const completosFiltrados = search.trim()
-    ? cobrosCompletos.filter(c => matchSearch(c, search.toLowerCase()))
-    : cobrosCompletos;
+    ? completosBase.filter(c => matchSearch(c, search.toLowerCase()))
+    : completosBase;
   const agregado = {
     cantidad: completosFiltrados.length,
     suma:     completosFiltrados.reduce((s, c) => s + c.monto, 0),
   };
+  const numAnulados = cobrosCompletos.filter(c => c.estadoCobro === 'Anulado').length;
 
   const totalMonto = filtrados.reduce((s, c) => s + c.monto, 0);
 
@@ -102,6 +107,15 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
           <I.Search size={13} style={{ color: 'var(--ink-4)' }} />
           <input placeholder="Factura, cliente, referencia…" value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-3)', marginLeft: 12, cursor: numAnulados === 0 ? 'default' : 'pointer' }}>
+          <input
+            type="checkbox"
+            checked={mostrarAnulados}
+            onChange={(e) => setMostrarAnulados(e.target.checked)}
+            disabled={numAnulados === 0}
+          />
+          <span>Mostrar anulados {numAnulados > 0 && <span className="num" style={{ color: 'var(--ink-4)' }}>({numAnulados})</span>}</span>
+        </label>
         <div style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--ink-3)' }}>
           <span>{filtrados.length} resultados</span>
           <span style={{ margin: '0 8px', color: 'var(--line-2)' }}>·</span>
@@ -134,11 +148,14 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
             ) : filtrados.map(c => {
               const cliente = nombreById.get(c.custId) || c.custId || '—';
               const estadoLow = c.estado.toLowerCase();
-              const estadoBadge = estadoLow.includes('conciliado')
-                ? { cls: 'badge-olive', text: 'Conciliado' }
-                : { cls: 'badge-outline', text: c.estado || 'Pendiente' };
+              const anulado = c.estadoCobro === 'Anulado';
+              const estadoBadge = anulado
+                ? { cls: 'badge-wine', text: 'Anulado' }
+                : estadoLow.includes('conciliado')
+                  ? { cls: 'badge-olive', text: 'Conciliado' }
+                  : { cls: 'badge-outline', text: c.estado || 'Pendiente' };
               return (
-                <tr key={c.key}>
+                <tr key={c.key} style={{ opacity: anulado ? 0.55 : 1 }} title={anulado ? `Anulado: ${c.motivoAnulacion ?? ''}` : undefined}>
                   <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{formatDateDDMMYYYY(c.fechaCobro)}</td>
                   <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{c.noFactura || '—'}</td>
                   <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={cliente}>{cliente}</td>

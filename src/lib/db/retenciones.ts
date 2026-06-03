@@ -48,6 +48,7 @@ const FCR = {
   CONST:     'Constancia_Retencion',
   REF:       'Referencia',
   GRUPO_ID:  'Cobro_Grupo_ID',
+  ESTADO_COBRO: 'Estado_Cobro',   // F-036
 } as const;
 
 const MES_NOMBRES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -74,7 +75,9 @@ export async function getRetencionesAgregadas(anio?: number): Promise<Retencione
   if (USE_MOCK || !airtable) return vacio;
 
   try {
-    const filterByFormula = `AND(YEAR({${FCR.FECHA}})=${year},OR({${FCR.RET_IVA}}>0,{${FCR.RET_ISR}}>0))`;
+    // F-036: excluir cobros anulados (Estado_Cobro != 'Anulado'; vacío = Activo
+    // por compat). Las retenciones anuladas NO cuentan como crédito fiscal.
+    const filterByFormula = `AND(YEAR({${FCR.FECHA}})=${year},OR({${FCR.RET_IVA}}>0,{${FCR.RET_ISR}}>0),OR({${FCR.ESTADO_COBRO}}='',{${FCR.ESTADO_COBRO}}='Activo'))`;
     const [records, clientes] = await Promise.all([
       airtable(TABLES.COBROS).select({ filterByFormula, sort: [{ field: FCR.FECHA, direction: 'desc' }] }).all(),
       getClientes(),
