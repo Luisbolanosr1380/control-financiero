@@ -34,6 +34,9 @@ export interface CobroListado {
   retencionIVA: number;
   retencionISR: number;
   tieneRetencion: boolean;
+  // F-035.1: URL de la primera constancia adjunta del grupo (si la hay).
+  constanciaUrl: string | null;
+  tieneConstancia: boolean;
 }
 
 export interface GetCobrosPaginaResult {
@@ -57,6 +60,7 @@ const FC_READ = {
   CLIENTE:      'CLIENTE  (from Factura Cliente)',   // 2 espacios entre CLIENTE y (from
   RET_IVA:      'Monto_Retencion_IVA',
   RET_ISR:      'Monto_Retencion_ISR',
+  CONSTANCIA:   'Constancia_Retencion',
   GRUPO_ID:     'Cobro_Grupo_ID',
 } as const;
 
@@ -75,11 +79,15 @@ interface RawCobro {
   retencionIVA: number;
   retencionISR: number;
   grupoId: string;
+  constanciaUrl: string | null;
 }
 
 function recordToRaw(record: { id: string; fields: Record<string, unknown> }): RawCobro {
   const f = record.fields;
   const arrFirst = (v: unknown) => Array.isArray(v) ? String(v[0] ?? '') : '';
+  const constancia = Array.isArray(f[FC_READ.CONSTANCIA])
+    ? (f[FC_READ.CONSTANCIA] as Array<{ url?: string }>)[0]
+    : undefined;
   return {
     recordId:   record.id,
     fecha:      String(f[FC_READ.FECHA] ?? ''),
@@ -95,6 +103,7 @@ function recordToRaw(record: { id: string; fields: Record<string, unknown> }): R
     retencionIVA: Number(f[FC_READ.RET_IVA] ?? 0),
     retencionISR: Number(f[FC_READ.RET_ISR] ?? 0),
     grupoId:    String(f[FC_READ.GRUPO_ID] ?? ''),
+    constanciaUrl: constancia?.url ?? null,
   };
 }
 
@@ -122,6 +131,7 @@ function consolidarCobros(raws: RawCobro[], bancoNombreById: Map<string, string>
     const head = rows.find(r => r.metodo !== 'Retención IVA' && r.metodo !== 'Retención ISR') ?? rows[0];
     const retencionIVA = rows.reduce((s, r) => s + r.retencionIVA, 0);
     const retencionISR = rows.reduce((s, r) => s + r.retencionISR, 0);
+    const constanciaUrl = rows.find(r => r.constanciaUrl)?.constanciaUrl ?? null;
     out.push({
       key,
       noFactura:   head.noFactura,
@@ -139,6 +149,8 @@ function consolidarCobros(raws: RawCobro[], bancoNombreById: Map<string, string>
       retencionIVA,
       retencionISR,
       tieneRetencion: retencionIVA > 0 || retencionISR > 0,
+      constanciaUrl,
+      tieneConstancia: !!constanciaUrl,
     });
   }
   // Ordenar por fecha desc dentro de la página
@@ -300,6 +312,9 @@ export interface RegistrarCobroResult {
   cobrosCreados: number;
   recordsActualizados: number;
   desglose: DesgloseComponentes;
+  // F-035.1: IDs creados por componente, en el mismo orden que input.componentes.
+  // Permite a la action subir la constancia al primer record de cada componente.
+  componentesRecordIds: string[][];
   fallidos?: { cobrosLote?: number[]; estadoIds?: string[] };
   error?: string;
 }
@@ -416,9 +431,10 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
       facturaLineId: string;
       monto: number;
       componente: ComponenteCobro;
+      componenteIdx: number;
     };
     const cobrosPlan: CobroPlan[] = [];
-    for (const c of input.componentes) {
+    input.componentes.forEach((c, cidx) => {
       let asignado = 0;
       lineas.forEach((l, i) => {
         let monto: number;
@@ -429,9 +445,9 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
           monto = round2((c.monto * l.total) / totalFactura);
           asignado += monto;
         }
-        if (monto > 0) cobrosPlan.push({ facturaLineId: l.id, monto, componente: c });
+        if (monto > 0) cobrosPlan.push({ facturaLineId: l.id, monto, componente: c, componenteIdx: cidx });
       });
-    }
+    });
 
     // 7) Crear records (batch 10)
     const cobroFields = (p: CobroPlan) => {
@@ -458,11 +474,18 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
     const payloadCobros = cobrosPlan.map(cobroFields);
     const cobrosCreados: string[] = [];
     const lotesFallidos: number[] = [];
+    // F-035.1: rastrear qué records corresponden a qué componente para subir
+    // la constancia después al primero de cada uno.
+    const componentesRecordIds: string[][] = input.componentes.map(() => []);
     for (let i = 0; i < payloadCobros.length; i += 10) {
       const lote = payloadCobros.slice(i, i + 10);
+      const slicePlan = cobrosPlan.slice(i, i + 10);
       try {
         const res = await airtable(TABLES.COBROS).create(lote);
-        cobrosCreados.push(...res.map(r => r.id));
+        res.forEach((rec, k) => {
+          cobrosCreados.push(rec.id);
+          componentesRecordIds[slicePlan[k].componenteIdx].push(rec.id);
+        });
       } catch (err) {
         console.error('Error creando lote de cobros:', err);
         lotesFallidos.push(i);
@@ -518,6 +541,7 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
       cobrosCreados: cobrosCreados.length,
       recordsActualizados: estadoActualizados.length,
       desglose,
+      componentesRecordIds,
       fallidos: ok ? undefined : {
         cobrosLote: lotesFallidos.length > 0 ? lotesFallidos : undefined,
         estadoIds:  estadoFallidos.length > 0 ? estadoFallidos : undefined,
@@ -541,6 +565,7 @@ function fail(noFactura: string, error: string): RegistrarCobroResult {
     cobrosCreados: 0,
     recordsActualizados: 0,
     desglose: desgloseVacio(),
+    componentesRecordIds: [],
     error,
   };
 }

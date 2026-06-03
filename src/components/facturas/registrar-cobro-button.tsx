@@ -36,7 +36,15 @@ const MAX_COMPONENTES = 5;
 interface ComponenteUI extends ComponenteCobro {
   uid: string;          // key estable para React
   montoStr: string;     // input controlado como string
+  constanciaFile?: File;
+  constanciaError?: string;
 }
+
+// F-035.1: mismos valores que src/lib/db/attachments.ts (espejados para validar
+// cliente-side antes del submit; la action revalida server-side por seguridad).
+const ATTACH_ACCEPTED = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp'];
+const ATTACH_ACCEPT_STR = '.pdf,.jpg,.jpeg,.png,.webp';
+const ATTACH_MAX_BYTES = 15 * 1024 * 1024;
 
 function nuevoComponente(): ComponenteUI {
   return {
@@ -164,7 +172,26 @@ function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSucce
     actualizar(uid, {
       metodo: m,
       bancoId: cambioARetencion ? undefined : (componentes.find(c => c.uid === uid)?.bancoId ?? bancos[0]?.id),
+      // Si cambia de retención a banco, descartar el archivo cargado (ya no aplica).
+      constanciaFile: cambioARetencion ? componentes.find(c => c.uid === uid)?.constanciaFile : undefined,
+      constanciaError: undefined,
     });
+  };
+
+  const handleConstanciaChange = (uid: string, file: File | null) => {
+    if (!file) {
+      actualizar(uid, { constanciaFile: undefined, constanciaError: undefined });
+      return;
+    }
+    if (!ATTACH_ACCEPTED.includes(file.type)) {
+      actualizar(uid, { constanciaFile: undefined, constanciaError: `Tipo no soportado (${file.type || 'desconocido'}). Solo PDF o imagen.` });
+      return;
+    }
+    if (file.size > ATTACH_MAX_BYTES) {
+      actualizar(uid, { constanciaFile: undefined, constanciaError: `Archivo excede 15MB (${(file.size / 1024 / 1024).toFixed(1)}MB).` });
+      return;
+    }
+    actualizar(uid, { constanciaFile: file, constanciaError: undefined });
   };
 
   const onConfirm = async () => {
@@ -178,16 +205,27 @@ function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSucce
         bancoId: esRetencion(c.metodo) ? undefined : c.bancoId,
         referencia: c.referencia?.trim() || undefined,
       }));
-      const res = await registrarCobroAction({
+      // F-035.1: FormData con JSON + archivos. Mismo patrón que crearFacturaAction.
+      const fd = new FormData();
+      fd.append('data', JSON.stringify({
         noFactura,
         fecha,
         componentes: componentesPayload,
         moneda,
         tipoCambio: Number.isFinite(tc) && tc > 0 ? tc : 1,
+      }));
+      componentes.forEach((c, i) => {
+        if (c.constanciaFile) fd.append(`constancia_${i}`, c.constanciaFile);
       });
+      const res = await registrarCobroAction(fd);
+      const avisos = res.avisos?.join(' · ');
       if (res.ok) {
         const cuandoEstado = res.estadoNuevo === 'COBRADO' ? 'liquida la factura' : `quedan Q${res.saldoNuevo.toFixed(2)} pendientes`;
-        toast.success(`Cobro registrado · Q${res.totalCobrado.toFixed(2)} (${cuandoEstado})`);
+        if (avisos) {
+          toast.warning(`Cobro registrado · Q${res.totalCobrado.toFixed(2)} (${cuandoEstado}). ${avisos}`);
+        } else {
+          toast.success(`Cobro registrado · Q${res.totalCobrado.toFixed(2)} (${cuandoEstado})`);
+        }
         onSuccess();
       } else if (res.cobrosCreados > 0) {
         toast.warning(res.error ?? `Cobro parcial: ${res.cobrosCreados} cobro(s) creado(s). Revisá Airtable.`);
@@ -375,6 +413,7 @@ function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSucce
                           </div>
                         </>
                       ) : (
+                        <>
                         <div className="field" style={{ margin: 0, gridColumn: '1 / -1' }}>
                           <label className="label">Número de constancia</label>
                           <input
@@ -385,10 +424,48 @@ function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSucce
                             onChange={(e) => actualizar(c.uid, { referencia: e.target.value })}
                             disabled={loading}
                           />
+                        </div>
+                        <div className="field" style={{ margin: 0, gridColumn: '1 / -1' }}>
+                          <label className="label">Constancia de retención (PDF o imagen, opcional)</label>
+                          {c.constanciaFile ? (
+                            <div style={{
+                              display: 'flex', alignItems: 'center', gap: 8,
+                              padding: '6px 10px', border: '1px solid var(--line-2)',
+                              borderRadius: 'var(--r-2)', background: 'var(--paper)',
+                              fontSize: 12, color: 'var(--ink-2)',
+                            }}>
+                              <I.Paperclip size={13} style={{ color: 'var(--ink-3)' }} />
+                              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                {c.constanciaFile.name} <span style={{ color: 'var(--ink-4)' }}>· {(c.constanciaFile.size / 1024).toFixed(0)} KB</span>
+                              </span>
+                              <button
+                                type="button"
+                                className="btn btn-ghost"
+                                onClick={() => handleConstanciaChange(c.uid, null)}
+                                disabled={loading}
+                                style={{ padding: '2px 6px', fontSize: 11 }}
+                                title="Quitar archivo"
+                              >
+                                <I.X size={11} />
+                              </button>
+                            </div>
+                          ) : (
+                            <input
+                              type="file"
+                              accept={ATTACH_ACCEPT_STR}
+                              onChange={(e) => handleConstanciaChange(c.uid, e.target.files?.[0] ?? null)}
+                              disabled={loading}
+                              style={{ fontSize: 12 }}
+                            />
+                          )}
+                          {c.constanciaError && (
+                            <div style={{ fontSize: 11, color: 'var(--wine)', marginTop: 4 }}>{c.constanciaError}</div>
+                          )}
                           <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
-                            La constancia PDF se sube manualmente en Airtable en el campo Constancia_Retencion del registro creado.
+                            PDF/JPG/PNG/WebP · máx 15MB. Se adjunta al campo Constancia_Retencion del registro.
                           </div>
                         </div>
+                        </>
                       )}
                     </div>
                   </div>

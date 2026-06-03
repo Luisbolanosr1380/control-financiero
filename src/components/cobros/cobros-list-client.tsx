@@ -161,6 +161,18 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
                          : 'Ret. ISR'}
                       </span>
                     )}
+                    {c.tieneConstancia && c.constanciaUrl && (
+                      <a
+                        href={c.constanciaUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{ marginLeft: 6, color: 'var(--ink-3)', textDecoration: 'none', verticalAlign: 'middle' }}
+                        title="Ver constancia de retención"
+                      >
+                        <I.Paperclip size={11} />
+                      </a>
+                    )}
                   </td>
                   <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.bancoNombre}>{c.bancoNombre}</td>
                   <td className="num cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.referencia}>{c.referencia || '—'}</td>
