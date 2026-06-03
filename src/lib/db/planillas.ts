@@ -214,12 +214,14 @@ async function getLineasPorPeriodo(periodoId: string | null): Promise<LineaPlani
   const empleados = await getEmpleados({ status: 'todos' });
   const empleadoNombreById = new Map(empleados.map(e => [e.id, e.nombre]));
 
-  const select: Parameters<ReturnType<typeof airtable>['select']>[0] = {};
-  if (periodoId) {
-    select.filterByFormula = `FIND("${periodoId}", ARRAYJOIN({${FL.PERIODO}}))`;
-  }
-  const records = await airtable(TABLES.PLANILLA).select(select).all();
-  return records.map(r => recordToLinea({ id: r.id, fields: r.fields as Record<string, unknown> }, empleadoNombreById));
+  // F-038.3: NO usar filterByFormula con ARRAYJOIN({PERIODO}) — Airtable
+  // devuelve display names (primary field "Q1-junio-2026"), no record IDs,
+  // así que FIND("rec...", "Q1-junio-2026") = 0 y se pierden TODAS las
+  // líneas. Mismo patrón que pagos-deudas.getPagosPorDeuda: traemos todas
+  // y filtramos en JS por periodoId.
+  const records = await airtable(TABLES.PLANILLA).select().all();
+  const lineas = records.map(r => recordToLinea({ id: r.id, fields: r.fields as Record<string, unknown> }, empleadoNombreById));
+  return periodoId ? lineas.filter(l => l.periodoId === periodoId) : lineas;
 }
 
 export async function getLineasPlanilla(periodoId: string): Promise<LineaPlanilla[]> {
