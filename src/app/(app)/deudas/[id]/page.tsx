@@ -9,9 +9,10 @@ export const revalidate = 30;
 
 export default async function DeudaDetallePage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
+  // F-036: detalle muestra TODOS los pagos (activos + anulados) para histórico.
   const [deuda, pagos, cuentasBanco, acreedores, centros] = await Promise.all([
     getDeudaPorId(id),
-    getPagosPorDeuda(id),
+    getPagosPorDeuda(id, { incluirAnulados: true }),
     getCuentasBancoParaPago(),
     getAcreedores(),
     getCentrosCostoActivos(),

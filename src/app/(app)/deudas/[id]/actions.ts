@@ -1,10 +1,12 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { currentUser } from '@clerk/nextjs/server';
 import {
-  registrarPagoDeuda,
+  registrarPagoDeuda, anularPagoDeuda,
   type RegistrarPagoInput,
   type RegistrarPagoResult,
+  type AnularPagoResult,
   getCuentasBancoParaPago,
 } from '@/lib/db/pagos-deudas';
 
@@ -24,4 +26,13 @@ export async function registrarPagoDeudaAction(input: RegistrarPagoInput): Promi
 
 export async function getCuentasBancoAction(): Promise<string[]> {
   return getCuentasBancoParaPago();
+}
+
+/* F-036: anular un pago a deuda. */
+export async function anularPagoDeudaAction(pagoId: string, motivo: string): Promise<AnularPagoResult> {
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
+  const result = await anularPagoDeuda(pagoId, motivo, email);
+  if (result.ok) revalidarTodo();
+  return result;
 }

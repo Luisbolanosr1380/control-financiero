@@ -3,6 +3,7 @@ import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { RegistrarPagoButton } from '@/components/deudas/registrar-pago-button';
 import { EditarDeudaButton } from '@/components/deudas/editar-deuda-button';
+import { AnularPagoButton } from '@/components/deudas/anular-pago-button';
 import type { Deuda, Acreedor } from '@/lib/db/deudas';
 import type { PagoDeuda } from '@/lib/db/pagos-deudas';
 
@@ -155,12 +156,12 @@ export function DeudaDetalle({ deuda: d, pagos, cuentasBanco, acreedores, centro
       )}
 
       {/* 5. HISTORIAL DE PAGOS */}
-      <HistorialPagos pagos={pagos} />
+      <HistorialPagos pagos={pagos} saldoActual={d.saldoPendiente} estadoActual={d.estadoDeuda} />
     </div>
   );
 }
 
-function HistorialPagos({ pagos }: { pagos: PagoDeuda[] }) {
+function HistorialPagos({ pagos, saldoActual, estadoActual }: { pagos: PagoDeuda[]; saldoActual: number; estadoActual: string }) {
   if (pagos.length === 0) {
     return (
       <div className="card" style={{ marginBottom: 22 }}>
@@ -200,13 +201,16 @@ function HistorialPagos({ pagos }: { pagos: PagoDeuda[] }) {
             <th>Referencia</th>
             <th>Banco</th>
             <th>Notas</th>
+            <th style={{ width: 90 }}></th>
           </tr>
         </thead>
         <tbody>
-          {pagos.map(p => (
-            <tr key={p.id}>
-              <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{formatFecha(p.fecha)}</td>
-              <td className="num cell-strong">{Q(p.montoTotal)}</td>
+          {pagos.map(p => {
+            const anulado = p.estadoPago === 'Anulado';
+            return (
+            <tr key={p.id} style={{ opacity: anulado ? 0.55 : 1 }}>
+              <td className="num cell-strong" style={{ whiteSpace: 'nowrap', textDecoration: anulado ? 'line-through' : 'none' }}>{formatFecha(p.fecha)}</td>
+              <td className="num cell-strong" style={{ textDecoration: anulado ? 'line-through' : 'none' }}>{Q(p.montoTotal)}</td>
               <td className="num">{Q(p.capital)}</td>
               <td className="num cell-mute">{p.interes ? Q(p.interes) : '—'}</td>
               <td className="num cell-mute">{p.mora ? Q(p.mora) : '—'}</td>
@@ -215,8 +219,12 @@ function HistorialPagos({ pagos }: { pagos: PagoDeuda[] }) {
               <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 140 }} title={p.referencia}>{p.referencia || '—'}</td>
               <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={p.cuentaBancoName}>{p.cuentaBancoName || '—'}</td>
               <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 160 }} title={p.notas}>{p.notas || '—'}</td>
+              <td>
+                <AnularPagoButton pago={p} saldoActualDeuda={saldoActual} estadoActualDeuda={estadoActual} />
+              </td>
             </tr>
-          ))}
+            );
+          })}
           <tr style={{ background: 'var(--paper-tint)', fontWeight: 600 }}>
             <td className="num" style={{ textAlign: 'right', color: 'var(--ink-3)' }}>Totales</td>
             <td className="num cell-strong">{Q(totalDesemb)}</td>
@@ -224,7 +232,7 @@ function HistorialPagos({ pagos }: { pagos: PagoDeuda[] }) {
             <td className="num">{totalInteres ? Q(totalInteres) : '—'}</td>
             <td className="num">{totalMora ? Q(totalMora) : '—'}</td>
             <td className="num">{totalComision ? Q(totalComision) : '—'}</td>
-            <td colSpan={4}></td>
+            <td colSpan={5}></td>
           </tr>
         </tbody>
       </table>

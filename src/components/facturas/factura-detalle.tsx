@@ -5,6 +5,7 @@ import { LINES } from '@/lib/mock-data';
 import { AdjuntoViewer } from '@/components/facturas/adjunto-viewer';
 import { AnularFacturaButton } from '@/components/facturas/anular-factura-button';
 import { RegistrarCobroButton } from '@/components/facturas/registrar-cobro-button';
+import { AnularCobroButton } from '@/components/facturas/anular-cobro-button';
 import type { Banco } from '@/lib/db/bancos';
 import type { GrupoCobro } from '@/lib/db/cobros';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
@@ -71,8 +72,9 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
 
   // F-035: el saldoPendiente viene del server (real, post cobros parciales).
   const pctCobrado = inv.total > 0 ? Math.round((1 - saldoPendiente / inv.total) * 100) : 0;
-  const totalRetIVA = cobros.reduce((s, g) => s + g.totalRetencionIVA, 0);
-  const totalRetISR = cobros.reduce((s, g) => s + g.totalRetencionISR, 0);
+  // F-036: solo cobros activos cuentan hacia el subtotal de retenciones del card.
+  const totalRetIVA = cobros.filter(g => g.estadoCobro === 'Activo').reduce((s, g) => s + g.totalRetencionIVA, 0);
+  const totalRetISR = cobros.filter(g => g.estadoCobro === 'Activo').reduce((s, g) => s + g.totalRetencionISR, 0);
 
   return (
     <div className="page">
@@ -210,21 +212,35 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
-            {cobros.map(g => (
+            {cobros.map(g => {
+              const anulado = g.estadoCobro === 'Anulado';
+              return (
               <div key={g.grupoId} style={{
                 border: '1px solid var(--line-2)', borderRadius: 'var(--r-2)',
-                padding: '12px 14px', background: g.tieneRetencion ? '#FBF7E6' : 'var(--paper-2)',
+                padding: '12px 14px',
+                background: anulado ? '#F2EDE9' : g.tieneRetencion ? '#FBF7E6' : 'var(--paper-2)',
+                opacity: anulado ? 0.65 : 1,
               }}>
                 <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
-                  <span className="num" style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink-2)' }}>
+                  <span className="num" style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink-2)', textDecoration: anulado ? 'line-through' : 'none' }}>
                     {formatFechaShort(g.fecha)}
                   </span>
                   <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
                     {g.grupoId.startsWith('__legacy__') ? '· cobro legado' : `· ${g.grupoId}`}
                   </span>
-                  <span className="num" style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 600, color: 'var(--ink)' }}>
+                  {anulado && (
+                    <span
+                      className="badge badge-wine"
+                      style={{ fontSize: 10, padding: '1px 6px' }}
+                      title={`Anulado ${formatFechaShort(g.fechaAnulacion ?? '')} por ${g.anuladoPor ?? '—'}: ${g.motivoAnulacion ?? ''}`}
+                    >
+                      Anulado
+                    </span>
+                  )}
+                  <span className="num" style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 600, color: 'var(--ink)', textDecoration: anulado ? 'line-through' : 'none' }}>
                     {Q(g.totalCobrado)}
                   </span>
+                  <AnularCobroButton grupo={g} saldoActual={saldoPendiente} totalFactura={inv.total} />
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {/* Dedupe componentes por método+ref (un componente puede haberse partido en N líneas) */}
@@ -248,7 +264,8 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
                   })}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

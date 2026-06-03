@@ -1,8 +1,12 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { currentUser } from '@clerk/nextjs/server';
 import { anularFactura, type AnularFacturaResult, type MotivoAnulacion } from '@/lib/db/facturas';
-import { registrarCobro, type RegistrarCobroInput, type RegistrarCobroResult } from '@/lib/db/cobros';
+import {
+  registrarCobro, anularCobro, anularCobroLegacy,
+  type RegistrarCobroInput, type RegistrarCobroResult, type AnularCobroResult,
+} from '@/lib/db/cobros';
 import {
   uploadAttachment,
   CONSTANCIA_FIELD_ID,
@@ -89,6 +93,20 @@ export async function registrarCobroAction(formData: FormData): Promise<CobroRes
 
   if (result.ok || result.cobrosCreados > 0) revalidarTodo();
   return avisos.length > 0 ? { ...result, avisos } : result;
+}
+
+/* F-036: anular un cobro por grupoId (o por recordId si es legacy). */
+export async function anularCobroAction(
+  grupoId: string,
+  motivo: string,
+): Promise<AnularCobroResult> {
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
+  const result = grupoId.startsWith('__legacy__')
+    ? await anularCobroLegacy(grupoId.replace('__legacy__', ''), motivo, email)
+    : await anularCobro(grupoId, motivo, email);
+  if (result.ok) revalidarTodo();
+  return result;
 }
 
 function errorResult(msg: string): RegistrarCobroResult {
