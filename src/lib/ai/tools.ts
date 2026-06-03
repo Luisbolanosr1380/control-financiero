@@ -22,6 +22,7 @@ import { getProyeccionMesActual } from '@/lib/db/proyecciones';
 import { getKPIsDeudas, getDeudas, getAcreedores, clasificarPasivo } from '@/lib/db/deudas';
 import { getPagosPorDeuda, getPagosPorAcreedor, getPagosRecientes } from '@/lib/db/pagos-deudas';
 import { getRetencionesAgregadas } from '@/lib/db/retenciones';
+import { getEmpleados, getEmpleadoPorId, getKPIsPlanilla } from '@/lib/db/empleados';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -856,6 +857,130 @@ export const aiTools = {
         .sort((a, b) => b.count - a.count)
         .slice(0, 20);
       return { anio: year, tipo: input.tipo, totalMotivosUnicos: motivos.size, top };
+    },
+  }),
+
+  // ===========================================================================
+  // F-037: Planilla y Empleados
+  // ===========================================================================
+
+  getKPIsPlanilla: tool({
+    description:
+      'KPIs agregados de planilla: número de empleados activos/inactivos, costo mensual total ' +
+      '(con prestaciones e IGSS patronal), pasivo laboral acumulado desglosado (Bono 14, Aguinaldo, ' +
+      'Vacaciones, Indemnización potencial, Salarios pendientes diferidos), proyección del próximo ' +
+      'pago de Bono 14, y empleados con datos incompletos. ' +
+      'USAR cuando el usuario pregunte "¿cuánto me cuesta la planilla?", "¿cuánto debo en prestaciones?", ' +
+      '"¿cuál es mi pasivo laboral total?", "¿cuántos empleados activos tengo?".',
+    parameters: z.object({}),
+    execute: async () => await getKPIsPlanilla(),
+  }),
+
+  getEmpleadoPorNombre: tool({
+    description:
+      'Datos completos de un empleado por nombre (búsqueda case+acento insensible). ' +
+      'Devuelve antigüedad, salario, costo total, prestaciones acumuladas (lo que se le debe HOY), ' +
+      'salarios pendientes diferidos, alertas. ' +
+      'USAR cuando el usuario pregunte por un empleado específico: "¿cuánto le debo a X?", ' +
+      '"¿cuánto lleva X en la empresa?", "datos de X".',
+    parameters: z.object({
+      nombre: z.string().min(2).describe('Nombre o fragmento del nombre del empleado.'),
+    }),
+    execute: async (input) => {
+      const empleados = await getEmpleados();
+      const q = input.nombre.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+      const matches = empleados.filter(e =>
+        e.nombre.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().includes(q),
+      );
+      if (matches.length === 0) return { encontrado: false, candidatos: [] };
+      if (matches.length > 1) {
+        return {
+          encontrado: false,
+          candidatos: matches.slice(0, 8).map(e => ({ id: e.id, nombre: e.nombre, departamento: e.departamento, status: e.status })),
+        };
+      }
+      const e = matches[0];
+      return {
+        encontrado: true,
+        empleado: {
+          nombre: e.nombre,
+          status: e.status,
+          departamento: e.departamento,
+          fechaIngreso: e.fechaIngreso,
+          antiguedad: e.antiguedad.textoLegible,
+          salarioMensual: e.salarioMensual,
+          costoTotalMensual: e.costoTotalMensual,
+          prestacionesAcumuladas: e.provisionesAcumuladas,
+          salariosPendientes: e.salariosPendientes,
+          tieneDatosCompletos: e.tieneDatosCompletos,
+          alertas: e.alertas,
+        },
+      };
+    },
+  }),
+
+  getEmpleadosPorDepartamento: tool({
+    description:
+      'Lista de empleados activos por departamento, con costo individual y antigüedad. ' +
+      'USAR cuando el usuario pregunte "¿quiénes están en X departamento?", "lista de operaciones / ventas / etc".',
+    parameters: z.object({
+      departamento: z.string().describe('Nombre exacto o parcial del departamento.'),
+    }),
+    execute: async (input) => {
+      const empleados = await getEmpleados();
+      const q = input.departamento.toLowerCase();
+      const matches = empleados.filter(e => e.status === 'ACTIVO' && e.departamento.toLowerCase().includes(q));
+      return {
+        departamentoBuscado: input.departamento,
+        cantidad: matches.length,
+        empleados: matches.map(e => ({
+          nombre: e.nombre,
+          antiguedad: e.antiguedad.textoLegible,
+          salarioMensual: e.salarioMensual,
+          costoTotalMensual: e.costoTotalMensual,
+        })),
+      };
+    },
+  }),
+
+  getSalariosPendientes: tool({
+    description:
+      'Empleados con quincenas DIFERIDAS (salarios pendientes). Devuelve cada empleado con la suma ' +
+      'pendiente y cantidad de quincenas no pagadas. Esto es PRIORIDAD ALTA por riesgo laboral — ' +
+      'salarios no pagados a empleados activos. ' +
+      'USAR para "¿a quién le debo salarios?", "¿qué quincenas están pendientes?", ' +
+      '"¿cuánto debo en salarios atrasados?".',
+    parameters: z.object({}),
+    execute: async () => {
+      const empleados = await getEmpleados({ conSalariosPendientes: true });
+      const total = empleados.reduce((s, e) => s + e.salariosPendientes.total, 0);
+      return {
+        totalPendiente: Math.round(total),
+        numEmpleadosAfectados: empleados.length,
+        empleados: empleados.map(e => ({
+          nombre: e.nombre,
+          departamento: e.departamento,
+          salariosPendientesQ: Math.round(e.salariosPendientes.total),
+          numQuincenas: e.salariosPendientes.cantidad,
+          deudaIds: e.salariosPendientes.deudaIds,
+        })),
+      };
+    },
+  }),
+
+  getDatosEmpleadoCompletos: tool({
+    description:
+      'Detalle COMPLETO de un empleado por ID — incluye composición salarial mensual, todas las ' +
+      'provisiones mensuales, provisiones acumuladas al día, salarios pendientes, datos bancarios. ' +
+      'USAR cuando ya se identificó el empleado y se necesita información detallada (ej. para calcular ' +
+      'liquidación o explicar el costo total).',
+    parameters: z.object({
+      id: z.string().describe('Record ID del empleado (rec...).'),
+    }),
+    execute: async (input) => {
+      const e = await getEmpleadoPorId(input.id);
+      if (!e) return { encontrado: false };
+      return { encontrado: true, empleado: e };
     },
   }),
 } as const;
