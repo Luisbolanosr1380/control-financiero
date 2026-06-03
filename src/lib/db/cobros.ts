@@ -37,6 +37,12 @@ export interface CobroListado {
   // F-035.1: URL de la primera constancia adjunta del grupo (si la hay).
   constanciaUrl: string | null;
   tieneConstancia: boolean;
+  // F-036: estado de anulación del grupo. Un grupo se considera "Anulado"
+  // cuando TODOS sus records están en Estado_Cobro=Anulado.
+  estadoCobro: 'Activo' | 'Anulado';
+  fechaAnulacion?: string;
+  motivoAnulacion?: string;
+  anuladoPor?: string;
 }
 
 export interface GetCobrosPaginaResult {
@@ -62,7 +68,19 @@ const FC_READ = {
   RET_ISR:      'Monto_Retencion_ISR',
   CONSTANCIA:   'Constancia_Retencion',
   GRUPO_ID:     'Cobro_Grupo_ID',
+  // F-036: campos de anulación.
+  ESTADO_COBRO:     'Estado_Cobro',
+  FECHA_ANULACION:  'Fecha_Anulacion',
+  MOTIVO_ANULACION: 'Motivo_Anulacion',
+  ANULADO_POR:      'Anulado_Por',
 } as const;
+
+/** F-036: cobro activo = Estado_Cobro != 'Anulado'. Vacío se trata como Activo
+ *  para compat con cobros pre-F-036 que no tenían el campo. */
+function esCobroActivoFields(f: Record<string, unknown>): boolean {
+  const e = String(f[FC_READ.ESTADO_COBRO] ?? '').trim().toUpperCase();
+  return e !== 'ANULADO';
+}
 
 interface RawCobro {
   recordId: string;
@@ -80,6 +98,11 @@ interface RawCobro {
   retencionISR: number;
   grupoId: string;
   constanciaUrl: string | null;
+  // F-036.
+  estadoCobro: 'Activo' | 'Anulado';
+  fechaAnulacion: string;
+  motivoAnulacion: string;
+  anuladoPor: string;
 }
 
 function recordToRaw(record: { id: string; fields: Record<string, unknown> }): RawCobro {
@@ -88,6 +111,8 @@ function recordToRaw(record: { id: string; fields: Record<string, unknown> }): R
   const constancia = Array.isArray(f[FC_READ.CONSTANCIA])
     ? (f[FC_READ.CONSTANCIA] as Array<{ url?: string }>)[0]
     : undefined;
+  const estadoCobroRaw = String(f[FC_READ.ESTADO_COBRO] ?? '').trim();
+  const estadoCobro: 'Activo' | 'Anulado' = estadoCobroRaw.toUpperCase() === 'ANULADO' ? 'Anulado' : 'Activo';
   return {
     recordId:   record.id,
     fecha:      String(f[FC_READ.FECHA] ?? ''),
@@ -104,6 +129,10 @@ function recordToRaw(record: { id: string; fields: Record<string, unknown> }): R
     retencionISR: Number(f[FC_READ.RET_ISR] ?? 0),
     grupoId:    String(f[FC_READ.GRUPO_ID] ?? ''),
     constanciaUrl: constancia?.url ?? null,
+    estadoCobro,
+    fechaAnulacion:  String(f[FC_READ.FECHA_ANULACION] ?? ''),
+    motivoAnulacion: String(f[FC_READ.MOTIVO_ANULACION] ?? ''),
+    anuladoPor:      String(f[FC_READ.ANULADO_POR] ?? ''),
   };
 }
 
@@ -132,6 +161,11 @@ function consolidarCobros(raws: RawCobro[], bancoNombreById: Map<string, string>
     const retencionIVA = rows.reduce((s, r) => s + r.retencionIVA, 0);
     const retencionISR = rows.reduce((s, r) => s + r.retencionISR, 0);
     const constanciaUrl = rows.find(r => r.constanciaUrl)?.constanciaUrl ?? null;
+    // F-036: grupo anulado = TODOS sus records están anulados. Mientras quede
+    // un record activo, el grupo no es "anulado" (escenario poco común porque
+    // anularCobro marca todos a la vez, pero la lógica es defensiva).
+    const todosAnulados = rows.every(r => r.estadoCobro === 'Anulado');
+    const muestraAnulado = rows.find(r => r.estadoCobro === 'Anulado');
     out.push({
       key,
       noFactura:   head.noFactura,
@@ -151,6 +185,10 @@ function consolidarCobros(raws: RawCobro[], bancoNombreById: Map<string, string>
       tieneRetencion: retencionIVA > 0 || retencionISR > 0,
       constanciaUrl,
       tieneConstancia: !!constanciaUrl,
+      estadoCobro: todosAnulados ? 'Anulado' : 'Activo',
+      fechaAnulacion:  muestraAnulado?.fechaAnulacion || undefined,
+      motivoAnulacion: muestraAnulado?.motivoAnulacion || undefined,
+      anuladoPor:      muestraAnulado?.anuladoPor || undefined,
     });
   }
   // Ordenar por fecha desc dentro de la página
@@ -269,6 +307,11 @@ const FC = {
   METODO:       'Método',
   MONEDA:       'Moneda',
   TIPO_CAMBIO:  'Tipo_Cambio',
+  // F-036.
+  ESTADO_COBRO:     'Estado_Cobro',
+  FECHA_ANULACION:  'Fecha_Anulacion',
+  MOTIVO_ANULACION: 'Motivo_Anulacion',
+  ANULADO_POR:      'Anulado_Por',
   ESTADO:       'Estado',
   REFERENCIA:   'Referencia',
   RET_IVA:      'Monto_Retencion_IVA',
@@ -400,15 +443,18 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
     if (totalFactura <= 0) return fail(nf, `La factura tiene TOTAL cero — no hay nada que cobrar.`);
 
     // 3) Saldo pendiente actual = totalFactura - suma de Monto_Cobrado de cobros previos
-    //    (no confiamos en Saldo_Por_Cobrar de Airtable: era buggy en su fórmula).
+    //    ACTIVOS (F-036). Cobros anulados se excluyen del saldo.
+    //    No confiamos en Saldo_Por_Cobrar de Airtable: era buggy en su fórmula.
     const cobrosPreviosRecords = await airtable(TABLES.COBROS)
       .select({
         filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`,
-        fields: [FC_READ.MONTO],
+        fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO],
       })
       .all();
     const cobradoPrevio = round2(
-      cobrosPreviosRecords.reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
+      cobrosPreviosRecords
+        .filter(r => esCobroActivoFields(r.fields as Record<string, unknown>))
+        .reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
     );
     const saldoAnterior = round2(totalFactura - cobradoPrevio);
     if (saldoAnterior <= SALDO_TOLERANCIA) {
@@ -462,6 +508,7 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
           [FC.MONEDA]:       moneda,
           [FC.TIPO_CAMBIO]:  tipoCambio,
           [FC.ESTADO]:       'Pendiente',
+          [FC.ESTADO_COBRO]: 'Activo',   // F-036
           [FC.GRUPO_ID]:     grupoId,
           ...(isRet ? {} : { [FC.CUENTA_BANCO]: [c.bancoId!] }),
           ...(c.referencia ? { [FC.REFERENCIA]: c.referencia.trim() } : {}),
@@ -596,6 +643,11 @@ export interface GrupoCobro {
   totalRetencionISR: number;
   componentes: ComponenteCobroLeido[];
   tieneRetencion: boolean;
+  // F-036.
+  estadoCobro: 'Activo' | 'Anulado';
+  fechaAnulacion?: string;
+  motivoAnulacion?: string;
+  anuladoPor?: string;
 }
 
 const FC_FULL = {
@@ -661,6 +713,9 @@ export async function getCobrosDeFactura(noFactura: string): Promise<GrupoCobro[
       const totalCobrado    = componentes.reduce((s, c) => s + c.monto, 0);
       const totalRetIVA     = componentes.reduce((s, c) => s + c.retencionIVA, 0);
       const totalRetISR     = componentes.reduce((s, c) => s + c.retencionISR, 0);
+      // F-036: grupo anulado = TODOS los records anulados.
+      const todosAnulados = bucket.rows.every(r => !esCobroActivoFields(r.fields));
+      const algunAnulado  = bucket.rows.find(r => !esCobroActivoFields(r.fields));
       out.push({
         grupoId,
         fecha: bucket.fecha,
@@ -670,6 +725,10 @@ export async function getCobrosDeFactura(noFactura: string): Promise<GrupoCobro[
         totalRetencionISR: totalRetISR,
         componentes,
         tieneRetencion: totalRetIVA > 0 || totalRetISR > 0,
+        estadoCobro: todosAnulados ? 'Anulado' : 'Activo',
+        fechaAnulacion:  algunAnulado ? String(algunAnulado.fields[FC_FULL.FECHA_ANULACION] ?? '') || undefined : undefined,
+        motivoAnulacion: algunAnulado ? String(algunAnulado.fields[FC_FULL.MOTIVO_ANULACION] ?? '') || undefined : undefined,
+        anuladoPor:      algunAnulado ? String(algunAnulado.fields[FC_FULL.ANULADO_POR] ?? '') || undefined : undefined,
       });
     }
     out.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
@@ -703,7 +762,7 @@ export async function getSaldoPendiente(noFactura: string): Promise<SaldoFactura
         .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
         .all(),
       airtable(TABLES.COBROS)
-        .select({ filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`, fields: [FC_READ.MONTO] })
+        .select({ filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`, fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO] })
         .all(),
     ]);
     if (facturaRecords.length === 0) return null;
@@ -713,8 +772,11 @@ export async function getSaldoPendiente(noFactura: string): Promise<SaldoFactura
     });
     if (activas.length === 0) return null;
     const totalFactura = round2(activas.reduce((s, r) => s + Number(r.fields[F.TOTAL] ?? 0), 0));
+    // F-036: solo cobros ACTIVOS reducen el saldo.
     const cobradoPrevio = round2(
-      cobrosRecords.reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
+      cobrosRecords
+        .filter(r => esCobroActivoFields(r.fields as Record<string, unknown>))
+        .reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
     );
     const saldoPendiente = round2(Math.max(0, totalFactura - cobradoPrevio));
     // Estado consolidado: si alguna línea está COBRADO PARCIAL gana sobre EMITIDA/PENDIENTE
@@ -727,5 +789,274 @@ export async function getSaldoPendiente(noFactura: string): Promise<SaldoFactura
   } catch (err) {
     console.error('Error leyendo saldo pendiente:', err);
     return null;
+  }
+}
+
+/* ============================================================
+ * F-036: anular un cobro (todos los records con Cobro_Grupo_ID=grupoId)
+ * y recomputar el saldo + ESTADO de la factura asociada.
+ *
+ * NUNCA elimina records — solo marca Estado_Cobro=Anulado con motivo,
+ * fecha y email del usuario. Recalcula desde cero los cobros ACTIVOS
+ * restantes y reasigna el ESTADO de las líneas de la factura.
+ * ============================================================ */
+
+export interface AnularCobroResult {
+  ok: boolean;
+  grupoId: string;
+  noFactura: string;
+  cobrosAnulados: number;
+  saldoAnterior: number;
+  saldoNuevo: number;
+  estadoNuevo: 'EMITIDA' | 'COBRADO PARCIAL' | 'COBRADO' | '';
+  error?: string;
+}
+
+export async function anularCobro(grupoId: string, motivo: string, usuarioEmail: string): Promise<AnularCobroResult> {
+  const empty = (error: string): AnularCobroResult => ({
+    ok: false, grupoId, noFactura: '', cobrosAnulados: 0,
+    saldoAnterior: 0, saldoNuevo: 0, estadoNuevo: '', error,
+  });
+
+  if (!airtable) return empty('Airtable no está configurado.');
+  if (!grupoId?.trim()) return empty('grupoId requerido.');
+  if (!motivo?.trim())  return empty('El motivo de anulación es requerido.');
+  if (grupoId.startsWith('__legacy__')) {
+    // Cobros pre-F-035 (sin grupo real). Soportamos anular UN record por id.
+    // Caller debe pasar el recordId real, no el alias legacy.
+    return empty('Cobro legacy: pasar el recordId concreto en vez del alias __legacy__.');
+  }
+
+  try {
+    // 1) Records del grupo
+    const esc = grupoId.replace(/"/g, '\\"');
+    const records = await airtable(TABLES.COBROS)
+      .select({ filterByFormula: `{${FC_READ.GRUPO_ID}} = "${esc}"` })
+      .all();
+    if (records.length === 0) return empty(`No se encontraron cobros con grupo ${grupoId}.`);
+
+    // Detectar la factura (NO.FACTURA es lookup; usamos el linked record Factura Cliente).
+    const facturaIds = new Set<string>();
+    let noFactura = '';
+    for (const r of records) {
+      const linked = r.fields[FC_READ.FACTURA];
+      if (Array.isArray(linked)) for (const id of linked) facturaIds.add(String(id));
+      if (!noFactura) {
+        const lookup = r.fields[FC_READ.NO_FACTURA];
+        if (Array.isArray(lookup)) noFactura = String(lookup[0] ?? '');
+      }
+    }
+    if (facturaIds.size === 0 || !noFactura) {
+      return empty('No se pudo identificar la factura asociada al grupo de cobros.');
+    }
+
+    // Si TODOS los records ya están anulados, no hay nada que hacer.
+    const yaAnulados = records.every(r => !esCobroActivoFields(r.fields as Record<string, unknown>));
+    if (yaAnulados) return empty('El cobro ya estaba anulado.');
+
+    // 2) Marcar como Anulado
+    const hoy = new Date().toISOString().slice(0, 10);
+    const updates = records.map(r => ({
+      id: r.id,
+      fields: {
+        [FC.ESTADO_COBRO]:     'Anulado',
+        [FC.FECHA_ANULACION]:  hoy,
+        [FC.MOTIVO_ANULACION]: motivo.trim(),
+        [FC.ANULADO_POR]:      (usuarioEmail ?? '').trim() || 'sistema',
+      },
+    }));
+    const anulados: string[] = [];
+    for (let i = 0; i < updates.length; i += 10) {
+      const lote = updates.slice(i, i + 10);
+      const res = await airtable(TABLES.COBROS).update(lote);
+      anulados.push(...res.map(r => r.id));
+    }
+
+    // 3) Traer TODAS las líneas activas de la factura para recalcular saldo + ESTADO.
+    const escNF = noFactura.replace(/"/g, '\\"');
+    const [facturaRecords, todosCobros] = await Promise.all([
+      airtable(TABLES.FACTURAS)
+        .select({ filterByFormula: `{${F.NO_FACTURA}} = "${escNF}"`, maxRecords: 100 })
+        .all(),
+      airtable(TABLES.COBROS)
+        .select({
+          filterByFormula: `{${FC_READ.NO_FACTURA}} = "${escNF}"`,
+          fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO],
+        })
+        .all(),
+    ]);
+    const lineasActivas = facturaRecords.filter(r => {
+      const e = estadoCanon(r.fields[F.ESTADO]);
+      return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
+    });
+    if (lineasActivas.length === 0) {
+      return {
+        ok: true, grupoId, noFactura,
+        cobrosAnulados: anulados.length,
+        saldoAnterior: 0, saldoNuevo: 0, estadoNuevo: '',
+      };
+    }
+
+    const totalFactura = round2(lineasActivas.reduce((s, r) => s + Number(r.fields[F.TOTAL] ?? 0), 0));
+    const cobradoActivo = round2(
+      todosCobros
+        .filter(r => esCobroActivoFields(r.fields as Record<string, unknown>))
+        .reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
+    );
+    const saldoNuevo = round2(Math.max(0, totalFactura - cobradoActivo));
+    const saldoAnterior = round2(saldoNuevo + records.reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0));
+
+    // 4) Estado destino. Si no quedó nada cobrado, volvemos a EMITIDA (no recuperamos
+    //    PENDIENTE original — ese estado se decide aparte por flujo interno y es raro).
+    let estadoNuevo: 'EMITIDA' | 'COBRADO PARCIAL' | 'COBRADO' = 'EMITIDA';
+    let estadoAirtable = 'EMITIDA';
+    if (saldoNuevo <= SALDO_TOLERANCIA) {
+      estadoNuevo = 'COBRADO';
+      estadoAirtable = 'COBRADO ';
+    } else if (cobradoActivo > 0) {
+      estadoNuevo = 'COBRADO PARCIAL';
+      estadoAirtable = 'COBRADO PARCIAL ';
+    } else {
+      estadoNuevo = 'EMITIDA';
+      estadoAirtable = 'EMITIDA';
+    }
+
+    // 5) Update ESTADO de todas las líneas activas
+    const facturaUpdates = lineasActivas.map(r => ({ id: r.id, fields: { [F.ESTADO]: estadoAirtable } }));
+    for (let i = 0; i < facturaUpdates.length; i += 10) {
+      const lote = facturaUpdates.slice(i, i + 10);
+      await airtable(TABLES.FACTURAS).update(lote);
+    }
+
+    return {
+      ok: true,
+      grupoId,
+      noFactura,
+      cobrosAnulados: anulados.length,
+      saldoAnterior,
+      saldoNuevo,
+      estadoNuevo,
+    };
+  } catch (err) {
+    return empty(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/** F-036: para cobros legacy (sin Cobro_Grupo_ID, hechos pre-F-035), aceptamos
+ *  anular por recordId. Misma lógica de recompute. */
+export async function anularCobroLegacy(recordId: string, motivo: string, usuarioEmail: string): Promise<AnularCobroResult> {
+  const empty = (error: string): AnularCobroResult => ({
+    ok: false, grupoId: `__legacy__${recordId}`, noFactura: '', cobrosAnulados: 0,
+    saldoAnterior: 0, saldoNuevo: 0, estadoNuevo: '', error,
+  });
+  if (!airtable) return empty('Airtable no está configurado.');
+  if (!recordId) return empty('recordId requerido.');
+  if (!motivo?.trim()) return empty('Motivo requerido.');
+
+  try {
+    const record = await airtable(TABLES.COBROS).find(recordId);
+    if (!esCobroActivoFields(record.fields as Record<string, unknown>)) {
+      return empty('El cobro ya estaba anulado.');
+    }
+    const linked = record.fields[FC_READ.FACTURA];
+    const noFLookup = record.fields[FC_READ.NO_FACTURA];
+    const noFactura = Array.isArray(noFLookup) ? String(noFLookup[0] ?? '') : '';
+    if (!Array.isArray(linked) || !noFactura) return empty('Cobro sin factura asociada.');
+
+    const hoy = new Date().toISOString().slice(0, 10);
+    await airtable(TABLES.COBROS).update([{
+      id: recordId,
+      fields: {
+        [FC.ESTADO_COBRO]:     'Anulado',
+        [FC.FECHA_ANULACION]:  hoy,
+        [FC.MOTIVO_ANULACION]: motivo.trim(),
+        [FC.ANULADO_POR]:      (usuarioEmail ?? '').trim() || 'sistema',
+      },
+    }]);
+
+    // Reusar la lógica de recompute manualmente
+    const escNF = noFactura.replace(/"/g, '\\"');
+    const [facturaRecords, todosCobros] = await Promise.all([
+      airtable(TABLES.FACTURAS).select({ filterByFormula: `{${F.NO_FACTURA}} = "${escNF}"`, maxRecords: 100 }).all(),
+      airtable(TABLES.COBROS).select({ filterByFormula: `{${FC_READ.NO_FACTURA}} = "${escNF}"`, fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO] }).all(),
+    ]);
+    const lineasActivas = facturaRecords.filter(r => {
+      const e = estadoCanon(r.fields[F.ESTADO]);
+      return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
+    });
+    const totalFactura = round2(lineasActivas.reduce((s, r) => s + Number(r.fields[F.TOTAL] ?? 0), 0));
+    const cobradoActivo = round2(
+      todosCobros
+        .filter(r => esCobroActivoFields(r.fields as Record<string, unknown>))
+        .reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
+    );
+    const saldoNuevo = round2(Math.max(0, totalFactura - cobradoActivo));
+    const montoAnulado = Number(record.fields[FC_READ.MONTO] ?? 0);
+    const saldoAnterior = round2(saldoNuevo + montoAnulado);
+
+    let estadoNuevo: 'EMITIDA' | 'COBRADO PARCIAL' | 'COBRADO' = 'EMITIDA';
+    let estadoAirtable = 'EMITIDA';
+    if (saldoNuevo <= SALDO_TOLERANCIA) { estadoNuevo = 'COBRADO'; estadoAirtable = 'COBRADO '; }
+    else if (cobradoActivo > 0)         { estadoNuevo = 'COBRADO PARCIAL'; estadoAirtable = 'COBRADO PARCIAL '; }
+
+    const facturaUpdates = lineasActivas.map(r => ({ id: r.id, fields: { [F.ESTADO]: estadoAirtable } }));
+    for (let i = 0; i < facturaUpdates.length; i += 10) {
+      await airtable(TABLES.FACTURAS).update(facturaUpdates.slice(i, i + 10));
+    }
+
+    return {
+      ok: true,
+      grupoId: `__legacy__${recordId}`,
+      noFactura,
+      cobrosAnulados: 1,
+      saldoAnterior,
+      saldoNuevo,
+      estadoNuevo,
+    };
+  } catch (err) {
+    return empty(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/* ============================================================
+ * F-036: contar cobros activos de una factura (para bloquear anulación)
+ * ============================================================ */
+
+export interface CobrosActivosCheck {
+  numCobrosActivos: number;    // grupos
+  numRecordsActivos: number;
+  montoTotalActivo: number;
+}
+
+export async function contarCobrosActivosDeFactura(noFactura: string): Promise<CobrosActivosCheck> {
+  const empty = { numCobrosActivos: 0, numRecordsActivos: 0, montoTotalActivo: 0 };
+  if (!airtable) return empty;
+  const nf = (noFactura ?? '').trim();
+  if (!nf) return empty;
+  try {
+    const esc = nf.replace(/"/g, '\\"');
+    const records = await airtable(TABLES.COBROS)
+      .select({
+        filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`,
+        fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO, FC_READ.GRUPO_ID],
+      })
+      .all();
+    const activos = records.filter(r => esCobroActivoFields(r.fields as Record<string, unknown>));
+    const grupos = new Set<string>();
+    let monto = 0;
+    for (const r of activos) {
+      const f = r.fields as Record<string, unknown>;
+      const g = String(f[FC_READ.GRUPO_ID] ?? '').trim() || `__legacy__${r.id}`;
+      grupos.add(g);
+      monto += Number(f[FC_READ.MONTO] ?? 0);
+    }
+    return {
+      numCobrosActivos: grupos.size,
+      numRecordsActivos: activos.length,
+      montoTotalActivo: round2(monto),
+    };
+  } catch (err) {
+    console.error('Error contando cobros activos:', err);
+    return empty;
   }
 }
