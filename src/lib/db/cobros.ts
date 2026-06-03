@@ -30,6 +30,10 @@ export interface CobroListado {
   estado: string;                // 'Pendiente' | 'Conciliado'
   numLineas: number;             // cuántos records de COBROS lo componen
   recordIds: string[];           // ids de COBROS_CLIENTES
+  // F-035: agregados de retención para badge en /cobros.
+  retencionIVA: number;
+  retencionISR: number;
+  tieneRetencion: boolean;
 }
 
 export interface GetCobrosPaginaResult {
@@ -51,6 +55,9 @@ const FC_READ = {
   REFERENCIA:   'Referencia',
   NO_FACTURA:   'NO.FACTURA (from Factura Cliente)',
   CLIENTE:      'CLIENTE  (from Factura Cliente)',   // 2 espacios entre CLIENTE y (from
+  RET_IVA:      'Monto_Retencion_IVA',
+  RET_ISR:      'Monto_Retencion_ISR',
+  GRUPO_ID:     'Cobro_Grupo_ID',
 } as const;
 
 interface RawCobro {
@@ -65,6 +72,9 @@ interface RawCobro {
   tipoCambio: number;
   referencia: string;
   estado: string;
+  retencionIVA: number;
+  retencionISR: number;
+  grupoId: string;
 }
 
 function recordToRaw(record: { id: string; fields: Record<string, unknown> }): RawCobro {
@@ -82,20 +92,36 @@ function recordToRaw(record: { id: string; fields: Record<string, unknown> }): R
     tipoCambio: Number(f[FC_READ.TIPO_CAMBIO] ?? 1),
     referencia: String(f[FC_READ.REFERENCIA] ?? ''),
     estado:     String(f[FC_READ.ESTADO] ?? ''),
+    retencionIVA: Number(f[FC_READ.RET_IVA] ?? 0),
+    retencionISR: Number(f[FC_READ.RET_ISR] ?? 0),
+    grupoId:    String(f[FC_READ.GRUPO_ID] ?? ''),
   };
 }
 
 function consolidarCobros(raws: RawCobro[], bancoNombreById: Map<string, string>): CobroListado[] {
+  // F-035: ahora consolidamos por Cobro_Grupo_ID cuando existe (un evento de
+  // cobro con N componentes + N líneas). Cobros viejos sin grupo siguen el
+  // patrón legacy (noFactura+fecha agrupa multi-línea de un cobro único).
   const buckets = new Map<string, RawCobro[]>();
   for (const r of raws) {
-    // Solo agrupar si hay noFactura y fecha; si faltan, key por recordId (no se mezcla)
-    const key = r.noFactura && r.fecha ? `${r.noFactura}|${r.fecha}` : `__rec__${r.recordId}`;
+    let key: string;
+    if (r.grupoId) {
+      key = r.grupoId;
+    } else if (r.noFactura && r.fecha) {
+      key = `${r.noFactura}|${r.fecha}`;
+    } else {
+      key = `__rec__${r.recordId}`;
+    }
     if (!buckets.has(key)) buckets.set(key, []);
     buckets.get(key)!.push(r);
   }
   const out: CobroListado[] = [];
   for (const [key, rows] of buckets) {
-    const head = rows[0];
+    // El "head" debería ser un componente bancario si existe (no retención),
+    // así el método y banco mostrados en /cobros son los reales del cobro.
+    const head = rows.find(r => r.metodo !== 'Retención IVA' && r.metodo !== 'Retención ISR') ?? rows[0];
+    const retencionIVA = rows.reduce((s, r) => s + r.retencionIVA, 0);
+    const retencionISR = rows.reduce((s, r) => s + r.retencionISR, 0);
     out.push({
       key,
       noFactura:   head.noFactura,
@@ -110,6 +136,9 @@ function consolidarCobros(raws: RawCobro[], bancoNombreById: Map<string, string>
       estado:      head.estado,
       numLineas:   rows.length,
       recordIds:   rows.map(r => r.recordId),
+      retencionIVA,
+      retencionISR,
+      tieneRetencion: retencionIVA > 0 || retencionISR > 0,
     });
   }
   // Ordenar por fecha desc dentro de la página
@@ -546,10 +575,7 @@ export interface GrupoCobro {
 
 const FC_FULL = {
   ...FC_READ,
-  RET_IVA:   'Monto_Retencion_IVA',
-  RET_ISR:   'Monto_Retencion_ISR',
   CONST:     'Constancia_Retencion',
-  GRUPO_ID:  'Cobro_Grupo_ID',
 } as const;
 
 export async function getCobrosDeFactura(noFactura: string): Promise<GrupoCobro[]> {

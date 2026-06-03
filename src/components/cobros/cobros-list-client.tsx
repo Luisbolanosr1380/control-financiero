@@ -148,7 +148,20 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
                       <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--ink-4)', fontStyle: 'italic' }}>· {c.numLineas} líneas</span>
                     )}
                   </td>
-                  <td style={{ whiteSpace: 'nowrap' }}>{c.metodo || '—'}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {c.metodo || '—'}
+                    {c.tieneRetencion && (
+                      <span
+                        className="badge badge-warn"
+                        style={{ marginLeft: 6, fontSize: 9.5, padding: '1px 6px' }}
+                        title={`Incluye retención: IVA Q${c.retencionIVA.toFixed(2)} · ISR Q${c.retencionISR.toFixed(2)}`}
+                      >
+                        {c.retencionIVA > 0 && c.retencionISR > 0 ? 'Ret. IVA+ISR'
+                         : c.retencionIVA > 0 ? 'Ret. IVA'
+                         : 'Ret. ISR'}
+                      </span>
+                    )}
+                  </td>
                   <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.bancoNombre}>{c.bancoNombre}</td>
                   <td className="num cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.referencia}>{c.referencia || '—'}</td>
                   <td><span className={'badge ' + estadoBadge.cls}>{estadoBadge.text}</span></td>
