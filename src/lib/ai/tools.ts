@@ -83,7 +83,9 @@ export const aiTools = {
     parameters: periodoParams,
     execute: async (input) => {
       const m = meta(input);
-      const [facturas, cobros] = await Promise.all([getFacturas(), getCobrosCompletos()]);
+      const [facturas, cobrosTodos] = await Promise.all([getFacturas(), getCobrosCompletos()]);
+      // F-036: solo cobros ACTIVOS cuentan como ingreso.
+      const cobros = cobrosTodos.filter(c => c.estadoCobro === 'Activo');
       const activas = facturas.filter(i => i.status !== 'anulado');
       const facturadasEnRango = activas.filter(i => enRango(i.fechaEmision, m.fecha_desde, m.fecha_hasta));
       const cobradosEnRango   = cobros.filter(c => enRango(c.fechaCobro, m.fecha_desde, m.fecha_hasta));
@@ -186,7 +188,9 @@ export const aiTools = {
     }),
     execute: async ({ periodo, desde, hasta, limite }) => {
       const m = meta({ periodo, desde, hasta });
-      const cobros = await getCobrosCompletos();
+      const cobrosTodos = await getCobrosCompletos();
+      // F-036: solo cobros activos.
+      const cobros = cobrosTodos.filter(c => c.estadoCobro === 'Activo');
       const clientes = await getClientes();
       const nombreById = new Map(clientes.map(c => [c.id, c.name]));
       const enRangoCobros = cobros.filter(c => enRango(c.fechaCobro, m.fecha_desde, m.fecha_hasta));
@@ -737,6 +741,121 @@ export const aiTools = {
           diasVencido: Math.max(0, f.dueAgo),
         })),
       };
+    },
+  }),
+
+  // ===========================================================================
+  // F-036: Anulaciones (solo lectura — la ejecución requiere humano + motivo)
+  // ===========================================================================
+
+  getCobrosAnulados: tool({
+    description:
+      'Cobros que fueron ANULADOS (Estado_Cobro=Anulado) en el período pedido. ' +
+      'Útil para auditoría y para detectar patrones (clientes que ' +
+      'cancelan mucho, métodos que fallan más). NO se cuentan como ingreso. ' +
+      'USAR cuando el usuario pregunte "cuántos cobros anulados tengo este mes", ' +
+      '"qué cobros anulé este año", "patrones de anulación".',
+    parameters: periodoParams,
+    execute: async (input) => {
+      const m = meta(input);
+      const cobros = await getCobrosCompletos();
+      const anulados = cobros.filter(c =>
+        c.estadoCobro === 'Anulado' && enRango(c.fechaCobro, m.fecha_desde, m.fecha_hasta),
+      );
+      return {
+        metadata: m,
+        numCobrosAnulados: anulados.length,
+        montoTotalAnuladoQ: Math.round(anulados.reduce((s, c) => s + c.monto, 0)),
+        cobros: anulados.slice(0, 50).map(c => ({
+          noFactura: c.noFactura,
+          fechaCobro: c.fechaCobro,
+          monto: c.monto,
+          metodo: c.metodo,
+          banco: c.bancoNombre,
+          fechaAnulacion: c.fechaAnulacion ?? null,
+          motivo: c.motivoAnulacion ?? null,
+          anuladoPor: c.anuladoPor ?? null,
+        })),
+      };
+    },
+  }),
+
+  getPagosDeudaAnulados: tool({
+    description:
+      'Pagos a deudas que fueron ANULADOS (Estado_Pago=Anulado). Histórico para auditoría. ' +
+      'No se cuentan en Total_Pagado de la deuda — el rollup los ignora porque su Monto_Pago=0. ' +
+      'USAR para "pagos anulados este mes", "cuántos pagos he tenido que reversar".',
+    parameters: z.object({
+      desde: z.string().optional().describe('YYYY-MM-DD inclusive (opcional).'),
+      hasta: z.string().optional().describe('YYYY-MM-DD inclusive (opcional).'),
+      limite: z.number().int().min(1).max(100).default(50),
+    }),
+    execute: async (input) => {
+      const pagos = await getPagosRecientes(500, { incluirAnulados: true });
+      let anulados = pagos.filter(p => p.estadoPago === 'Anulado');
+      if (input.desde)  anulados = anulados.filter(p => (p.fechaAnulacion ?? p.fecha) >= input.desde!);
+      if (input.hasta)  anulados = anulados.filter(p => (p.fechaAnulacion ?? p.fecha) <= input.hasta!);
+      return {
+        numPagosAnulados: anulados.length,
+        pagos: anulados.slice(0, input.limite).map(p => ({
+          deudaNombre: p.deudaNombre,
+          acreedor: p.acreedorNombre,
+          fechaPago: p.fecha,
+          metodo: p.metodo,
+          fechaAnulacion: p.fechaAnulacion ?? null,
+          motivo: p.motivoAnulacion ?? null,
+          anuladoPor: p.anuladoPor ?? null,
+        })),
+      };
+    },
+  }),
+
+  getMotivosAnulacion: tool({
+    description:
+      'Estadística agregada de MOTIVOS de anulación (cobros o pagos). Devuelve los motivos ' +
+      'más frecuentes con count para detectar patrones recurrentes (ej. "10 anulaciones por ' +
+      '\'cheque devuelto\' este año"). ' +
+      'USAR cuando el usuario pregunte "por qué se anulan tantas cosas", "patrón de anulaciones", ' +
+      '"qué motivos predominan".',
+    parameters: z.object({
+      tipo: z.enum(['cobros', 'pagos', 'ambos']).default('ambos'),
+      anio: z.number().int().optional().describe('Año (4 dígitos). Si no se pasa, año actual.'),
+    }),
+    execute: async (input) => {
+      const year = input.anio ?? new Date().getFullYear();
+      const motivos = new Map<string, { count: number; tipo: 'cobro' | 'pago' }>();
+
+      if (input.tipo === 'cobros' || input.tipo === 'ambos') {
+        const cobros = await getCobrosCompletos();
+        for (const c of cobros) {
+          if (c.estadoCobro !== 'Anulado' || !c.motivoAnulacion) continue;
+          const fa = c.fechaAnulacion ?? '';
+          if (!fa.startsWith(String(year))) continue;
+          const motivo = c.motivoAnulacion.trim().slice(0, 80);
+          const existing = motivos.get(motivo);
+          if (existing) existing.count += 1;
+          else motivos.set(motivo, { count: 1, tipo: 'cobro' });
+        }
+      }
+      if (input.tipo === 'pagos' || input.tipo === 'ambos') {
+        const pagos = await getPagosRecientes(500, { incluirAnulados: true });
+        for (const p of pagos) {
+          if (p.estadoPago !== 'Anulado' || !p.motivoAnulacion) continue;
+          const fa = p.fechaAnulacion ?? '';
+          if (!fa.startsWith(String(year))) continue;
+          // El motivo de pagos viene con prefijo de auditoría; nos quedamos con lo que escribió el humano.
+          const limpio = (p.motivoAnulacion.split('\n').pop() ?? '').trim().slice(0, 80);
+          if (!limpio) continue;
+          const existing = motivos.get(limpio);
+          if (existing) existing.count += 1;
+          else motivos.set(limpio, { count: 1, tipo: 'pago' });
+        }
+      }
+      const top = [...motivos.entries()]
+        .map(([motivo, v]) => ({ motivo, count: v.count, tipo: v.tipo }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 20);
+      return { anio: year, tipo: input.tipo, totalMotivosUnicos: motivos.size, top };
     },
   }),
 } as const;
