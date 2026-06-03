@@ -38,7 +38,7 @@ function buildNav(opts: { deudasVencidasCount?: number; rol?: Role } = {}): NavG
       { href: '/gastos',       label: 'Gastos',         icon: 'Expense' },
       { href: '/bancos',       label: 'Bancos',         icon: 'Bank' },
       { href: '/empleados',    label: 'Empleados',      icon: 'Users' },   // F-037
-      { href: '/planilla',     label: 'Planilla',       icon: 'Payroll' },
+      { href: '/planillas',    label: 'Planillas',      icon: 'Payroll' }, // F-038
       { href: '/deudas',       label: 'Deudas',         icon: 'Debt', badge: deudasBadge },
       { href: '/pagos-deudas', label: 'Pagos a deudas', icon: 'Coins' },
     ]},

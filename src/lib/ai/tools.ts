@@ -23,6 +23,7 @@ import { getKPIsDeudas, getDeudas, getAcreedores, clasificarPasivo } from '@/lib
 import { getPagosPorDeuda, getPagosPorAcreedor, getPagosRecientes } from '@/lib/db/pagos-deudas';
 import { getRetencionesAgregadas } from '@/lib/db/retenciones';
 import { getEmpleados, getEmpleadoPorId, getKPIsPlanilla } from '@/lib/db/empleados';
+import { getPeriodos, getPeriodoPorId, getLineasPlanilla } from '@/lib/db/planillas';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -981,6 +982,194 @@ export const aiTools = {
       const e = await getEmpleadoPorId(input.id);
       if (!e) return { encontrado: false };
       return { encontrado: true, empleado: e };
+    },
+  }),
+
+  // ===========================================================================
+  // F-038: Planillas quincenales (períodos)
+  // ===========================================================================
+
+  getPlanillasRecientes: tool({
+    description:
+      'Lista los últimos N períodos de planilla (quincenas) con su monto neto total, ' +
+      'cantidad de empleados, estado del período (Borrador / Aprobada / En pago / Cerrada) ' +
+      'y fechas de aprobación / cierre. ' +
+      'USAR para "¿cuál fue la planilla de mayo?", "últimas planillas", "cuánto sale cada quincena".',
+    parameters: z.object({
+      limite: z.number().int().min(1).max(48).default(6).describe('Cuántos períodos devolver, default 6 (≈3 meses).'),
+    }),
+    execute: async ({ limite }) => {
+      const periodos = await getPeriodos({ estado: 'todos' });
+      const top = periodos.slice(0, limite);
+      return {
+        totalPeriodosDisponibles: periodos.length,
+        periodos: top.map(p => ({
+          id: p.id,
+          nombre: p.nombre,
+          quincena: p.quincena,
+          mes: p.mes,
+          anio: p.anio,
+          fechaInicio: p.fechaInicio,
+          fechaFin: p.fechaFin,
+          estado: p.estado,
+          cantidadEmpleados: p.cantidadEmpleados,
+          montoNetoTotalQ: Math.round(p.montoTotal),
+          aprobadoPor: p.aprobadoPor ?? null,
+          fechaAprobacion: p.fechaAprobacion ?? null,
+          pagadoPor: p.pagadoPor ?? null,
+          fechaCierre: p.fechaCierre ?? null,
+        })),
+      };
+    },
+  }),
+
+  getPlanillaActual: tool({
+    description:
+      'Devuelve el período de planilla "actual" — el más reciente en estado Borrador o En pago. ' +
+      'Sirve para "¿qué planilla está activa ahora mismo?", "¿qué quincena estamos pagando?". ' +
+      'Si no hay ninguna en esos estados, devuelve ok:false (puede ser que la última esté Aprobada ' +
+      'o Cerrada — en ese caso usar getPlanillasRecientes para ver el contexto).',
+    parameters: z.object({}),
+    execute: async () => {
+      const periodos = await getPeriodos({ estado: 'todos' });
+      const activa = periodos.find(p => p.estado === 'Borrador' || p.estado === 'En pago');
+      if (!activa) {
+        return {
+          ok: false,
+          motivo: 'sin_periodo_activo',
+          mensaje: 'No hay períodos en estado Borrador o En pago. Mirá getPlanillasRecientes para ver el último.',
+        };
+      }
+      return {
+        ok: true,
+        periodo: {
+          id: activa.id,
+          nombre: activa.nombre,
+          quincena: activa.quincena,
+          mes: activa.mes,
+          anio: activa.anio,
+          fechaInicio: activa.fechaInicio,
+          fechaFin: activa.fechaFin,
+          estado: activa.estado,
+          cantidadEmpleados: activa.cantidadEmpleados,
+          montoNetoTotalQ: Math.round(activa.montoTotal),
+          aprobadoPor: activa.aprobadoPor ?? null,
+          fechaAprobacion: activa.fechaAprobacion ?? null,
+        },
+      };
+    },
+  }),
+
+  getCostoPlanillaPeriodo: tool({
+    description:
+      'Desglose económico completo de UNA planilla (período) por ID: ingresos brutos ' +
+      '(ordinario + bonificación + extraordinario + comisiones + otros), retenciones ' +
+      '(IGSS laboral + ISR + otros descuentos) y neto pagado. También cuenta cuántas líneas ' +
+      'están Pagadas, Pendientes y Diferidas. ' +
+      'USAR para "desglose de la planilla de [período]", "cuánto se retuvo de IGSS en X quincena", ' +
+      '"cuánto se difirió de la planilla de mayo Q2".',
+    parameters: z.object({
+      periodoId: z.string().describe('Record ID del período (rec...).'),
+    }),
+    execute: async ({ periodoId }) => {
+      const datos = await getPeriodoPorId(periodoId);
+      if (!datos) return { ok: false, motivo: 'periodo_no_encontrado' };
+      const { periodo, lineas } = datos;
+      const sum = (key: keyof typeof lineas[number]) => lineas.reduce((s, l) => s + (l[key] as number), 0);
+      const ordinario      = sum('ordinario');
+      const bonificacion   = sum('bonificacion');
+      const extraordinario = sum('extraordinario');
+      const comisiones     = sum('comisiones');
+      const otrosIngresos  = sum('otrosIngresos');
+      const igss           = sum('igssLaboral');
+      const isr            = sum('isr');
+      const otrosDesc      = sum('otrosDescuentos');
+      const neto           = sum('netoPagar');
+      const ingresosBrutos = ordinario + bonificacion + extraordinario + comisiones + otrosIngresos;
+      const totalRetenciones = igss + isr + otrosDesc;
+      return {
+        ok: true,
+        periodo: {
+          id: periodo.id,
+          nombre: periodo.nombre,
+          estado: periodo.estado,
+          fechaInicio: periodo.fechaInicio,
+          fechaFin: periodo.fechaFin,
+          cantidadEmpleados: lineas.length,
+        },
+        ingresos: {
+          ordinarioQ:      Math.round(ordinario),
+          bonificacionQ:   Math.round(bonificacion),
+          extraordinarioQ: Math.round(extraordinario),
+          comisionesQ:     Math.round(comisiones),
+          otrosIngresosQ:  Math.round(otrosIngresos),
+          totalBrutosQ:    Math.round(ingresosBrutos),
+        },
+        retenciones: {
+          igssLaboralQ:    Math.round(igss),
+          isrQ:            Math.round(isr),
+          otrosDescuentosQ: Math.round(otrosDesc),
+          totalQ:          Math.round(totalRetenciones),
+        },
+        netoPagarQ: Math.round(neto),
+        lineas: {
+          totales:    lineas.length,
+          pagadas:    lineas.filter(l => l.estadoPago === 'Pagado').length,
+          pendientes: lineas.filter(l => l.estadoPago === 'Pendiente').length,
+          diferidas:  lineas.filter(l => l.estadoPago === 'Diferido').length,
+        },
+      };
+    },
+  }),
+
+  getDiferimientosPendientes: tool({
+    description:
+      'Lista TODAS las líneas de planilla en estado DIFERIDO cuya deuda salarial vinculada ' +
+      'NO está liquidada — es decir, salarios prometidos pero todavía no pagados al empleado. ' +
+      'Devuelve por empleado: nombre, período, monto neto, deudaId. ' +
+      'PRIORIDAD ALTA por riesgo laboral. USAR para "¿qué diferimientos están pendientes?", ' +
+      '"¿qué salarios no he pagado aún?".',
+    parameters: z.object({}),
+    execute: async () => {
+      const periodos = await getPeriodos({ estado: 'todos' });
+      const deudas = await getDeudas();
+      const deudaPorId = new Map(deudas.map(d => [d.id, d]));
+      // Por cada período, leemos sus líneas y filtramos Diferido + deuda no liquidada.
+      const out: Array<{
+        empleadoNombre: string;
+        periodoNombre: string;
+        periodoId: string;
+        montoQ: number;
+        deudaId: string | null;
+        saldoDeudaQ: number | null;
+        estadoDeuda: string | null;
+      }> = [];
+      for (const p of periodos) {
+        const lineas = await getLineasPlanilla(p.id);
+        for (const l of lineas) {
+          if (l.estadoPago !== 'Diferido') continue;
+          const deuda = l.deudaVinculadaId ? deudaPorId.get(l.deudaVinculadaId) : undefined;
+          const liquidada = deuda ? /liquidada/i.test(deuda.estadoDeuda) : false;
+          // Si tiene deuda y está liquidada, NO la incluyo. Si no tiene deuda vinculada
+          // pero está Diferido, igual lo reporto (la línea sigue Diferido hasta confirmación humana).
+          if (deuda && liquidada) continue;
+          out.push({
+            empleadoNombre: l.empleadoNombre || '—',
+            periodoNombre: p.nombre,
+            periodoId: p.id,
+            montoQ: Math.round(l.netoPagar),
+            deudaId: l.deudaVinculadaId ?? null,
+            saldoDeudaQ: deuda ? Math.round(deuda.saldoPendiente) : null,
+            estadoDeuda: deuda ? deuda.estadoDeuda : null,
+          });
+        }
+      }
+      const totalQ = out.reduce((s, r) => s + r.montoQ, 0);
+      return {
+        totalDiferimientos: out.length,
+        montoTotalDiferidoQ: totalQ,
+        diferimientos: out,
+      };
     },
   }),
 } as const;

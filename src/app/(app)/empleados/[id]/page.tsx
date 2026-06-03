@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { getEmpleadoPorId } from '@/lib/db/empleados';
 import { getDeudas } from '@/lib/db/deudas';
 import { getCentrosCostoActivos } from '@/lib/db/centros';
-import { EmpleadoDetalle } from '@/components/empleados/empleado-detalle';
+import { getPeriodos, getLineasPlanilla, type LineaPlanilla, type Periodo } from '@/lib/db/planillas';
+import { EmpleadoDetalle, type LineaPlanillaHistorico } from '@/components/empleados/empleado-detalle';
 import { I } from '@/components/common/icons';
 
 export const revalidate = 30;
@@ -25,7 +26,11 @@ export default async function EmpleadoDetallePage({ params }: { params: Promise<
     );
   }
 
-  const [deudas, centros] = await Promise.all([getDeudas(), getCentrosCostoActivos()]);
+  const [deudas, centros, periodos] = await Promise.all([
+    getDeudas(),
+    getCentrosCostoActivos(),
+    getPeriodos({ estado: 'todos' }),
+  ]);
   const deudasSalariales = deudas
     .filter(d => d.acreedorId === empleado.acreedorVinculadoId && d.tipoDocumento === 'Salario Pendiente')
     .sort((a, b) => (b.fechaEmision || '').localeCompare(a.fechaEmision || ''));
@@ -34,12 +39,43 @@ export default async function EmpleadoDetallePage({ params }: { params: Promise<
   // si el usuario edita desde el detalle. Una mejora futura llenaría esto.
   const departamentos: string[] = [];
 
+  // Historial de planillas: traemos las líneas de cada período y filtramos por
+  // EMPLEADO. Para no traer todo el historial entero, limitamos a los últimos
+  // 24 períodos (≈12 meses) que es lo que el detalle muestra y suficiente
+  // para los totales del año actual.
+  const periodosRecientes: Periodo[] = periodos.slice(0, 24);
+  const lineasPorPeriodo = await Promise.all(
+    periodosRecientes.map(async p => {
+      const lineas: LineaPlanilla[] = await getLineasPlanilla(p.id);
+      const mia = lineas.find(l => l.empleadoId === empleado.id);
+      return mia ? { periodo: p, linea: mia } : null;
+    }),
+  );
+  const historicoPlanillas: LineaPlanillaHistorico[] = lineasPorPeriodo
+    .filter((x): x is { periodo: Periodo; linea: LineaPlanilla } => x !== null)
+    .map(({ periodo, linea }) => ({
+      periodoId: periodo.id,
+      periodoNombre: periodo.nombre,
+      mes: periodo.mes,
+      anio: periodo.anio,
+      quincena: periodo.quincena,
+      estadoPeriodo: periodo.estado,
+      fechaFinPeriodo: periodo.fechaFin,
+      lineaId: linea.id,
+      fechaPago: linea.fechaPago,
+      netoPagar: linea.netoPagar,
+      igssLaboral: linea.igssLaboral,
+      isr: linea.isr,
+      estadoPago: linea.estadoPago,
+    }));
+
   return (
     <EmpleadoDetalle
       empleado={empleado}
       deudasSalariales={deudasSalariales}
       centros={centrosUI}
       departamentos={departamentos}
+      historicoPlanillas={historicoPlanillas}
     />
   );
 }

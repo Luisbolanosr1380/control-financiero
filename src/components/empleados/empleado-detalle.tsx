@@ -10,12 +10,30 @@ import { ModalDarDeBaja } from './modal-dar-de-baja';
 import { ModalDeudaSalarial } from './modal-deuda-salarial';
 import type { Empleado } from '@/lib/db/empleados';
 import type { Deuda } from '@/lib/db/deudas';
+import type { EstadoPagoLinea, EstadoPeriodo } from '@/lib/db/planillas';
+
+export interface LineaPlanillaHistorico {
+  periodoId: string;
+  periodoNombre: string;
+  mes: number;
+  anio: number;
+  quincena: 1 | 2;
+  estadoPeriodo: EstadoPeriodo;
+  fechaFinPeriodo: string;
+  lineaId: string;
+  fechaPago?: string;
+  netoPagar: number;
+  igssLaboral: number;
+  isr: number;
+  estadoPago: EstadoPagoLinea;
+}
 
 interface Props {
   empleado: Empleado;
   deudasSalariales: Deuda[];
   centros: Array<{ id: string; nombre: string }>;
   departamentos: string[];
+  historicoPlanillas?: LineaPlanillaHistorico[];
 }
 
 function formatFecha(s: string | undefined): string {
@@ -26,7 +44,7 @@ function formatFecha(s: string | undefined): string {
   return `${day}/${m}/${y}`;
 }
 
-export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, departamentos }: Props) {
+export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, departamentos, historicoPlanillas }: Props) {
   const router = useRouter();
   const [editar, setEditar] = useState(false);
   const [darBaja, setDarBaja] = useState(false);
@@ -35,6 +53,21 @@ export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, depart
   const inactivo = e.status !== 'ACTIVO';
   const deudasActivas = deudasSalariales.filter(d => !/liquidada/i.test(d.estadoDeuda));
   const totalDeudasActivas = deudasActivas.reduce((s, d) => s + d.saldoPendiente, 0);
+
+  // Histórico de planillas — últimas 12 líneas ordenadas más reciente primero.
+  const historico = (historicoPlanillas ?? [])
+    .slice()
+    .sort((a, b) => {
+      if (a.anio !== b.anio) return b.anio - a.anio;
+      if (a.mes !== b.mes)   return b.mes - a.mes;
+      return b.quincena - a.quincena;
+    });
+  const historicoTop = historico.slice(0, 12);
+  const anioActual = new Date().getFullYear();
+  const deAnio = historico.filter(h => h.anio === anioActual && h.estadoPago === 'Pagado');
+  const totalPagadoAnio = deAnio.reduce((s, h) => s + h.netoPagar, 0);
+  const totalIgssAnio = deAnio.reduce((s, h) => s + h.igssLaboral, 0);
+  const totalIsrAnio = deAnio.reduce((s, h) => s + h.isr, 0);
 
   const statusBadge =
     e.status === 'ACTIVO'   ? { cls: 'badge-olive',   text: 'Activo' }
@@ -210,6 +243,82 @@ export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, depart
               })}
             </tbody>
           </table>
+        )}
+      </div>
+
+      {/* HISTORIAL DE PLANILLAS (F-038) */}
+      <div className="card" style={{ marginBottom: 22 }}>
+        <div className="card-head">
+          <div className="card-title">Historial de planillas</div>
+          <div className="card-actions">
+            <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+              Últimas 12 quincenas registradas
+            </span>
+          </div>
+        </div>
+        {historicoTop.length === 0 ? (
+          <div className="card-pad" style={{ padding: '32px 24px', textAlign: 'center', color: 'var(--ink-4)', fontSize: 13 }}>
+            Sin líneas de planilla todavía. Cuando se genere una planilla, aparecerá aquí.
+          </div>
+        ) : (
+          <>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Período</th>
+                  <th className="num" style={{ width: 110 }}>Fecha pago</th>
+                  <th className="num">Neto pagado</th>
+                  <th className="num">IGSS retenido</th>
+                  <th className="num">ISR retenido</th>
+                  <th>Estado pago</th>
+                  <th style={{ width: 80 }}></th>
+                </tr>
+              </thead>
+              <tbody>
+                {historicoTop.map(h => {
+                  const badgeCls =
+                    h.estadoPago === 'Pagado'    ? 'badge-olive'
+                    : h.estadoPago === 'Diferido' ? 'badge-wine'
+                    :                              'badge-outline';
+                  return (
+                    <tr key={h.lineaId}>
+                      <td className="cell-strong" style={{ whiteSpace: 'nowrap' }}>{h.periodoNombre}</td>
+                      <td className="num cell-mute" style={{ whiteSpace: 'nowrap' }}>{formatFecha(h.fechaPago)}</td>
+                      <td className="num cell-strong">{Q(h.netoPagar)}</td>
+                      <td className="num cell-mute">{Q(h.igssLaboral)}</td>
+                      <td className="num cell-mute">{Q(h.isr)}</td>
+                      <td>
+                        <span className={`badge ${badgeCls}`}>{h.estadoPago}</span>
+                      </td>
+                      <td>
+                        <Link href={`/planillas/${h.periodoId}`} className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }}>
+                          Ver →
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div style={{ display: 'flex', gap: 18, padding: '14px 18px', borderTop: '1px solid var(--line-3)', fontSize: 12, flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
+                <span style={{ color: 'var(--ink-3)' }}>
+                  Total pagado este año <strong className="num" style={{ color: 'var(--ink)' }}>{Q(totalPagadoAnio)}</strong>
+                </span>
+                <span style={{ color: 'var(--ink-3)' }}>
+                  IGSS año <strong className="num" style={{ color: 'var(--ink)' }}>{Q(totalIgssAnio)}</strong>
+                </span>
+                <span style={{ color: 'var(--ink-3)' }}>
+                  ISR año <strong className="num" style={{ color: 'var(--ink)' }}>{Q(totalIsrAnio)}</strong>
+                </span>
+              </div>
+              {historico[0] && (
+                <Link href={`/planillas/${historico[0].periodoId}`} className="btn btn-ghost" style={{ padding: '4px 10px', fontSize: 12 }}>
+                  Ver planilla completa →
+                </Link>
+              )}
+            </div>
+          </>
         )}
       </div>
 

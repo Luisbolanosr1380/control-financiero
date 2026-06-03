@@ -129,6 +129,18 @@ PLANILLA Y EMPLEADOS (F-037):
   pagan fuera del sistema y, si una se difiere, Stark la registra como deuda
   salarial desde /empleados/[id].
 
+PLANILLAS QUINCENALES (F-038):
+- 24 períodos/año. Workflow: Borrador → Aprobada → En pago → Cerrada.
+- En Borrador la planilla se ajusta línea por línea (bono KPI, ISR, descuentos).
+- Aprobada bloquea ajustes; el dinero NO se mueve hasta que cada línea se Registra pago o se
+  Difiere desde la UI.
+- Diferir = NO pagar esta quincena → crea automáticamente una deuda 'Salario Pendiente' contra
+  el acreedor del empleado (categoría 'empleados' de pasivos). Cuando esa deuda se pague vía
+  /deudas/[id], queda registrada como pago atrasado pero la línea de planilla sigue 'Diferido'
+  hasta que un humano la confirme manualmente.
+- Si pregunta '¿cuánto fue la planilla de mayo?' → buscar período(s) del mes y sumar monto neto
+  del último Cerrado. Si pregunta por 'diferidos', usar getDiferimientosPendientes.
+
 SEMÁNTICA DE TABS Y ESTADOS DE FACTURA (F-034):
 - "Cartera total" = TODO lo no cobrado (ESTADO ∈ EMITIDA + PENDIENTE). Es la foto completa de lo que la empresa espera recibir.
 - "Por cobrar" = SOLO ESTADO = EMITIDA. Cartera activa de cobranza normal — facturas en circulación pública con el cliente.
