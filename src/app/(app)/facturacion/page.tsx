@@ -5,7 +5,7 @@ import { FacturasListClient, type FacturasTab } from '@/components/facturas/list
 export const revalidate = 30;
 
 const TABS_VALIDOS: readonly FacturasTab[] = [
-  'todas', 'cartera_total', 'por_cobrar', 'vencidas', 'pendientes', 'cobradas', 'anuladas', 'refacturadas',
+  'todas', 'cartera_total', 'por_cobrar', 'vencidas', 'pendientes', 'parciales', 'cobradas', 'anuladas', 'refacturadas',
 ];
 
 export default async function FacturacionPage({

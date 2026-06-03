@@ -65,6 +65,7 @@ export interface InvoiceLiviano {
 const norm = (e: unknown) => String(e ?? '').toUpperCase().trim();
 function brutoFromEstado(estado: unknown): InvoiceEstadoBruto {
   const s = norm(estado);
+  if (s === 'COBRADO PARCIAL')                    return 'cobrado_parcial';
   if (s === 'COBRADO' || s === 'COBRADA')         return 'cobrado';
   if (s === 'ANULADO' || s === 'ANULADA')         return 'anulado';
   if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'refacturado';
@@ -98,7 +99,7 @@ export async function getFacturasLiviano(): Promise<InvoiceLiviano[]> {
     type Row = { id: string; fields: Record<string, unknown> };
     // Bucket key igual a consolidateRecords: anuladas/refacturadas como rows individuales.
     const PRIO: Record<InvoiceEstadoBruto, number> = {
-      pendiente: 5, emitida: 4, cobrado: 3, anulado: 1, refacturado: 0, otro: 0,
+      cobrado_parcial: 6, pendiente: 5, emitida: 4, cobrado: 3, anulado: 1, refacturado: 0, otro: 0,
     };
     const buckets = new Map<string, { records: Row[]; brutos: InvoiceEstadoBruto[] }>();
     for (const r of records) {
@@ -162,6 +163,7 @@ export type FiltroTabFactura =
   | 'por_cobrar'
   | 'vencidas'
   | 'pendientes'
+  | 'parciales'
   | 'cobradas'
   | 'anuladas'
   | 'refacturadas';
@@ -169,11 +171,17 @@ export type FiltroTabFactura =
 function filtroToFormula(filtro: FiltroTabFactura | undefined): string {
   const E = `TRIM(UPPER({${F.ESTADO}}))`;
   const V = `TRIM(UPPER({${F.ESTATUS_COBRANZA}}))`;
+  // F-035:
+  //   - cartera_total = EMITIDA + PENDIENTE + COBRADO PARCIAL (todo lo no liquidado)
+  //   - por_cobrar    = EMITIDA + COBRADO PARCIAL (cobranza activa, sin pendientes internos)
+  //   - vencidas      = subset de por_cobrar con Estatus_Cobranza = VENCIDA
+  //   - parciales     = solo COBRADO PARCIAL
   switch (filtro) {
-    case 'cartera_total': return `OR(${E}='EMITIDA',${E}='PENDIENTE')`;
-    case 'por_cobrar':    return `${E}='EMITIDA'`;
-    case 'vencidas':      return `AND(${E}='EMITIDA',${V}='VENCIDA')`;
+    case 'cartera_total': return `OR(${E}='EMITIDA',${E}='PENDIENTE',${E}='COBRADO PARCIAL')`;
+    case 'por_cobrar':    return `OR(${E}='EMITIDA',${E}='COBRADO PARCIAL')`;
+    case 'vencidas':      return `AND(OR(${E}='EMITIDA',${E}='COBRADO PARCIAL'),${V}='VENCIDA')`;
     case 'pendientes':    return `${E}='PENDIENTE'`;
+    case 'parciales':     return `${E}='COBRADO PARCIAL'`;
     case 'cobradas':      return `OR(${E}='COBRADO',${E}='COBRADA')`;
     case 'anuladas':      return `OR(${E}='ANULADO',${E}='ANULADA')`;
     case 'refacturadas':  return `OR(${E}='REFACTURADO',${E}='REFACTURADA')`;
@@ -185,12 +193,14 @@ function filtroToFormula(filtro: FiltroTabFactura | undefined): string {
 // F-034: predicado equivalente al filtroToFormula para mock data y para
 // reusar en el client cuando filtra livianas localmente.
 export function predicadoFiltro(filtro: FiltroTabFactura | undefined) {
+  const enCobranzaActiva = (e: InvoiceEstadoBruto) => e === 'emitida' || e === 'cobrado_parcial';
   return (i: { estadoBruto: InvoiceEstadoBruto; vencida: boolean }): boolean => {
     switch (filtro) {
-      case 'cartera_total': return i.estadoBruto === 'emitida' || i.estadoBruto === 'pendiente';
-      case 'por_cobrar':    return i.estadoBruto === 'emitida';
-      case 'vencidas':      return i.estadoBruto === 'emitida' && i.vencida;
+      case 'cartera_total': return enCobranzaActiva(i.estadoBruto) || i.estadoBruto === 'pendiente';
+      case 'por_cobrar':    return enCobranzaActiva(i.estadoBruto);
+      case 'vencidas':      return enCobranzaActiva(i.estadoBruto) && i.vencida;
       case 'pendientes':    return i.estadoBruto === 'pendiente';
+      case 'parciales':     return i.estadoBruto === 'cobrado_parcial';
       case 'cobradas':      return i.estadoBruto === 'cobrado';
       case 'anuladas':      return i.estadoBruto === 'anulado';
       case 'refacturadas':  return i.estadoBruto === 'refacturado';

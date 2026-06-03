@@ -6,6 +6,7 @@ import { AdjuntoViewer } from '@/components/facturas/adjunto-viewer';
 import { AnularFacturaButton } from '@/components/facturas/anular-factura-button';
 import { RegistrarCobroButton } from '@/components/facturas/registrar-cobro-button';
 import type { Banco } from '@/lib/db/bancos';
+import type { GrupoCobro } from '@/lib/db/cobros';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
 const STATUS_BADGE: Record<InvoiceStatus, { cls: string; text: string }> = {
@@ -22,16 +23,56 @@ interface Props {
   factura: Invoice;
   clienteNombre: string;
   bancos: Banco[];
+  saldoPendiente: number;   // F-035: viene del server (real, no del balance consolidado)
+  cobros: GrupoCobro[];     // F-035: historial agrupado de cobros
 }
 
-export function FacturaDetalle({ factura: inv, clienteNombre, bancos }: Props) {
+function formatFechaShort(s: string): string {
+  if (!s) return '—';
+  const d = s.slice(0, 10);
+  const [y, m, day] = d.split('-');
+  if (!y || !m || !day) return s;
+  return `${day}/${m}/${y}`;
+}
+
+/** Agrupa componentes del mismo grupo cuando se generaron N records por multi-línea
+ *  pero todos comparten método+referencia. Suma sus montos para presentación limpia. */
+function dedupeComponentes(g: GrupoCobro): { metodo: string; bancoNombre: string | null; referencia: string; monto: number; constanciaUrl?: string; constanciaNombre?: string }[] {
+  const buckets = new Map<string, { metodo: string; bancoNombre: string | null; referencia: string; monto: number; constanciaUrl?: string; constanciaNombre?: string }>();
+  for (const c of g.componentes) {
+    const key = `${c.metodo}|${c.bancoId ?? ''}|${c.referencia}`;
+    const b = buckets.get(key);
+    if (b) {
+      b.monto += c.monto;
+      if (!b.constanciaUrl && c.constanciaUrl) {
+        b.constanciaUrl = c.constanciaUrl;
+        b.constanciaNombre = c.constanciaNombre;
+      }
+    } else {
+      buckets.set(key, {
+        metodo: c.metodo,
+        bancoNombre: c.bancoNombre,
+        referencia: c.referencia,
+        monto: c.monto,
+        constanciaUrl: c.constanciaUrl,
+        constanciaNombre: c.constanciaNombre,
+      });
+    }
+  }
+  return [...buckets.values()];
+}
+
+export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros }: Props) {
   const badge = STATUS_BADGE[inv.status] ?? { cls: 'badge-mute', text: inv.status };
 
   const sumIva = inv.lineas.reduce((s, l) => s + (l.iva ?? 0), 0);
   const sumTotal = inv.lineas.reduce((s, l) => s + l.amount, 0);
   const sumSub = sumTotal - sumIva;
 
-  const pctCobrado = inv.total > 0 ? Math.round((1 - inv.balance / inv.total) * 100) : 0;
+  // F-035: el saldoPendiente viene del server (real, post cobros parciales).
+  const pctCobrado = inv.total > 0 ? Math.round((1 - saldoPendiente / inv.total) * 100) : 0;
+  const totalRetIVA = cobros.reduce((s, g) => s + g.totalRetencionIVA, 0);
+  const totalRetISR = cobros.reduce((s, g) => s + g.totalRetencionISR, 0);
 
   return (
     <div className="page">
@@ -63,7 +104,14 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos }: Props) {
         </div>
         <div className="page-actions">
           <AnularFacturaButton noFactura={inv.noFactura} status={inv.status} />
-          <RegistrarCobroButton noFactura={inv.noFactura} total={inv.total} status={inv.status} bancos={bancos} />
+          <RegistrarCobroButton
+            noFactura={inv.noFactura}
+            total={inv.total}
+            saldoPendiente={saldoPendiente}
+            status={inv.status}
+            estadoBruto={inv.estadoBruto === 'cobrado_parcial' ? 'COBRADO PARCIAL' : undefined}
+            bancos={bancos}
+          />
         </div>
       </div>
 
@@ -76,10 +124,10 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos }: Props) {
         </div>
         <div className="kpi">
           <div className="kpi-label">Saldo pendiente</div>
-          <div className="kpi-value" style={{ color: inv.balance > 0 ? 'var(--wine)' : 'var(--olive)' }}>
-            <span className="currency">Q</span>{Math.round(inv.balance).toLocaleString('en-US')}
+          <div className="kpi-value" style={{ color: saldoPendiente > 0 ? 'var(--wine)' : 'var(--olive)' }}>
+            <span className="currency">Q</span>{Math.round(saldoPendiente).toLocaleString('en-US')}
           </div>
-          <div className="kpi-delta"><span className="vs">{inv.balance <= 0 ? 'Pagada completa' : `${pctCobrado}% cobrado`}</span></div>
+          <div className="kpi-delta"><span className="vs">{saldoPendiente <= 0 ? 'Pagada completa' : `${pctCobrado}% cobrado`}</span></div>
         </div>
         <div className="kpi">
           <div className="kpi-label">Días vencidos</div>
@@ -149,6 +197,61 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos }: Props) {
           </tbody>
         </table>
       </div>
+
+      {/* F-035: Historial de cobros agrupados por evento (Cobro_Grupo_ID). */}
+      {cobros.length > 0 && (
+        <div className="card" style={{ marginBottom: 22 }}>
+          <div className="card-head">
+            <div className="card-title">Cobros registrados</div>
+            <div className="card-actions">
+              <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+                {cobros.length} evento{cobros.length === 1 ? '' : 's'} · {totalRetIVA + totalRetISR > 0 ? `incluye retenciones (IVA Q${totalRetIVA.toFixed(2)} + ISR Q${totalRetISR.toFixed(2)})` : 'sin retenciones'}
+              </span>
+            </div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: '12px 14px' }}>
+            {cobros.map(g => (
+              <div key={g.grupoId} style={{
+                border: '1px solid var(--line-2)', borderRadius: 'var(--r-2)',
+                padding: '12px 14px', background: g.tieneRetencion ? '#FBF7E6' : 'var(--paper-2)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
+                  <span className="num" style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink-2)' }}>
+                    {formatFechaShort(g.fecha)}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+                    {g.grupoId.startsWith('__legacy__') ? '· cobro legado' : `· ${g.grupoId}`}
+                  </span>
+                  <span className="num" style={{ marginLeft: 'auto', fontSize: 14, fontWeight: 600, color: 'var(--ink)' }}>
+                    {Q(g.totalCobrado)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {/* Dedupe componentes por método+ref (un componente puede haberse partido en N líneas) */}
+                  {dedupeComponentes(g).map((c, i) => {
+                    const ret = c.metodo === 'Retención IVA' || c.metodo === 'Retención ISR';
+                    return (
+                      <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-3)' }}>
+                        <span style={{
+                          display: 'inline-block', width: 6, height: 6, borderRadius: '50%',
+                          background: ret ? '#A85C32' : 'var(--olive)',
+                        }} />
+                        <span>{c.metodo}</span>
+                        {c.bancoNombre && <span style={{ color: 'var(--ink-4)' }}>· {c.bancoNombre}</span>}
+                        {c.referencia && <span style={{ color: 'var(--ink-4)' }}>· {c.referencia}</span>}
+                        {c.constanciaUrl && (
+                          <a href={c.constanciaUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--olive)', textDecoration: 'underline' }}>constancia</a>
+                        )}
+                        <span className="num" style={{ marginLeft: 'auto', color: 'var(--ink-2)' }}>{Q(c.monto)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>
         {/* 4. PDF ADJUNTO */}

@@ -15,7 +15,7 @@ export type InvoiceStatus = 'pendiente' | 'emitida' | 'contabilizado' | 'cobrado
  * `status` (legacy) se mantiene como derivado de estos dos para
  * compatibilidad con código que ya lo usa.
  */
-export type InvoiceEstadoBruto = 'emitida' | 'pendiente' | 'cobrado' | 'anulado' | 'refacturado' | 'otro';
+export type InvoiceEstadoBruto = 'emitida' | 'pendiente' | 'cobrado' | 'cobrado_parcial' | 'anulado' | 'refacturado' | 'otro';
 
 export type AgingBucket = 'corriente' | '1-30' | '31-60' | '61-90' | '90+';
 

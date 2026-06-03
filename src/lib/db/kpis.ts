@@ -14,13 +14,12 @@ import type { Invoice, Customer, LineKey, LineStats, AgingEntry, HealthStatus } 
 // REFACTURADAS también se mapeaban a 'anulado' legacy — colateralmente
 // se excluían, hoy ya no porque estadoBruto las distingue).
 const isActiva = (i: Invoice) => i.estadoBruto !== 'anulado' && i.estadoBruto !== 'refacturado';
-// F-034: nueva semántica.
-//   - Por cobrar = SOLO emitida (cartera activa de cobranza normal).
-//   - Cartera total = emitida + pendiente (todo lo no cobrado).
-//   - Vencidas = subset de Por cobrar (emitida + vencida=true). Pendiente NO
-//     se considera "vencida" en el sentido de cobranza — es un estado interno.
-const esPorCobrar    = (i: Invoice) => i.estadoBruto === 'emitida';
-const esCarteraTotal = (i: Invoice) => i.estadoBruto === 'emitida' || i.estadoBruto === 'pendiente';
+// F-035: COBRADO PARCIAL es parte de cobranza activa (sigue siendo cobrable).
+//   - Por cobrar    = EMITIDA + COBRADO PARCIAL (cartera activa de cobranza).
+//   - Cartera total = EMITIDA + PENDIENTE + COBRADO PARCIAL (todo lo no liquidado).
+//   - Vencidas      = subset de Por cobrar con vencida=true.
+const esPorCobrar    = (i: Invoice) => i.estadoBruto === 'emitida' || i.estadoBruto === 'cobrado_parcial';
+const esCarteraTotal = (i: Invoice) => esPorCobrar(i) || i.estadoBruto === 'pendiente';
 
 export interface DashboardKPIs {
   porCobrarTotal: number;

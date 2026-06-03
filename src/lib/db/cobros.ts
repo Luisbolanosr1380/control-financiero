@@ -196,15 +196,28 @@ export async function getCobrosCountTotal(): Promise<number> {
 }
 
 /* ============================================================
- * Registrar cobro contra una factura (F-007)
- * - TODO O NADA: el monto = TOTAL de la factura, sin parciales.
- * - Multi-línea: crea 1 record por línea (Monto_Cobrado = TOTAL de la línea).
- *   La última línea absorbe el residuo de redondeo para que la suma cuadre.
- * - Actualiza ESTADO de TODAS las filas a 'COBRADO ' (con espacio final).
+ * Registrar cobro contra una factura (F-007 + F-035 multi-componente)
+ *
+ * F-035: el cobro acepta N componentes (transferencia + retención IVA +
+ * retención ISR, etc.). La suma de componentes puede ser MENOR al saldo
+ * pendiente (cobro parcial) → ESTADO de la factura pasa a 'COBRADO PARCIAL '
+ * en vez de 'COBRADO '. Cada componente genera 1 record por línea con
+ * Cobro_Grupo_ID común para reagrupar visualmente.
+ *
+ * Retenciones (Monto_Retencion_IVA / Monto_Retencion_ISR) son crédito
+ * fiscal — su Monto_Cobrado cuenta hacia el saldo (el cliente la enteró
+ * a SAT por nosotros) y el campo Monto_Retencion_* se llena con el mismo
+ * monto para que el reporte de /retenciones lo sume aparte.
  * ============================================================ */
 
-export type MetodoCobro = 'Transferencia' | 'Cheque' | 'Efectivo' | 'Tarjeta';
-export type MonedaCobro = 'GTQ' | 'USD';
+export type MetodoBanco     = 'Transferencia' | 'Cheque' | 'Efectivo' | 'Tarjeta';
+export type MetodoRetencion = 'Retención IVA' | 'Retención ISR';
+export type MetodoCobro     = MetodoBanco | MetodoRetencion;
+export type MonedaCobro     = 'GTQ' | 'USD';
+
+const METODOS_BANCO: readonly MetodoCobro[] = ['Transferencia', 'Cheque', 'Efectivo', 'Tarjeta'];
+const esMetodoRetencion = (m: MetodoCobro): m is MetodoRetencion =>
+  m === 'Retención IVA' || m === 'Retención ISR';
 
 // Campos editables de COBROS_CLIENTES
 const FC = {
@@ -217,53 +230,104 @@ const FC = {
   TIPO_CAMBIO:  'Tipo_Cambio',
   ESTADO:       'Estado',
   REFERENCIA:   'Referencia',
+  RET_IVA:      'Monto_Retencion_IVA',
+  RET_ISR:      'Monto_Retencion_ISR',
+  GRUPO_ID:     'Cobro_Grupo_ID',
 } as const;
+
+export interface ComponenteCobro {
+  monto: number;
+  metodo: MetodoCobro;
+  bancoId?: string;     // requerido SI metodo NO es retención
+  referencia?: string;  // ref bancaria o número de constancia de retención
+  notas?: string;
+}
 
 export interface RegistrarCobroInput {
   noFactura: string;
-  fecha: string;            // 'YYYY-MM-DD'
-  bancoId: string;          // record id BANCOS
-  metodo: MetodoCobro;
-  moneda?: MonedaCobro;     // default 'GTQ'
-  tipoCambio?: number;      // default 1
-  referencia?: string;
+  fecha: string;                  // 'YYYY-MM-DD'
+  componentes: ComponenteCobro[]; // 1..N
+  moneda?: MonedaCobro;
+  tipoCambio?: number;
+}
+
+export interface DesgloseComponentes {
+  transferencia: number;
+  cheque: number;
+  efectivo: number;
+  tarjeta: number;
+  retencionIVA: number;
+  retencionISR: number;
 }
 
 export interface RegistrarCobroResult {
   ok: boolean;
   noFactura: string;
+  grupoId: string;
   totalCobrado: number;
+  saldoAnterior: number;
+  saldoNuevo: number;
+  estadoNuevo: 'COBRADO' | 'COBRADO PARCIAL' | '';
   cobrosCreados: number;
   recordsActualizados: number;
+  desglose: DesgloseComponentes;
   fallidos?: { cobrosLote?: number[]; estadoIds?: string[] };
   error?: string;
 }
 
 const estadoCanon = (e: unknown) => String(e ?? '').toUpperCase().trim();
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const SALDO_TOLERANCIA = 0.01;   // tolerancia de redondeo para considerar saldo=0
+
+function nuevoGrupoId(noFactura: string): string {
+  // Único por evento: timestamp YYYYMMDDhhmmss + slug de factura + 4 random hex
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const ts = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  const slug = noFactura.replace(/[^A-Za-z0-9]/g, '').slice(-12) || 'FACT';
+  const rnd = Math.floor(Math.random() * 0xffff).toString(16).padStart(4, '0');
+  return `G-${ts}-${slug}-${rnd}`;
+}
+
+function desgloseVacio(): DesgloseComponentes {
+  return { transferencia: 0, cheque: 0, efectivo: 0, tarjeta: 0, retencionIVA: 0, retencionISR: 0 };
+}
 
 export async function registrarCobro(input: RegistrarCobroInput): Promise<RegistrarCobroResult> {
   if (!airtable) throw new Error('Airtable no está configurado.');
 
   const nf = (input.noFactura ?? '').trim();
-  if (!nf)               return fail(nf, 'NO.FACTURA es requerido.');
-  if (!input.bancoId)    return fail(nf, 'Cuenta de banco es requerida.');
-  if (!input.metodo)     return fail(nf, 'Método de cobro es requerido.');
-  if (!input.fecha)      return fail(nf, 'Fecha del cobro es requerida.');
+  if (!nf)                                    return fail(nf, 'NO.FACTURA es requerido.');
+  if (!input.fecha)                           return fail(nf, 'Fecha del cobro es requerida.');
+  if (!input.componentes || input.componentes.length === 0) {
+    return fail(nf, 'Al menos un componente de cobro es requerido.');
+  }
+
+  // Validación por componente
+  for (let i = 0; i < input.componentes.length; i++) {
+    const c = input.componentes[i];
+    if (!(c.monto > 0))         return fail(nf, `Componente #${i + 1}: monto debe ser mayor a 0.`);
+    if (!c.metodo)              return fail(nf, `Componente #${i + 1}: método es requerido.`);
+    if (!esMetodoRetencion(c.metodo) && !c.bancoId) {
+      return fail(nf, `Componente #${i + 1} (${c.metodo}): cuenta de banco es requerida.`);
+    }
+    if (esMetodoRetencion(c.metodo) && c.bancoId) {
+      return fail(nf, `Componente #${i + 1} (${c.metodo}): las retenciones no llevan banco — quitalo.`);
+    }
+  }
 
   const moneda     = input.moneda     ?? 'GTQ';
   const tipoCambio = input.tipoCambio ?? 1;
 
   try {
-    // 1) Filas de la factura (excluye ANULADAS/REFACTURADAS — esas no se cobran)
+    // 1) Filas de la factura
     const esc = nf.replace(/"/g, '\\"');
     const records = await airtable(TABLES.FACTURAS)
       .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
       .all();
-    if (records.length === 0) {
-      return fail(nf, `No se encontró la factura ${nf}.`);
-    }
+    if (records.length === 0) return fail(nf, `No se encontró la factura ${nf}.`);
 
+    // Activas = no anuladas/refacturadas
     const activas = records.filter(r => {
       const e = estadoCanon(r.fields[F.ESTADO]);
       return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
@@ -272,56 +336,97 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
       return fail(nf, `La factura ${nf} está completamente anulada o refacturada. No se puede cobrar.`);
     }
 
-    // 2) Validar ESTADO: solo EMITIDA o PENDIENTE pueden cobrarse
+    // F-035: ESTADO permitido para cobrar = EMITIDA, PENDIENTE, COBRADO PARCIAL.
+    // Si ya está COBRADO al 100%, no se puede.
     const noCobrables: string[] = [];
     for (const r of activas) {
       const e = estadoCanon(r.fields[F.ESTADO]);
-      if (e !== 'EMITIDA' && e !== 'PENDIENTE') noCobrables.push(e || '(vacío)');
+      if (e !== 'EMITIDA' && e !== 'PENDIENTE' && e !== 'COBRADO PARCIAL') {
+        noCobrables.push(e || '(vacío)');
+      }
     }
     if (noCobrables.length > 0) {
       const u = [...new Set(noCobrables)].join(', ');
-      return fail(nf, `La factura no se puede cobrar — alguna línea está en estado "${u}". Solo EMITIDA o PENDIENTE son cobrables.`);
+      return fail(nf, `La factura no se puede cobrar — alguna línea está en estado "${u}". Solo EMITIDA, PENDIENTE o COBRADO PARCIAL son cobrables.`);
     }
 
-    // 3) TOTAL de la factura y 4) distribución proporcional con residuo en la última
-    const lineas = activas.map(r => ({
-      id:    r.id,
-      total: Number(r.fields[F.TOTAL] ?? 0),
-    }));
+    // 2) Total de la factura
+    const lineas = activas.map(r => ({ id: r.id, total: Number(r.fields[F.TOTAL] ?? 0) }));
     const totalFactura = round2(lineas.reduce((s, l) => s + l.total, 0));
-    if (totalFactura <= 0) {
-      return fail(nf, `La factura tiene TOTAL cero — no hay nada que cobrar.`);
+    if (totalFactura <= 0) return fail(nf, `La factura tiene TOTAL cero — no hay nada que cobrar.`);
+
+    // 3) Saldo pendiente actual = totalFactura - suma de Monto_Cobrado de cobros previos
+    //    (no confiamos en Saldo_Por_Cobrar de Airtable: era buggy en su fórmula).
+    const cobrosPreviosRecords = await airtable(TABLES.COBROS)
+      .select({
+        filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`,
+        fields: [FC_READ.MONTO],
+      })
+      .all();
+    const cobradoPrevio = round2(
+      cobrosPreviosRecords.reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
+    );
+    const saldoAnterior = round2(totalFactura - cobradoPrevio);
+    if (saldoAnterior <= SALDO_TOLERANCIA) {
+      return fail(nf, `La factura ${nf} ya está cobrada por completo (saldo Q${saldoAnterior.toFixed(2)}).`);
     }
 
-    let asignado = 0;
-    const cobrosPlan = lineas.map((l, i) => {
-      let monto: number;
-      if (i === lineas.length - 1) {
-        // Última: residuo exacto para que la suma sea = totalFactura
-        monto = round2(totalFactura - asignado);
-      } else {
-        monto = round2(l.total);
-        asignado += monto;
-      }
-      return { facturaId: l.id, monto };
-    });
+    // 4) Validar suma componentes <= saldo
+    const sumaComponentes = round2(input.componentes.reduce((s, c) => s + c.monto, 0));
+    if (sumaComponentes - saldoAnterior > SALDO_TOLERANCIA) {
+      return fail(nf, `Excede el saldo pendiente: cobro Q${sumaComponentes.toFixed(2)} > saldo Q${saldoAnterior.toFixed(2)}.`);
+    }
 
-    // 5) Crear N records en COBROS_CLIENTES (batch 10)
-    const cobroFields = (facturaId: string, monto: number) => ({
-      fields: {
-        [FC.FECHA]:        input.fecha,
-        [FC.FACTURA]:      [facturaId],
-        [FC.MONTO]:        monto,
-        [FC.CUENTA_BANCO]: [input.bancoId],
-        [FC.METODO]:       input.metodo,
-        [FC.MONEDA]:       moneda,
-        [FC.TIPO_CAMBIO]:  tipoCambio,
-        [FC.ESTADO]:       'Pendiente',
-        ...(input.referencia ? { [FC.REFERENCIA]: input.referencia.trim() } : {}),
-      },
-    });
+    // 5) Grupo id único para correlacionar todos los records de este evento
+    const grupoId = nuevoGrupoId(nf);
 
-    const payloadCobros = cobrosPlan.map(p => cobroFields(p.facturaId, p.monto));
+    // 6) Para CADA componente, distribuir su monto entre las N líneas activas.
+    //    Distribución proporcional al total de la línea sobre el total de factura,
+    //    residuo en la última línea para que la suma sea exacta.
+    type CobroPlan = {
+      facturaLineId: string;
+      monto: number;
+      componente: ComponenteCobro;
+    };
+    const cobrosPlan: CobroPlan[] = [];
+    for (const c of input.componentes) {
+      let asignado = 0;
+      lineas.forEach((l, i) => {
+        let monto: number;
+        if (i === lineas.length - 1) {
+          monto = round2(c.monto - asignado);
+        } else {
+          // Proporción = totalLinea / totalFactura
+          monto = round2((c.monto * l.total) / totalFactura);
+          asignado += monto;
+        }
+        if (monto > 0) cobrosPlan.push({ facturaLineId: l.id, monto, componente: c });
+      });
+    }
+
+    // 7) Crear records (batch 10)
+    const cobroFields = (p: CobroPlan) => {
+      const c = p.componente;
+      const isRet = esMetodoRetencion(c.metodo);
+      return {
+        fields: {
+          [FC.FECHA]:        input.fecha,
+          [FC.FACTURA]:      [p.facturaLineId],
+          [FC.MONTO]:        p.monto,
+          [FC.METODO]:       c.metodo,
+          [FC.MONEDA]:       moneda,
+          [FC.TIPO_CAMBIO]:  tipoCambio,
+          [FC.ESTADO]:       'Pendiente',
+          [FC.GRUPO_ID]:     grupoId,
+          ...(isRet ? {} : { [FC.CUENTA_BANCO]: [c.bancoId!] }),
+          ...(c.referencia ? { [FC.REFERENCIA]: c.referencia.trim() } : {}),
+          ...(c.metodo === 'Retención IVA' ? { [FC.RET_IVA]: p.monto } : {}),
+          ...(c.metodo === 'Retención ISR' ? { [FC.RET_ISR]: p.monto } : {}),
+        },
+      };
+    };
+
+    const payloadCobros = cobrosPlan.map(cobroFields);
     const cobrosCreados: string[] = [];
     const lotesFallidos: number[] = [];
     for (let i = 0; i < payloadCobros.length; i += 10) {
@@ -336,14 +441,18 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
     }
 
     if (cobrosCreados.length === 0) {
-      return fail(nf, 'No se pudo crear ningún record de cobro en COBROS_CLIENTES. La factura NO se marcó como cobrada.');
+      return fail(nf, 'No se pudo crear ningún record de cobro en COBROS_CLIENTES. La factura NO se actualizó.');
     }
 
-    // 6) Actualizar ESTADO de las filas activas a 'COBRADO ' (CON ESPACIO FINAL)
-    const updates = activas.map(r => ({
-      id: r.id,
-      fields: { [F.ESTADO]: 'COBRADO ' },   // exacto del singleSelect
-    }));
+    // 8) Saldo nuevo + estado destino
+    const saldoNuevo  = round2(saldoAnterior - sumaComponentes);
+    const liquidaTodo = saldoNuevo <= SALDO_TOLERANCIA;
+    const estadoNuevo: 'COBRADO' | 'COBRADO PARCIAL' = liquidaTodo ? 'COBRADO' : 'COBRADO PARCIAL';
+    // Valores EXACTOS del singleSelect (con espacio final)
+    const estadoAirtable = liquidaTodo ? 'COBRADO ' : 'COBRADO PARCIAL ';
+
+    // 9) Update ESTADO de todas las líneas activas
+    const updates = activas.map(r => ({ id: r.id, fields: { [F.ESTADO]: estadoAirtable } }));
     const estadoActualizados: string[] = [];
     const estadoFallidos: string[] = [];
     for (let i = 0; i < updates.length; i += 10) {
@@ -352,23 +461,39 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
         const res = await airtable(TABLES.FACTURAS).update(lote);
         estadoActualizados.push(...res.map(r => r.id));
       } catch (err) {
-        console.error('Error actualizando ESTADO a COBRADO:', err);
+        console.error('Error actualizando ESTADO:', err);
         estadoFallidos.push(...lote.map(p => p.id));
       }
+    }
+
+    // 10) Desglose
+    const desglose = desgloseVacio();
+    for (const c of input.componentes) {
+      if (c.metodo === 'Transferencia') desglose.transferencia += c.monto;
+      else if (c.metodo === 'Cheque')   desglose.cheque         += c.monto;
+      else if (c.metodo === 'Efectivo') desglose.efectivo       += c.monto;
+      else if (c.metodo === 'Tarjeta')  desglose.tarjeta        += c.monto;
+      else if (c.metodo === 'Retención IVA') desglose.retencionIVA += c.monto;
+      else if (c.metodo === 'Retención ISR') desglose.retencionISR += c.monto;
     }
 
     const ok = lotesFallidos.length === 0 && estadoFallidos.length === 0;
     return {
       ok,
       noFactura: nf,
-      totalCobrado: totalFactura,
+      grupoId,
+      totalCobrado: sumaComponentes,
+      saldoAnterior,
+      saldoNuevo,
+      estadoNuevo,
       cobrosCreados: cobrosCreados.length,
       recordsActualizados: estadoActualizados.length,
+      desglose,
       fallidos: ok ? undefined : {
         cobrosLote: lotesFallidos.length > 0 ? lotesFallidos : undefined,
         estadoIds:  estadoFallidos.length > 0 ? estadoFallidos : undefined,
       },
-      error: ok ? undefined : `Cobro parcial: ${cobrosCreados.length} cobro(s) creado(s), ${estadoActualizados.length}/${activas.length} líneas en COBRADO. Revisá Airtable.`,
+      error: ok ? undefined : `Cobro parcial: ${cobrosCreados.length} cobro(s) creado(s), ${estadoActualizados.length}/${activas.length} líneas actualizadas. Revisá Airtable.`,
     };
   } catch (err) {
     return fail(nf, err instanceof Error ? err.message : String(err));
@@ -376,5 +501,180 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
 }
 
 function fail(noFactura: string, error: string): RegistrarCobroResult {
-  return { ok: false, noFactura, totalCobrado: 0, cobrosCreados: 0, recordsActualizados: 0, error };
+  return {
+    ok: false,
+    noFactura,
+    grupoId: '',
+    totalCobrado: 0,
+    saldoAnterior: 0,
+    saldoNuevo: 0,
+    estadoNuevo: '',
+    cobrosCreados: 0,
+    recordsActualizados: 0,
+    desglose: desgloseVacio(),
+    error,
+  };
+}
+
+/* ============================================================
+ * F-035: cobros agrupados por Cobro_Grupo_ID (un evento de cobro)
+ * ============================================================ */
+
+export interface ComponenteCobroLeido {
+  recordId: string;
+  metodo: string;
+  monto: number;
+  bancoNombre: string | null;
+  bancoId: string | null;
+  referencia: string;
+  retencionIVA: number;
+  retencionISR: number;
+  constanciaUrl?: string;
+  constanciaNombre?: string;
+}
+
+export interface GrupoCobro {
+  grupoId: string;           // 'G-...' o '__legacy__<recordId>' para cobros viejos sin grupo
+  fecha: string;
+  noFactura: string;
+  totalCobrado: number;      // suma Monto_Cobrado de los componentes
+  totalRetencionIVA: number;
+  totalRetencionISR: number;
+  componentes: ComponenteCobroLeido[];
+  tieneRetencion: boolean;
+}
+
+const FC_FULL = {
+  ...FC_READ,
+  RET_IVA:   'Monto_Retencion_IVA',
+  RET_ISR:   'Monto_Retencion_ISR',
+  CONST:     'Constancia_Retencion',
+  GRUPO_ID:  'Cobro_Grupo_ID',
+} as const;
+
+export async function getCobrosDeFactura(noFactura: string): Promise<GrupoCobro[]> {
+  if (!airtable) return [];
+  const nf = (noFactura ?? '').trim();
+  if (!nf) return [];
+  const esc = nf.replace(/"/g, '\\"');
+  try {
+    const [records, bancos] = await Promise.all([
+      airtable(TABLES.COBROS)
+        .select({
+          filterByFormula: `{${FC_FULL.NO_FACTURA}} = "${esc}"`,
+          sort: [{ field: FC_FULL.FECHA, direction: 'desc' }],
+        })
+        .all(),
+      getBancos(),
+    ]);
+    const bancoNombreById = new Map(bancos.map(b => [b.id, b.nombreCuenta || b.banco || b.id]));
+
+    // Agrupar por Cobro_Grupo_ID; cobros viejos sin grupo se tratan como singleton.
+    type Row = { id: string; fields: Record<string, unknown> };
+    const grupos = new Map<string, { fecha: string; nf: string; rows: Row[] }>();
+    for (const r of records) {
+      const row: Row = { id: r.id, fields: r.fields as Record<string, unknown> };
+      const gid = String(row.fields[FC_FULL.GRUPO_ID] ?? '').trim();
+      const fecha = String(row.fields[FC_FULL.FECHA] ?? '');
+      const key = gid || `__legacy__${row.id}`;
+      const bucket = grupos.get(key) ?? { fecha, nf, rows: [] as Row[] };
+      bucket.rows.push(row);
+      // mantener la fecha más temprana del grupo (más confiable que la primera)
+      if (!bucket.fecha || (fecha && fecha < bucket.fecha)) bucket.fecha = fecha;
+      grupos.set(key, bucket);
+    }
+
+    const out: GrupoCobro[] = [];
+    for (const [grupoId, bucket] of grupos) {
+      const componentes: ComponenteCobroLeido[] = bucket.rows.map(r => {
+        const f = r.fields as Record<string, unknown>;
+        const bancoId = Array.isArray(f[FC_FULL.CUENTA_BANCO])
+          ? String((f[FC_FULL.CUENTA_BANCO] as unknown[])[0] ?? '')
+          : '';
+        const attach = Array.isArray(f[FC_FULL.CONST])
+          ? (f[FC_FULL.CONST] as Array<{ url?: string; filename?: string }>)[0]
+          : undefined;
+        return {
+          recordId:    r.id,
+          metodo:      String(f[FC_FULL.METODO] ?? ''),
+          monto:       Number(f[FC_FULL.MONTO] ?? 0),
+          bancoId:     bancoId || null,
+          bancoNombre: bancoId ? (bancoNombreById.get(bancoId) ?? bancoId) : null,
+          referencia:  String(f[FC_FULL.REFERENCIA] ?? ''),
+          retencionIVA: Number(f[FC_FULL.RET_IVA] ?? 0),
+          retencionISR: Number(f[FC_FULL.RET_ISR] ?? 0),
+          constanciaUrl:    attach?.url,
+          constanciaNombre: attach?.filename,
+        };
+      });
+      const totalCobrado    = componentes.reduce((s, c) => s + c.monto, 0);
+      const totalRetIVA     = componentes.reduce((s, c) => s + c.retencionIVA, 0);
+      const totalRetISR     = componentes.reduce((s, c) => s + c.retencionISR, 0);
+      out.push({
+        grupoId,
+        fecha: bucket.fecha,
+        noFactura: nf,
+        totalCobrado,
+        totalRetencionIVA: totalRetIVA,
+        totalRetencionISR: totalRetISR,
+        componentes,
+        tieneRetencion: totalRetIVA > 0 || totalRetISR > 0,
+      });
+    }
+    out.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+    return out;
+  } catch (err) {
+    console.error('Error leyendo cobros de factura:', err);
+    return [];
+  }
+}
+
+/* ============================================================
+ * F-035: lectura del saldo pendiente para mostrar en el modal
+ * ============================================================ */
+
+export interface SaldoFactura {
+  noFactura: string;
+  totalFactura: number;
+  cobradoPrevio: number;
+  saldoPendiente: number;
+  estado: string;
+}
+
+export async function getSaldoPendiente(noFactura: string): Promise<SaldoFactura | null> {
+  if (!airtable) return null;
+  const nf = (noFactura ?? '').trim();
+  if (!nf) return null;
+  const esc = nf.replace(/"/g, '\\"');
+  try {
+    const [facturaRecords, cobrosRecords] = await Promise.all([
+      airtable(TABLES.FACTURAS)
+        .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
+        .all(),
+      airtable(TABLES.COBROS)
+        .select({ filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`, fields: [FC_READ.MONTO] })
+        .all(),
+    ]);
+    if (facturaRecords.length === 0) return null;
+    const activas = facturaRecords.filter(r => {
+      const e = estadoCanon(r.fields[F.ESTADO]);
+      return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
+    });
+    if (activas.length === 0) return null;
+    const totalFactura = round2(activas.reduce((s, r) => s + Number(r.fields[F.TOTAL] ?? 0), 0));
+    const cobradoPrevio = round2(
+      cobrosRecords.reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
+    );
+    const saldoPendiente = round2(Math.max(0, totalFactura - cobradoPrevio));
+    // Estado consolidado: si alguna línea está COBRADO PARCIAL gana sobre EMITIDA/PENDIENTE
+    const estados = activas.map(r => estadoCanon(r.fields[F.ESTADO]));
+    const estado = estados.includes('COBRADO PARCIAL') ? 'COBRADO PARCIAL'
+                 : estados.includes('PENDIENTE')       ? 'PENDIENTE'
+                 : estados.includes('EMITIDA')         ? 'EMITIDA'
+                 : estados[0] ?? '';
+    return { noFactura: nf, totalFactura, cobradoPrevio, saldoPendiente, estado };
+  } catch (err) {
+    console.error('Error leyendo saldo pendiente:', err);
+    return null;
+  }
 }

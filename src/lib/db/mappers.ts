@@ -61,6 +61,7 @@ function ccToLineKey(cc: unknown): LineKey {
  */
 function estadoToBruto(estado: unknown): InvoiceEstadoBruto {
   const s = String(estado ?? '').toUpperCase().trim();
+  if (s === 'COBRADO PARCIAL')                    return 'cobrado_parcial';
   if (s === 'COBRADO' || s === 'COBRADA')         return 'cobrado';
   if (s === 'ANULADO' || s === 'ANULADA')         return 'anulado';
   if (s === 'REFACTURADO' || s === 'REFACTURADA') return 'refacturado';
@@ -131,10 +132,19 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
   const estatusCobranza = String(f[F.ESTATUS_COBRANZA] ?? '').toUpperCase().trim();
   const vencida = (estadoBruto === 'emitida' || estadoBruto === 'pendiente') && estatusCobranza === 'VENCIDA';
 
-  // Saldo_Por_Cobrar está roto: el balance se deriva del estado y el TOTAL.
-  // F-032: PENDIENTE también es "por cobrar" → balance = TOTAL completo. Antes
-  // las pendientes quedaban en 0 (bug: subreportaban el saldo de cartera).
-  const balance = (estadoBruto === 'emitida' || estadoBruto === 'pendiente') ? totalRaw : 0;
+  // F-035: balance derivado del estado.
+  // - EMITIDA/PENDIENTE: sin cobros → balance = TOTAL.
+  // - COBRADO PARCIAL: hubo cobros previos → balance = Saldo_Por_Cobrar de Airtable
+  //   (fórmula = TOTAL - sum(Monto_Cobro_GTQ from COBROS_CLIENTES)).
+  // - COBRADO/ANULADO/REFACTURADO: 0.
+  // El campo Saldo_Por_Cobrar antes era buggy para emitidas/pendientes, por eso
+  // se ignoraba globalmente. Para COBRADO PARCIAL la fórmula es la única fuente
+  // de verdad disponible al mapear; el detalle puede confirmar con getSaldoPendiente.
+  const saldoLookup = Number(f[F.SALDO] ?? 0);
+  const balance =
+    estadoBruto === 'emitida' || estadoBruto === 'pendiente'  ? totalRaw
+  : estadoBruto === 'cobrado_parcial'                         ? (saldoLookup > 0 ? saldoLookup : totalRaw)
+  : 0;
 
   const adjunto = (f[F.ADJUNTO] as Array<{ url?: string; filename?: string }> | undefined)?.[0];
   const ccId = String((f[F.CENTRO_COSTO] as string[] | undefined)?.[0] ?? '');
@@ -181,7 +191,10 @@ function worstStatus(statuses: InvoiceStatus[]): InvoiceStatus {
  * tab "Pendientes" capture TODA factura con alguna línea PENDIENTE.)
  */
 function dominanteBruto(brutos: InvoiceEstadoBruto[]): InvoiceEstadoBruto {
+  // F-035: COBRADO PARCIAL gana sobre cobrado completo (es el subset activo) y
+  // sobre emitida/pendiente cuando ya hubo movimiento parcial en alguna línea.
   const prio: Record<InvoiceEstadoBruto, number> = {
+    cobrado_parcial: 6,
     pendiente: 5,
     emitida: 4,
     cobrado: 3,

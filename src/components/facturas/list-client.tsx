@@ -14,14 +14,16 @@ import { predicadoFiltro, type InvoiceLiviano, type FiltroTabFactura } from '@/l
 // distinguir cartera activa de cobranza normal (Por cobrar) vs proceso interno
 // retenido (Pendientes). El tab type coincide con FiltroTabFactura por diseño:
 // el server filtra por el mismo identificador.
-export const FACTURAS_TABS = ['todas', 'cartera_total', 'por_cobrar', 'vencidas', 'pendientes', 'cobradas', 'anuladas', 'refacturadas'] as const;
+export const FACTURAS_TABS = ['todas', 'cartera_total', 'por_cobrar', 'vencidas', 'pendientes', 'parciales', 'cobradas', 'anuladas', 'refacturadas'] as const;
 export type FacturasTab = FiltroTabFactura;
 
 type Filtrable = { estadoBruto: string; vencida: boolean };
 
 // Predicados de negocio para sub-totales (los tabs en sí pasan por predicadoFiltro).
-const esEmitida    = (i: Filtrable) => i.estadoBruto === 'emitida';
-const esPendiente  = (i: Filtrable) => i.estadoBruto === 'pendiente';
+const esEmitida          = (i: Filtrable) => i.estadoBruto === 'emitida';
+const esPendiente        = (i: Filtrable) => i.estadoBruto === 'pendiente';
+const esCobradoParcial   = (i: Filtrable) => i.estadoBruto === 'cobrado_parcial';
+const esCobranzaActiva   = (i: Filtrable) => esEmitida(i) || esCobradoParcial(i);
 
 const TAB_LABELS: Record<FacturasTab, string> = {
   todas: 'Todas',
@@ -29,14 +31,15 @@ const TAB_LABELS: Record<FacturasTab, string> = {
   por_cobrar: 'Por cobrar',
   vencidas: 'Vencidas',
   pendientes: 'Pendientes',
+  parciales: 'Parciales',
   cobradas: 'Cobradas',
   anuladas: 'Anuladas',
   refacturadas: 'Refacturadas',
 };
 
-/** Sub-totales del tab Por cobrar: por vencer vs vencidas (solo EMITIDA, sin PENDIENTE). */
+/** Sub-totales del tab Por cobrar: por vencer vs vencidas (EMITIDA + COBRADO PARCIAL). */
 function PorCobrarSummary({ facturas }: { facturas: { total: number; estadoBruto: string; vencida: boolean }[] }) {
-  const porCobrar  = facturas.filter(esEmitida);
+  const porCobrar  = facturas.filter(esCobranzaActiva);
   const vencidas   = porCobrar.filter(i => i.vencida);
   const porVencer  = porCobrar.filter(i => !i.vencida);
   const sumar = (arr: { total: number }[]) => arr.reduce((s, i) => s + i.total, 0);
@@ -70,11 +73,13 @@ function PorCobrarSummary({ facturas }: { facturas: { total: number; estadoBruto
   );
 }
 
-/** Sub-totales del tab Cartera total: descompone en EMITIDA (Por cobrar) + PENDIENTE. */
+/** Sub-totales del tab Cartera total: EMITIDA + PENDIENTE + COBRADO PARCIAL. */
 function CarteraTotalSummary({ facturas }: { facturas: { total: number; estadoBruto: string; vencida: boolean }[] }) {
   const emitidas   = facturas.filter(esEmitida);
   const pendientes = facturas.filter(esPendiente);
+  const parciales  = facturas.filter(esCobradoParcial);
   const sumar = (arr: { total: number }[]) => arr.reduce((s, i) => s + i.total, 0);
+  const tot = emitidas.length + pendientes.length + parciales.length;
   return (
     <div className="card" style={{
       margin: '10px 0 14px', padding: '12px 16px',
@@ -82,22 +87,29 @@ function CarteraTotalSummary({ facturas }: { facturas: { total: number; estadoBr
     }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 8 }}>
         <span style={{ fontSize: 12.5, fontWeight: 500, color: 'var(--ink-2)' }}>
-          Cartera total · <span className="num">{emitidas.length + pendientes.length}</span> facturas · <span className="num">{Q(sumar(emitidas) + sumar(pendientes))}</span>
+          Cartera total · <span className="num">{tot}</span> facturas · <span className="num">{Q(sumar(emitidas) + sumar(pendientes) + sumar(parciales))}</span>
         </span>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-3)' }}>
           <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--olive)' }} />
           <span>Por cobrar (emitidas):</span>
           <span className="num" style={{ marginLeft: 'auto', color: 'var(--ink-2)' }}>
-            {emitidas.length} facturas · {Q(sumar(emitidas))}
+            {emitidas.length} · {Q(sumar(emitidas))}
           </span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-3)' }}>
           <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: 'var(--warn)' }} />
           <span>Pendientes:</span>
           <span className="num" style={{ marginLeft: 'auto', color: 'var(--ink-2)' }}>
-            {pendientes.length} facturas · {Q(sumar(pendientes))}
+            {pendientes.length} · {Q(sumar(pendientes))}
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink-3)' }}>
+          <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: '#A85C32' }} />
+          <span>Parciales:</span>
+          <span className="num" style={{ marginLeft: 'auto', color: 'var(--ink-2)' }}>
+            {parciales.length} · {Q(sumar(parciales))}
           </span>
         </div>
       </div>
@@ -139,10 +151,11 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
   // bajo el tab actual, no "lo cargado en pantalla".
   const counts = {
     todas:         facturasLivianas.length,
-    cartera_total: facturasLivianas.filter(i => i.estadoBruto === 'emitida' || i.estadoBruto === 'pendiente').length,
-    por_cobrar:    facturasLivianas.filter(esEmitida).length,
-    vencidas:      facturasLivianas.filter(i => esEmitida(i) && i.vencida).length,
-    pendientes:    facturasLivianas.filter(i => i.estadoBruto === 'pendiente').length,
+    cartera_total: facturasLivianas.filter(i => esCobranzaActiva(i) || esPendiente(i)).length,
+    por_cobrar:    facturasLivianas.filter(esCobranzaActiva).length,
+    vencidas:      facturasLivianas.filter(i => esCobranzaActiva(i) && i.vencida).length,
+    pendientes:    facturasLivianas.filter(esPendiente).length,
+    parciales:     facturasLivianas.filter(esCobradoParcial).length,
     cobradas:      facturasLivianas.filter(i => i.estadoBruto === 'cobrado').length,
     anuladas:      facturasLivianas.filter(i => i.estadoBruto === 'anulado').length,
     refacturadas:  facturasLivianas.filter(i => i.estadoBruto === 'refacturado').length,
@@ -297,12 +310,13 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
 
               // F-032: badge derivado de estadoBruto + vencida (no del legacy `status`)
               const brutoBadgeMap: Record<string, { cls: string; text: string }> = {
-                cobrado:     { cls: 'badge-olive',   text: 'Cobrada' },
-                emitida:     { cls: 'badge-outline', text: 'Emitida' },
-                pendiente:   { cls: 'badge-warn',    text: 'Pendiente' },
-                anulado:     { cls: 'badge-mute',    text: 'Anulada' },
-                refacturado: { cls: 'badge-mute',    text: 'Refacturada' },
-                otro:        { cls: 'badge-mute',    text: '—' },
+                cobrado:         { cls: 'badge-olive',   text: 'Cobrada' },
+                cobrado_parcial: { cls: 'badge-warn',    text: 'Parcial' },
+                emitida:         { cls: 'badge-outline', text: 'Emitida' },
+                pendiente:       { cls: 'badge-warn',    text: 'Pendiente' },
+                anulado:         { cls: 'badge-mute',    text: 'Anulada' },
+                refacturado:     { cls: 'badge-mute',    text: 'Refacturada' },
+                otro:            { cls: 'badge-mute',    text: '—' },
               };
               const statusBadge = inv.vencida
                 ? { cls: 'badge-wine', text: 'Vencida' }
