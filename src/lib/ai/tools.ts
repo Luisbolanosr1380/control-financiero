@@ -21,6 +21,7 @@ import { getAnaliticaIngresos, getFacturadoPorRango, type FiltroNaturaleza } fro
 import { getProyeccionMesActual } from '@/lib/db/proyecciones';
 import { getKPIsDeudas, getDeudas, getAcreedores, clasificarPasivo } from '@/lib/db/deudas';
 import { getPagosPorDeuda, getPagosPorAcreedor, getPagosRecientes } from '@/lib/db/pagos-deudas';
+import { getRetencionesAgregadas } from '@/lib/db/retenciones';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -640,6 +641,100 @@ export const aiTools = {
           metodo: p.metodo,
           referencia: p.referencia || null,
           banco: p.cuentaBancoName || null,
+        })),
+      };
+    },
+  }),
+
+  // ===========================================================================
+  // F-035: Retenciones (crédito fiscal IVA + ISR)
+  // ===========================================================================
+
+  getRetencionesAcumuladas: tool({
+    description:
+      'Retenciones IVA + ISR acumuladas en el año pedido (default: año actual). ' +
+      'Devuelve totales (Q por tipo + total), conteo de constancias, y breakdown mensual con 12 meses. ' +
+      'USAR cuando el usuario pregunte "cuánto llevo de retenciones este año / el año pasado", ' +
+      '"cuánto IVA / ISR me retuvieron", "cuánto crédito fiscal tengo".',
+    parameters: z.object({
+      anio: z.number().int().optional().describe('Año (4 dígitos). Si no se pasa, usa el año actual.'),
+    }),
+    execute: async (input) => {
+      const data = await getRetencionesAgregadas(input.anio);
+      return {
+        anio: data.anio,
+        totalQ: Math.round(data.totalGeneral),
+        totalIVAQ: Math.round(data.totalIVA),
+        totalISRQ: Math.round(data.totalISR),
+        numConstanciasIVA: data.numIVA,
+        numConstanciasISR: data.numISR,
+        porMes: data.porMes.map(m => ({
+          mes: m.nombre,
+          ivaQ: Math.round(m.iva),
+          isrQ: Math.round(m.isr),
+          totalQ: Math.round(m.iva + m.isr),
+        })),
+      };
+    },
+  }),
+
+  getRetencionesPorCliente: tool({
+    description:
+      'Retenciones por cliente en el año pedido (default: año actual). Devuelve top N clientes ' +
+      'ordenados por monto total retenido (IVA + ISR). ' +
+      'USAR cuando pregunten "qué clientes me retienen más", "lista de clientes con retenciones", ' +
+      '"cuánto me retuvo X cliente este año".',
+    parameters: z.object({
+      anio: z.number().int().optional().describe('Año (4 dígitos). Default: año actual.'),
+      limite: z.number().int().min(1).max(50).default(10).describe('Cuántos clientes top devolver.'),
+    }),
+    execute: async (input) => {
+      const data = await getRetencionesAgregadas(input.anio);
+      const top = data.porCliente.slice(0, input.limite);
+      return {
+        anio: data.anio,
+        numClientesConRetencion: data.porCliente.length,
+        totalGeneralQ: Math.round(data.totalGeneral),
+        clientes: top.map(c => ({
+          cliente: c.clienteNombre,
+          ivaQ: Math.round(c.iva),
+          isrQ: Math.round(c.isr),
+          totalQ: Math.round(c.total),
+          numRetenciones: c.numRetenciones,
+        })),
+      };
+    },
+  }),
+
+  getFacturasParciales: tool({
+    description:
+      'Facturas con ESTADO = "COBRADO PARCIAL" — facturas que tienen cobro registrado pero aún ' +
+      'tienen saldo pendiente. Cartera activa en curso. ' +
+      'USAR cuando el usuario pregunte "qué facturas están a medio cobrar", "facturas con saldo parcial", ' +
+      '"qué se cobró parcialmente".',
+    parameters: z.object({
+      limite: z.number().int().min(1).max(100).default(20).describe('Cuántas devolver, ordenadas por mayor saldo restante.'),
+    }),
+    execute: async (input) => {
+      const facturas = await getFacturas();
+      const clientes = await getClientes();
+      const nombrePorId = new Map(clientes.map(c => [c.id, c.name]));
+      const parciales = facturas
+        .filter(f => f.estadoBruto === 'cobrado_parcial')
+        .sort((a, b) => b.balance - a.balance)
+        .slice(0, input.limite);
+      return {
+        numFacturasParciales: facturas.filter(f => f.estadoBruto === 'cobrado_parcial').length,
+        totalSaldoPendienteQ: Math.round(parciales.reduce((s, f) => s + f.balance, 0)),
+        facturas: parciales.map(f => ({
+          noFactura: f.noFactura,
+          cliente: nombrePorId.get(f.custId) ?? f.custId,
+          totalQ: Math.round(f.total),
+          saldoPendienteQ: Math.round(f.balance),
+          pctCobrado: f.total > 0 ? Number(((1 - f.balance / f.total) * 100).toFixed(1)) : 0,
+          fechaEmision: f.fechaEmision,
+          vencida: f.vencida,
+          diasVencido: Math.max(0, f.dueAgo),
         })),
       };
     },

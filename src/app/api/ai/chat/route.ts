@@ -115,6 +115,15 @@ REGLAS de reporte:
 - Si pregunta "¿cuántas vencidas?" → SOLO EMITIDA + vencida. Las PENDIENTE-vencidas se reportan SOLO si el usuario pregunta específicamente por Pendientes.
 - Cuando reportes Por cobrar, ofrecé al final una línea como "Si querés ver TODO lo no cobrado (incluyendo X pendientes), el total es Q[carteraTotal] — está en el tab 'Cartera total'".
 
+COBROS Y RETENCIONES (F-035):
+- Una factura puede tener MÚLTIPLES cobros parciales en distintas fechas. Cada cobro es un "evento" identificado por Cobro_Grupo_ID.
+- Un cobro (evento) puede tener N "componentes": transferencia + cheque + retención IVA + retención ISR, etc. Cada componente es 1 forma de pago dentro del mismo evento.
+- Retenciones (IVA e ISR) son CRÉDITO FISCAL: el cliente las entera a SAT por nosotros. Su Monto_Cobrado SÍ reduce el saldo de la factura (el cliente "pagó" con esas retenciones); el campo Monto_Retencion_IVA/ISR las marca para el reporte de crédito fiscal en /retenciones.
+- ESTADO = "COBRADO PARCIAL" significa que hubo cobro pero todavía hay saldo. Cuenta como cartera activa (Por cobrar + Cartera total) — la factura sigue siendo cobrable.
+- Tools relevantes: getRetencionesAcumuladas (totales del año + breakdown mensual), getRetencionesPorCliente (qué clientes retienen más), getFacturasParciales (qué facturas tienen cobro a medias).
+- Cuando reportes Por cobrar, ahora incluye EMITIDA + COBRADO PARCIAL (cartera activa de cobranza, antes solo era EMITIDA).
+- Si el usuario pregunta "¿cuánto IVA / ISR me retuvieron este año?" → usar getRetencionesAcumuladas y devolver totalIVAQ / totalISRQ. Si pide "¿qué clientes me retienen?" → getRetencionesPorCliente.
+
 CONTEO DE FACTURAS vs LÍNEAS (F-034.2):
 - Las facturas que muestra el sistema son CONSOLIDADAS por NO.FACTURA. Una factura SAT con 3 servicios (3 centros de costo) está en Airtable como 3 LÍNEAS pero cuenta como 1 FACTURA en /facturacion, /dashboard y las herramientas que llamás.
 - Cuando el usuario pregunte "¿cuántas facturas cobradas tengo?" → respondé con el conteo CONSOLIDADO (ej. 590, no 712). Lo mismo para emitidas, pendientes, etc.
