@@ -42,8 +42,9 @@ function buildNav(opts: { deudasVencidasCount?: number; rol?: Role } = {}): NavG
       { href: '/pagos-deudas', label: 'Pagos a deudas', icon: 'Coins' },
     ]},
     { group: 'Contabilidad', items: [
-      { href: '/asientos', label: 'Asientos',            icon: 'Journal' },
-      { href: '/estados',  label: 'Estados Financieros', icon: 'Statement' },
+      { href: '/asientos',    label: 'Asientos',            icon: 'Journal' },
+      { href: '/estados',     label: 'Estados Financieros', icon: 'Statement' },
+      { href: '/retenciones', label: 'Retenciones',         icon: 'Statement' },
     ]},
   ];
 
