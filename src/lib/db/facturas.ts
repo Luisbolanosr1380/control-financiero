@@ -372,6 +372,8 @@ export interface AnularFacturaResult {
   recordsTotal: number;
   fallidos?: string[];   // record ids que no se pudieron actualizar (anulación parcial)
   error?: string;
+  // F-036: cuando se bloquea por cobros activos.
+  bloqueadoPorCobros?: { numCobrosActivos: number; numRecordsActivos: number; montoTotalActivo: number };
 }
 
 /**
@@ -405,7 +407,21 @@ export async function anularFactura(
       return { ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: 0, error: `No se encontró la factura ${nf}.` };
     }
 
+    // F-036: bloquear si hay cobros activos. Refacturación NO bloquea — el flujo
+    // de refacturar puede tener cobros que se transfieren a la factura nueva.
     const esRefacturacion = motivoTipo === 'Refacturación';
+    if (!esRefacturacion) {
+      const { contarCobrosActivosDeFactura } = await import('./cobros');
+      const check = await contarCobrosActivosDeFactura(nf);
+      if (check.numCobrosActivos > 0) {
+        return {
+          ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: records.length,
+          error: `La factura ${nf} tiene ${check.numCobrosActivos} cobro(s) activo(s) por Q${check.montoTotalActivo.toFixed(2)}. Anulá los cobros primero, después podrás anular la factura.`,
+          bloqueadoPorCobros: check,
+        };
+      }
+    }
+
     const estadoTarget = esRefacturacion ? 'REFACTURADO' : 'ANULADO';
     const verbo = esRefacturacion ? 'Refacturado' : 'Anulado';
 

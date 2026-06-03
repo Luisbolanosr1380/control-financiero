@@ -70,6 +70,10 @@ export function AnularFacturaButton({ noFactura, status }: Props) {
                 setMotivo('');
                 setMotivoTipo('');
                 router.refresh();
+              } else if (res.bloqueadoPorCobros) {
+                // F-036: bloqueo por cobros activos. Toast persistente con instrucción.
+                toast.error(res.error ?? 'No se puede anular: hay cobros activos.', { duration: 8000 });
+                setOpen(false);
               } else if (res.recordsActualizados > 0) {
                 toast.warning(res.error ?? `Anulación parcial: ${res.recordsActualizados}/${res.recordsTotal}. Revisá Airtable.`);
                 router.refresh();
