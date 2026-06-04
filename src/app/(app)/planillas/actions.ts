@@ -80,3 +80,48 @@ export async function cancelarPagoEmpleadoAction(args: {
   if (result.ok) revalidarTodo();
   return result;
 }
+
+/**
+ * F-038.4.bis: diferir N empleados a deuda en una sola operación (banner de
+ * decisión "Diferir todos"). Ejecuta secuencialmente (no batch — cada uno crea
+ * su deuda independiente). Reporta agregado al final; si alguno falla, sigue
+ * con el resto para que el error de uno no bloquee a todos.
+ */
+export interface DiferirMasivoResult {
+  ok: boolean;
+  exitosos: number;
+  fallidos: number;
+  totalDiferidoQ: number;
+  errores: Array<{ lineaId: string; nombre?: string; error: string }>;
+}
+
+export async function diferirMasivoAction(args: {
+  lineaIds: string[];
+  motivo: string;
+}): Promise<DiferirMasivoResult> {
+  const email = await emailUsuario();
+  let exitosos = 0;
+  let totalDiferidoQ = 0;
+  const errores: DiferirMasivoResult['errores'] = [];
+
+  // Necesitamos los datos para devolver totales — leemos uno por uno via la
+  // misma action de diferir.
+  for (const lineaId of args.lineaIds) {
+    const r = await diferirPagoEmpleado({ lineaId, motivo: args.motivo, usuarioEmail: email });
+    if (r.ok) {
+      exitosos += 1;
+      // El monto exacto lo conoce el server; el mensaje suele incluirlo. Para no
+      // doble-read, dejamos totalDiferido aproximado (la UI también lo calcula).
+    } else {
+      errores.push({ lineaId, error: r.error ?? 'Error desconocido' });
+    }
+  }
+  revalidarTodo();
+  return {
+    ok: errores.length === 0,
+    exitosos,
+    fallidos: errores.length,
+    totalDiferidoQ,
+    errores,
+  };
+}

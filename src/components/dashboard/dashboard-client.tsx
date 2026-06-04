@@ -132,44 +132,43 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
       )}
       {kpis.numServiciosActivos <= kpis.numFacturasActivas && <div style={{ marginBottom: 22 }} />}
 
-      {/* F-038.4: card de pagos pendientes a empleados. Se oculta si no hay pendientes. */}
-      {pendientesKpis && pendientesKpis.totalEmpleadosPendientes > 0 && (
-        <div
-          className="card"
-          style={{
-            marginBottom: 22,
-            borderColor: pendientesKpis.alertasRojas > 0 ? 'var(--wine)' : pendientesKpis.alertasAmarillas > 0 ? 'var(--warn)' : 'var(--line-2)',
-            background: pendientesKpis.alertasRojas > 0 ? 'rgba(123, 28, 45, 0.04)' : undefined,
-          }}
-        >
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', padding: '14px 20px', gap: 14, alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: 11.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-4)', marginBottom: 6 }}>
-                ⏸ Pagos pendientes a empleados
+      {/* F-038.4 + F-038.4.bis: card de pagos pendientes a empleados.
+            Borde y mensaje principal priorizan la alerta MÁS CRÍTICA. */}
+      {pendientesKpis && pendientesKpis.totalEmpleadosPendientes > 0 && (() => {
+        const { alertasRojas: rojas, alertasNaranja: naranja, alertasAmarillas: amarillas } = pendientesKpis;
+        const nivel: 'roja' | 'naranja' | 'amarilla' | 'normal' =
+          rojas > 0 ? 'roja' : naranja > 0 ? 'naranja' : amarillas > 0 ? 'amarilla' : 'normal';
+        const conf = {
+          roja:     { borderColor: 'var(--wine)', bg: 'rgba(123, 28, 45, 0.05)', titulo: `🔴 ${rojas} requieren decisión`, color: 'var(--wine)' },
+          naranja:  { borderColor: '#D97A1A',     bg: 'rgba(217, 122, 26, 0.05)', titulo: `⚠ ${naranja} por confirmar`,    color: '#D97A1A' },
+          amarilla: { borderColor: 'var(--warn)', bg: undefined,                   titulo: `${amarillas} esperando pago`,   color: 'var(--ink-2)' },
+          normal:   { borderColor: 'var(--line-2)', bg: undefined,                 titulo: `${pendientesKpis.totalEmpleadosPendientes} esperando pago`, color: 'var(--ink-2)' },
+        }[nivel];
+        return (
+          <div className="card" style={{ marginBottom: 22, borderColor: conf.borderColor, background: conf.bg }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', padding: '14px 20px', gap: 14, alignItems: 'center' }}>
+              <div>
+                <div style={{ fontSize: 11.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-4)', marginBottom: 6 }}>
+                  ⏸ Pagos pendientes a empleados
+                </div>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
+                  <span className="num" style={{ fontSize: 22, fontWeight: 600, color: 'var(--ink)' }}>{Q(pendientesKpis.montoTotalPendiente)}</span>
+                  <span style={{ fontSize: 12.5, color: conf.color, fontWeight: nivel === 'normal' ? 400 : 500 }}>{conf.titulo}</span>
+                  {amarillas > 0 && nivel !== 'amarilla' && (
+                    <span style={{ fontSize: 11, color: 'var(--ink-3)' }}>· {amarillas} amarilla{amarillas === 1 ? '' : 's'}</span>
+                  )}
+                  {naranja > 0 && nivel !== 'naranja' && (
+                    <span style={{ fontSize: 11, color: '#D97A1A' }}>· {naranja} naranja</span>
+                  )}
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
-                <span className="num" style={{ fontSize: 22, fontWeight: 600, color: 'var(--ink)' }}>{Q(pendientesKpis.montoTotalPendiente)}</span>
-                <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
-                  <strong className="num">{pendientesKpis.totalEmpleadosPendientes}</strong> empleado{pendientesKpis.totalEmpleadosPendientes === 1 ? '' : 's'} esperando
-                </span>
-                {pendientesKpis.alertasAmarillas > 0 && (
-                  <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
-                    · ⚠ <strong className="num">{pendientesKpis.alertasAmarillas}</strong> amarilla{pendientesKpis.alertasAmarillas === 1 ? '' : 's'}
-                  </span>
-                )}
-                {pendientesKpis.alertasRojas > 0 && (
-                  <span style={{ fontSize: 12, color: 'var(--wine)', fontWeight: 500 }}>
-                    · 🔴 <strong className="num">{pendientesKpis.alertasRojas}</strong> roja{pendientesKpis.alertasRojas === 1 ? '' : 's'} (10+ días)
-                  </span>
-                )}
-              </div>
+              <button className="btn btn-secondary" onClick={() => router.push('/planillas/pendientes')}>
+                Ver todos <I.ArrowRight size={11} />
+              </button>
             </div>
-            <button className="btn btn-secondary" onClick={() => router.push('/planillas/pendientes')}>
-              Ver todos <I.ArrowRight size={11} />
-            </button>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Dos columnas: líneas + alertas */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, marginBottom: 22 }}>

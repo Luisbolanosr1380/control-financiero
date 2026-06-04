@@ -15,6 +15,7 @@ import { Q } from '@/lib/utils';
 import { ModalPagarEmpleado } from './modal-pagar-empleado';
 import { ModalDiferirPago } from './modal-diferir-pago';
 import { ModalCancelarPago } from './modal-cancelar-pago';
+import { BannerDecisionPendientes } from './banner-decision-pendientes';
 import type { PagoPendiente, KPIsPagosPendientes, LineaPlanilla, AlertaPendiente } from '@/lib/db/planillas';
 
 interface BancoOption { id: string; nombre: string }
@@ -28,7 +29,8 @@ interface Props {
 const ALERTA_BADGE: Record<AlertaPendiente, { cls: string; text: string }> = {
   normal:   { cls: 'badge-outline', text: '⏸ Reciente' },
   amarilla: { cls: 'badge-warn',    text: '⚠ Atención' },
-  roja:     { cls: 'badge-wine',    text: '🔴 Crítico' },
+  naranja:  { cls: 'badge-warn',    text: '⚠ Por confirmar' },
+  roja:     { cls: 'badge-wine',    text: '🔴 Decidir' },
 };
 
 /** Convierte un PagoPendiente al shape mínimo de LineaPlanilla que esperan los modales. */
@@ -108,12 +110,15 @@ export function PendientesClient({ pendientes, kpis, bancos }: Props) {
         </div>
       </div>
 
+      {/* F-038.4.bis: banner de decisión arriba de los KPIs si hay 15+ días. */}
+      <BannerDecisionPendientes decision={kpis.decisionRequerida} />
+
       {/* KPIs */}
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 22 }}>
         <Kpi label="👥 Empleados esperando" value={String(kpis.totalEmpleadosPendientes)} hint={kpis.totalEmpleadosPendientes > 0 ? `prom. ${kpis.promedioDiasPendiente} días` : 'al día'} />
         <Kpi label="💰 Monto total pendiente" value={Q(kpis.montoTotalPendiente)} hint="aún por pagar" alarma={kpis.montoTotalPendiente > 0} />
-        <Kpi label="⚠ Alertas amarillas" value={String(kpis.alertasAmarillas)} hint="5-9 días pendientes" alarma={kpis.alertasAmarillas > 0} />
-        <Kpi label="🔴 Alertas rojas" value={String(kpis.alertasRojas)} hint="10+ días — crítico" alarma={kpis.alertasRojas > 0} />
+        <Kpi label="⚠ Amarilla + Naranja" value={String(kpis.alertasAmarillas + kpis.alertasNaranja)} hint={`${kpis.alertasAmarillas} de 5-9d · ${kpis.alertasNaranja} de 10-14d`} alarma={(kpis.alertasAmarillas + kpis.alertasNaranja) > 0} />
+        <Kpi label="🔴 Decisión requerida" value={String(kpis.alertasRojas)} hint="15+ días — diferir o esperar" alarma={kpis.alertasRojas > 0} />
       </div>
 
       {kpis.totalEmpleadosPendientes === 0 && (
@@ -142,9 +147,10 @@ export function PendientesClient({ pendientes, kpis, bancos }: Props) {
             </select>
             <select value={filtroAlerta} onChange={(e) => setFiltroAlerta(e.target.value as 'todos' | AlertaPendiente)} style={selectStyle}>
               <option value="todos">Alerta (todas)</option>
-              <option value="amarilla">⚠ Amarillas</option>
-              <option value="roja">🔴 Rojas</option>
-              <option value="normal">⏸ Normales</option>
+              <option value="roja">🔴 Decidir (15+ días)</option>
+              <option value="naranja">⚠ Naranja (10-14 días)</option>
+              <option value="amarilla">⚠ Amarilla (5-9 días)</option>
+              <option value="normal">⏸ Normal (&lt;5 días)</option>
             </select>
             <div className="toolbar-search" style={{ marginLeft: 'auto' }}>
               <I.Search size={13} style={{ color: 'var(--ink-4)' }} />

@@ -672,19 +672,23 @@ function TablaPagable({ lineas, fechaAprobacion, filtro, onFiltroChange, onPagar
         <tbody>
           {visibles.map(l => {
             const badge = ESTADO_PAGO_BADGE[l.estadoPago];
-            const alertaCls: string | null =
-              l.estadoPago === 'Pendiente' && diasPendiente >= 10 ? 'badge-wine'
-              : l.estadoPago === 'Pendiente' && diasPendiente >= 5 ? 'badge-warn'
+            // F-038.4.bis: 4 niveles. 15+ ya pide Decidir.
+            const alertaInfo: { cls: string; text: string } | null =
+              l.estadoPago !== 'Pendiente' ? null
+              : diasPendiente >= 15 ? { cls: 'badge-wine',    text: `🔴 ${diasPendiente}d · Decidir` }
+              : diasPendiente >= 10 ? { cls: 'badge-warn',    text: `⚠ ${diasPendiente}d` }
+              : diasPendiente >= 5  ? { cls: 'badge-warn',    text: `⚠ ${diasPendiente}d` }
               : null;
+            const alertaCls = alertaInfo?.cls ?? null;
             return (
               <tr key={l.id}>
                 <td className="cell-strong">{l.empleadoNombre || '—'}</td>
                 <td className="num cell-strong">{Q(l.netoPagar)}</td>
                 <td>
                   <span className={'badge ' + badge.cls}>{badge.text}</span>
-                  {alertaCls && (
-                    <span className={'badge ' + alertaCls} style={{ marginLeft: 4, fontSize: 9.5, padding: '1px 6px' }} title={`Pendiente hace ${diasPendiente} días`}>
-                      ⚠ {diasPendiente}d
+                  {alertaInfo && (
+                    <span className={'badge ' + alertaInfo.cls} style={{ marginLeft: 4, fontSize: 9.5, padding: '1px 6px' }} title={`Pendiente hace ${diasPendiente} días`}>
+                      {alertaInfo.text}
                     </span>
                   )}
                 </td>

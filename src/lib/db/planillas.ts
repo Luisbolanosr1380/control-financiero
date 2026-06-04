@@ -721,7 +721,9 @@ export async function cancelarPagoEmpleado(input: CancelarPagoEmpleadoInput): Pr
  * F-038.4: vista consolidada de pagos pendientes (cross-period)
  * ============================================================ */
 
-export type AlertaPendiente = 'normal' | 'amarilla' | 'roja';
+// F-038.4.bis: 4 niveles. 'naranja' (10-14d) es paso intermedio; 'roja' (15+) ya
+// requiere DECISIÓN formal (diferir o mantener). El cliente UI le da peso visual.
+export type AlertaPendiente = 'normal' | 'amarilla' | 'naranja' | 'roja';
 
 export interface PagoPendiente {
   planillaId: string;
@@ -737,7 +739,8 @@ export interface PagoPendiente {
 }
 
 function alertaPorDias(dias: number): AlertaPendiente {
-  if (dias >= 10) return 'roja';
+  if (dias >= 15) return 'roja';
+  if (dias >= 10) return 'naranja';
   if (dias >= 5)  return 'amarilla';
   return 'normal';
 }
@@ -796,10 +799,17 @@ export async function getPagosPendientes(): Promise<PagoPendiente[]> {
 export interface KPIsPagosPendientes {
   totalEmpleadosPendientes: number;
   montoTotalPendiente: number;
-  alertasAmarillas: number;
-  alertasRojas: number;
+  alertasAmarillas: number;   // 5-9 días
+  alertasNaranja: number;     // 10-14 días — F-038.4.bis
+  alertasRojas: number;       // 15+ días — decisión requerida
   promedioDiasPendiente: number;
   porPeriodo: Array<{ periodoId: string; periodoNombre: string; cantidad: number; monto: number; maxDias: number; fechaAprobacion?: string }>;
+  // F-038.4.bis: subset crítico de >= 15 días para banner de decisión.
+  decisionRequerida: {
+    cantidad: number;
+    montoTotal: number;
+    empleados: Array<{ planillaId: string; empleadoId: string; nombre: string; neto: number; diasPendiente: number; periodoNombre: string }>;
+  };
 }
 
 export async function getKPIsPagosPendientes(): Promise<KPIsPagosPendientes> {
@@ -807,12 +817,14 @@ export async function getKPIsPagosPendientes(): Promise<KPIsPagosPendientes> {
   if (pendientes.length === 0) {
     return {
       totalEmpleadosPendientes: 0, montoTotalPendiente: 0,
-      alertasAmarillas: 0, alertasRojas: 0,
+      alertasAmarillas: 0, alertasNaranja: 0, alertasRojas: 0,
       promedioDiasPendiente: 0, porPeriodo: [],
+      decisionRequerida: { cantidad: 0, montoTotal: 0, empleados: [] },
     };
   }
   const monto = round2(pendientes.reduce((s, p) => s + p.netoAPagar, 0));
   const am = pendientes.filter(p => p.alerta === 'amarilla').length;
+  const nr = pendientes.filter(p => p.alerta === 'naranja').length;
   const rj = pendientes.filter(p => p.alerta === 'roja').length;
   const prom = Math.round(pendientes.reduce((s, p) => s + p.diasPendiente, 0) / pendientes.length);
 
@@ -827,13 +839,28 @@ export async function getKPIsPagosPendientes(): Promise<KPIsPagosPendientes> {
     cur.maxDias   = Math.max(cur.maxDias, p.diasPendiente);
     porPeriodoMap.set(p.periodoId, cur);
   }
+
+  // F-038.4.bis: lista detallada de los 15+ días para el banner de decisión.
+  const rojas = pendientes.filter(p => p.alerta === 'roja');
+  const decisionRequerida = {
+    cantidad: rojas.length,
+    montoTotal: round2(rojas.reduce((s, p) => s + p.netoAPagar, 0)),
+    empleados: rojas.map(p => ({
+      planillaId: p.planillaId, empleadoId: p.empleadoId,
+      nombre: p.empleadoNombre, neto: p.netoAPagar,
+      diasPendiente: p.diasPendiente, periodoNombre: p.periodoNombre,
+    })),
+  };
+
   return {
     totalEmpleadosPendientes: pendientes.length,
     montoTotalPendiente: monto,
     alertasAmarillas: am,
+    alertasNaranja: nr,
     alertasRojas: rj,
     promedioDiasPendiente: prom,
     porPeriodo: [...porPeriodoMap.values()].sort((a, b) => b.maxDias - a.maxDias),
+    decisionRequerida,
   };
 }
 
