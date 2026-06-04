@@ -1,4 +1,5 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
+import { obtenerFechaHoyGuatemala } from "../utils/fechas";
 import { F } from './mappers';
 import { getBancos } from './bancos';
 import type { Payment } from '../types';
@@ -855,7 +856,7 @@ export async function anularCobro(grupoId: string, motivo: string, usuarioEmail:
     if (yaAnulados) return empty('El cobro ya estaba anulado.');
 
     // 2) Marcar como Anulado
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = obtenerFechaHoyGuatemala();
     const updates = records.map(r => ({
       id: r.id,
       fields: {
@@ -963,7 +964,7 @@ export async function anularCobroLegacy(recordId: string, motivo: string, usuari
     const noFactura = Array.isArray(noFLookup) ? String(noFLookup[0] ?? '') : '';
     if (!Array.isArray(linked) || !noFactura) return empty('Cobro sin factura asociada.');
 
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = obtenerFechaHoyGuatemala();
     await airtable(TABLES.COBROS).update([{
       id: recordId,
       fields: {

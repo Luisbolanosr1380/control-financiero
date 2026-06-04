@@ -21,6 +21,7 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { getDeudaPorId, type Deuda } from './deudas';
 import { getBancos, type Banco } from './bancos';
+import { obtenerFechaHoyGuatemala } from '../utils/fechas';
 
 export type MetodoPagoDeuda =
   | 'Transferencia'
@@ -466,7 +467,7 @@ export async function anularPagoDeuda(
     const deudaAntes = await getDeudaPorId(deudaId);
     const saldoAnterior = deudaAntes?.saldoPendiente ?? 0;
 
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = obtenerFechaHoyGuatemala();
     const auditoria = `[Anulado ${hoy} · monto original Q${totalOriginal.toFixed(2)} (capital Q${capitalOriginal.toFixed(2)}, interés Q${interesOriginal.toFixed(2)}, mora Q${moraOriginal.toFixed(2)}, comisión Q${comisionOriginal.toFixed(2)})]`;
     const motivoCompleto = `${auditoria}\n${motivo.trim()}`;
 

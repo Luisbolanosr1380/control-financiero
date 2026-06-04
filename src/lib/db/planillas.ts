@@ -23,6 +23,7 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { getEmpleados, crearDeudaSalarioPendiente, type Empleado } from './empleados';
 import { calcularQuincena, type AjustesQuincena, type QuincenaCalculada } from '../calculos/planilla-calc';
+import { obtenerFechaHoyGuatemala } from '../utils/fechas';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -510,7 +511,7 @@ export async function aprobarPeriodo(periodoId: string, usuarioEmail: string): P
       return { ok: false, error: 'No hay líneas que aprobar — generá la planilla primero.' };
     }
 
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = obtenerFechaHoyGuatemala();
     await airtable(TABLES.PERIODOS).update([{
       id: periodoId,
       fields: {
@@ -545,7 +546,7 @@ async function recalcularEstadoPeriodo(periodoId: string, usuarioEmail: string):
   const canceladas = datos.lineas.filter(l => l.estadoPago === 'Cancelado').length;
   const concluidas = pagadas + diferidas + canceladas;
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = obtenerFechaHoyGuatemala();
   type AField = string | number | string[] | undefined;
 
   if (concluidas === total) {
@@ -597,7 +598,7 @@ export async function registrarPagoEmpleado(input: RegistrarPagoEmpleadoInput): 
     const sufijo = `Pago ${input.fechaPago}${input.referencia ? ` ref ${input.referencia}` : ''} (${input.usuarioEmail || 'sistema'})`;
     const notaNueva = notaActual ? `${notaActual} · ${sufijo}` : sufijo;
 
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = obtenerFechaHoyGuatemala();
     type AField = string | number | string[] | undefined;
     const fields: Record<string, AField> = {
       [FL.ESTADO_PAGO]:   'Pagado',
@@ -637,7 +638,7 @@ export async function diferirPagoEmpleado(input: DiferirPagoEmpleadoInput): Prom
     }
 
     // Fecha de la quincena = fechaFin del período.
-    const fechaQuincena = datos.periodo.fechaFin || new Date().toISOString().slice(0, 10);
+    const fechaQuincena = datos.periodo.fechaFin || obtenerFechaHoyGuatemala();
     const motivo = `Diferido: ${input.motivo.trim()}`;
 
     const deudaRes = await crearDeudaSalarioPendiente(linea.empleadoId, linea.netoPagar, fechaQuincena, motivo);
@@ -649,7 +650,7 @@ export async function diferirPagoEmpleado(input: DiferirPagoEmpleadoInput): Prom
     const sufijo = `Diferido por ${input.usuarioEmail || 'sistema'}: ${input.motivo.trim()}`;
     const notaNueva = notaActual ? `${notaActual} · ${sufijo}` : sufijo;
 
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = obtenerFechaHoyGuatemala();
     type AField = string | number | string[] | undefined;
     const fields: Record<string, AField> = {
       [FL.ESTADO_PAGO]:        'Diferido',
@@ -695,7 +696,7 @@ export async function cancelarPagoEmpleado(input: CancelarPagoEmpleadoInput): Pr
       return { ok: false, error: `La línea ya está ${linea.estadoPago}.` };
     }
 
-    const hoy = new Date().toISOString().slice(0, 10);
+    const hoy = obtenerFechaHoyGuatemala();
     const motivoCompleto = `${input.motivo.trim()} — por ${input.usuarioEmail || 'sistema'} el ${hoy}`;
     const notaActual = linea.notas ?? '';
     const sufijo = `Cancelado por ${input.usuarioEmail || 'sistema'}: ${input.motivo.trim()}`;

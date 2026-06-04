@@ -5,6 +5,7 @@
 // ============================================================
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
+import { obtenerFechaHoyGuatemala } from '../utils/fechas';
 
 const FA = {
   NOMBRE:           'Nombre_Acreedor',           // formula
@@ -575,7 +576,7 @@ export async function crearDeuda(input: CrearDeudaInput): Promise<CrearDeudaResu
   if (!input.tipoDocumento)        return { ok: false, error: 'Tipo de documento es requerido.' };
   if (!input.fechaEmision)         return { ok: false, error: 'Fecha de emisión es requerida.' };
   if (!(input.montoOriginal > 0))  return { ok: false, error: 'El monto original debe ser mayor a 0.' };
-  const hoyISO = new Date().toISOString().slice(0, 10);
+  const hoyISO = obtenerFechaHoyGuatemala();
   if (input.fechaEmision > hoyISO) return { ok: false, error: 'La fecha de emisión no puede ser futura.' };
 
   // Validar que el acreedor existe
@@ -653,7 +654,7 @@ export async function editarDeuda(deudaId: string, input: EditarDeudaInput): Pro
 
   // Validaciones de campos editados
   if (input.fechaEmision) {
-    const hoyISO = new Date().toISOString().slice(0, 10);
+    const hoyISO = obtenerFechaHoyGuatemala();
     if (input.fechaEmision > hoyISO) return { ok: false, error: 'La fecha de emisión no puede ser futura.' };
   }
   if (input.montoOriginal !== undefined && !(input.montoOriginal > 0)) {

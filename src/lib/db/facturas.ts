@@ -1,4 +1,5 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
+import { obtenerFechaHoyGuatemala } from "../utils/fechas";
 import { consolidateRecords, F } from './mappers';
 import { INVOICES as MOCK_INVOICES } from '../mock-data';
 import type { Invoice, InvoiceEstadoBruto } from '../types';
@@ -425,7 +426,7 @@ export async function anularFactura(
     const estadoTarget = esRefacturacion ? 'REFACTURADO' : 'ANULADO';
     const verbo = esRefacturacion ? 'Refacturado' : 'Anulado';
 
-    const fechaAnulacion = new Date().toISOString().slice(0, 10);
+    const fechaAnulacion = obtenerFechaHoyGuatemala();
     // El motivoTipo se incluye explícito en la nota cuando se eligió uno;
     // un motivo libre adicional se agrega después del ":".
     const etiqueta = motivoTipo
