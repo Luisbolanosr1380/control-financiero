@@ -35,29 +35,34 @@ export const Qn = (n: number | null | undefined): string => {
 };
 
 // ============================================================
-// Formatters de fecha
+// Formatters de fecha (F-041: zona Guatemala)
+//
+// Antes usábamos new Date(iso).getDate()/.getMonth() que devuelven valores
+// en la TZ local del browser. Para usuarios en otra timezone, una fecha
+// "2026-06-04" (que internamente es medianoche UTC) salía como "03/06/2026"
+// en zona Guatemala UTC-6.
+//
+// Ahora delegamos a formatearFecha* de src/lib/utils/fechas.ts que usa
+// formatInTimeZone(TZ_GUATEMALA). Los nombres legacy se mantienen para que
+// los componentes no tengan que migrar; los recomendados nuevos son los de
+// '@/lib/utils/fechas'.
 // ============================================================
 
-const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+import { formatearFecha } from './utils/fechas';
 
-export const formatDate = (d: Date | string | null | undefined): string => {
-  if (!d) return '—';
-  const dt = typeof d === 'string' ? new Date(d) : d;
-  return `${dt.getDate().toString().padStart(2, '0')} ${MESES[dt.getMonth()]} ${dt.getFullYear()}`;
-};
+// date-fns con locale español devuelve meses en minúscula ("jun"). El sistema
+// previo usaba mayúscula inicial ("Jun"). Conservamos la imagen visual.
+const capitalizarMes = (s: string): string => s.replace(/\b([a-záéíóú])/g, c => c.toUpperCase());
 
-export const formatDateShort = (d: Date | string | null | undefined): string => {
-  if (!d) return '—';
-  const dt = typeof d === 'string' ? new Date(d) : d;
-  return `${dt.getDate().toString().padStart(2, '0')} ${MESES[dt.getMonth()]}`;
-};
+export const formatDate = (d: Date | string | null | undefined): string =>
+  capitalizarMes(formatearFecha(d, 'dd MMM yyyy'));
+
+export const formatDateShort = (d: Date | string | null | undefined): string =>
+  capitalizarMes(formatearFecha(d, 'dd MMM'));
 
 /** Formato DD/MM/YYYY — útil en tablas donde el espacio es escaso */
-export const formatDateDDMMYYYY = (d: Date | string | null | undefined): string => {
-  if (!d) return '—';
-  const dt = typeof d === 'string' ? new Date(d) : d;
-  return `${String(dt.getDate()).padStart(2, '0')}/${String(dt.getMonth() + 1).padStart(2, '0')}/${dt.getFullYear()}`;
-};
+export const formatDateDDMMYYYY = (d: Date | string | null | undefined): string =>
+  formatearFecha(d, 'dd/MM/yyyy');
 
 // ============================================================
 // Utilidad de clases (Tailwind merge)
