@@ -23,7 +23,7 @@ import { getKPIsDeudas, getDeudas, getAcreedores, clasificarPasivo } from '@/lib
 import { getPagosPorDeuda, getPagosPorAcreedor, getPagosRecientes } from '@/lib/db/pagos-deudas';
 import { getRetencionesAgregadas } from '@/lib/db/retenciones';
 import { getEmpleados, getEmpleadoPorId, getKPIsPlanilla } from '@/lib/db/empleados';
-import { getPeriodos, getPeriodoPorId, getLineasPlanilla } from '@/lib/db/planillas';
+import { getPeriodos, getPeriodoPorId, getLineasPlanilla, getPagosPendientes, getKPIsPagosPendientes } from '@/lib/db/planillas';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -1171,6 +1171,49 @@ export const aiTools = {
         diferimientos: out,
       };
     },
+  }),
+
+  // ===========================================================================
+  // F-038.4: Pagos PENDIENTES vs DIFERIDOS (vista consolidada cross-período)
+  // ===========================================================================
+
+  getPagosPendientes: tool({
+    description:
+      'Empleados con planilla APROBADA pero pago aún no registrado (fricción de caja TEMPORAL — ' +
+      'el dueño va a pagar pronto, NO es deuda formal). Lista cada empleado con departamento, ' +
+      'monto neto, período, días desde aprobación y nivel de alerta ' +
+      '(normal <5d · amarilla 5-9d · roja 10+d). ' +
+      'NO incluye DIFERIDOS (esos son decisión formal de no pagar y ya generaron deuda formal — ' +
+      'consultá esas vía getKPIsDeudas categoría empleados). ' +
+      'USAR cuando el usuario pregunte "¿quiénes me faltan de pagar?", "¿qué tengo pendiente?", ' +
+      '"¿hay planillas atrasadas?".',
+    parameters: z.object({}),
+    execute: async () => {
+      const pendientes = await getPagosPendientes();
+      return {
+        total: pendientes.length,
+        montoTotalQ: Math.round(pendientes.reduce((s, p) => s + p.netoAPagar, 0)),
+        empleados: pendientes.map(p => ({
+          nombre: p.empleadoNombre,
+          departamento: p.departamento,
+          netoAPagarQ: Math.round(p.netoAPagar),
+          periodo: p.periodoNombre,
+          diasPendiente: p.diasPendiente,
+          alerta: p.alerta,
+        })),
+      };
+    },
+  }),
+
+  getKPIsPagosPendientes: tool({
+    description:
+      'Resumen consolidado de pagos pendientes a empleados: total esperando, monto total Q, ' +
+      'cantidad de alertas amarillas (5-9 días) y rojas (10+ días), promedio de días pendiente, ' +
+      'y breakdown por período. ' +
+      'USAR para "¿cuánto debo en quincenas no pagadas?", "¿cuántos empleados están esperando?", ' +
+      '"¿tengo alertas críticas en planilla?".',
+    parameters: z.object({}),
+    execute: async () => await getKPIsPagosPendientes(),
   }),
 } as const;
 

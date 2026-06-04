@@ -18,10 +18,17 @@ interface NavGroup {
   items: NavItem[];
 }
 
-function buildNav(opts: { deudasVencidasCount?: number; rol?: Role } = {}): NavGroup[] {
+function buildNav(opts: { deudasVencidasCount?: number; pagosPendientesCount?: number; pagosPendientesAlertasRojas?: number; rol?: Role } = {}): NavGroup[] {
   const deudasBadge = opts.deudasVencidasCount && opts.deudasVencidasCount > 0
     ? { text: `${opts.deudasVencidasCount} vencidas`, kind: 'wine' as const }
     : undefined;
+  // F-038.4: badge dinámico de pagos pendientes a empleados. Wine si hay alertas
+  // rojas (10+ días), warn si solo hay pendientes en general.
+  const pagosPendBadge = opts.pagosPendientesAlertasRojas && opts.pagosPendientesAlertasRojas > 0
+    ? { text: `${opts.pagosPendientesAlertasRojas} críticos`, kind: 'wine' as const }
+    : opts.pagosPendientesCount && opts.pagosPendientesCount > 0
+      ? { text: `${opts.pagosPendientesCount} pend.`, kind: 'warn' as const }
+      : undefined;
   const rol = opts.rol;
   const verAvanzada = rol && PERMISSIONS[rol].verAnaliticaAvanzada;
   const esAdmin = rol === 'admin';
@@ -39,6 +46,7 @@ function buildNav(opts: { deudasVencidasCount?: number; rol?: Role } = {}): NavG
       { href: '/bancos',       label: 'Bancos',         icon: 'Bank' },
       { href: '/empleados',    label: 'Empleados',      icon: 'Users' },   // F-037
       { href: '/planillas',    label: 'Planillas',      icon: 'Payroll' }, // F-038
+      { href: '/planillas/pendientes', label: 'Pagos pendientes', icon: 'Clock', badge: pagosPendBadge },   // F-038.4
       { href: '/deudas',       label: 'Deudas',         icon: 'Debt', badge: deudasBadge },
       { href: '/pagos-deudas', label: 'Pagos a deudas', icon: 'Coins' },
     ]},
@@ -69,13 +77,15 @@ function buildNav(opts: { deudasVencidasCount?: number; rol?: Role } = {}): NavG
 
 interface SidebarProps {
   deudasVencidasCount?: number;
+  pagosPendientesCount?: number;          // F-038.4
+  pagosPendientesAlertasRojas?: number;   // F-038.4
   rol?: Role;
   email?: string;
 }
 
-export function Sidebar({ deudasVencidasCount, rol }: SidebarProps = {}) {
+export function Sidebar({ deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol }: SidebarProps = {}) {
   const pathname = usePathname();
-  const NAV = buildNav({ deudasVencidasCount, rol });
+  const NAV = buildNav({ deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol });
 
   // El item activo es el de href más específico que matchea (evita que
   // /cobros y /cobros/identificar se marquen ambos a la vez).

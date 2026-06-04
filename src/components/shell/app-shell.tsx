@@ -10,13 +10,15 @@ import type { Role } from '@/lib/auth/allowlist';
 interface AppShellProps {
   children: React.ReactNode;
   deudasVencidasCount?: number;
+  pagosPendientesCount?: number;           // F-038.4
+  pagosPendientesAlertasRojas?: number;    // F-038.4
   rol: Role;
   email: string;
   consumoAuros?: number;
   limiteAuros?: number;
 }
 
-export function AppShell({ children, deudasVencidasCount, rol, email, consumoAuros, limiteAuros }: AppShellProps) {
+export function AppShell({ children, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol, email, consumoAuros, limiteAuros }: AppShellProps) {
   const [aiOpen, setAiOpen] = useState(false);
   const [showCmdK, setShowCmdK] = useState(false);
 
@@ -39,7 +41,13 @@ export function AppShell({ children, deudasVencidasCount, rol, email, consumoAur
 
   return (
     <div className={'app' + (aiOpen ? ' ai-open' : '')}>
-      <Sidebar deudasVencidasCount={deudasVencidasCount} rol={rol} email={email} />
+      <Sidebar
+        deudasVencidasCount={deudasVencidasCount}
+        pagosPendientesCount={pagosPendientesCount}
+        pagosPendientesAlertasRojas={pagosPendientesAlertasRojas}
+        rol={rol}
+        email={email}
+      />
 
       <div className="main">
         <Topbar aiOpen={aiOpen} setAiOpen={setAiOpen} onSearch={() => setShowCmdK(true)} />

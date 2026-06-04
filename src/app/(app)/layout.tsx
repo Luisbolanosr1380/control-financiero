@@ -4,6 +4,7 @@ import { AppShell } from '@/components/shell/app-shell';
 import { getRolUsuario } from '@/lib/auth/allowlist';
 import { getLimiteAuros } from '@/lib/auth/permissions';
 import { getKPIsDeudas } from '@/lib/db/deudas';
+import { getKPIsPagosPendientes } from '@/lib/db/planillas';
 import { getConsumoMensual } from '@/lib/db/uso-auros';
 
 export default async function AppLayout({
@@ -18,13 +19,17 @@ export default async function AppLayout({
     redirect('/no-acceso');
   }
 
-  // Badge dinámico para "Deudas" en el sidebar (silencioso si falla).
+  // Badges dinámicos para sidebar (silenciosos si fallan).
   let deudasVencidasCount = 0;
+  let pagosPendientesCount = 0;
+  let pagosPendientesAlertasRojas = 0;
   try {
-    const k = await getKPIsDeudas();
-    deudasVencidasCount = k.vencidas.cantidad;
+    const [kd, kp] = await Promise.all([getKPIsDeudas(), getKPIsPagosPendientes()]);
+    deudasVencidasCount = kd.vencidas.cantidad;
+    pagosPendientesCount = kp.totalEmpleadosPendientes;
+    pagosPendientesAlertasRojas = kp.alertasRojas;
   } catch {
-    /* sin badge */
+    /* sin badges */
   }
 
   // Consumo mensual de Auros para mostrar en el drawer (silencioso si falla).
@@ -38,6 +43,8 @@ export default async function AppLayout({
   return (
     <AppShell
       deudasVencidasCount={deudasVencidasCount}
+      pagosPendientesCount={pagosPendientesCount}
+      pagosPendientesAlertasRojas={pagosPendientesAlertasRojas}
       rol={rol}
       email={email}
       consumoAuros={consumoAuros}

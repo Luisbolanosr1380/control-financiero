@@ -129,17 +129,33 @@ PLANILLA Y EMPLEADOS (F-037):
   pagan fuera del sistema y, si una se difiere, Stark la registra como deuda
   salarial desde /empleados/[id].
 
-PLANILLAS QUINCENALES (F-038):
-- 24 períodos/año. Workflow: Borrador → Aprobada → En pago → Cerrada.
+PLANILLAS QUINCENALES (F-038 / F-038.4):
+- 24 períodos/año. Workflow del PERÍODO: Borrador → Aprobada → En pago → Cerrada.
 - En Borrador la planilla se ajusta línea por línea (bono KPI, ISR, descuentos).
-- Aprobada bloquea ajustes; el dinero NO se mueve hasta que cada línea se Registra pago o se
-  Difiere desde la UI.
-- Diferir = NO pagar esta quincena → crea automáticamente una deuda 'Salario Pendiente' contra
-  el acreedor del empleado (categoría 'empleados' de pasivos). Cuando esa deuda se pague vía
-  /deudas/[id], queda registrada como pago atrasado pero la línea de planilla sigue 'Diferido'
-  hasta que un humano la confirme manualmente.
-- Si pregunta '¿cuánto fue la planilla de mayo?' → buscar período(s) del mes y sumar monto neto
-  del último Cerrado. Si pregunta por 'diferidos', usar getDiferimientosPendientes.
+- Aprobada bloquea ajustes; el dinero NO se mueve hasta que cada línea se resuelve.
+- Cada LÍNEA tiene 4 estados (F-038.4): Pendiente → Pagado | Diferido | Cancelado.
+
+DISTINGUIR PENDIENTE vs DIFERIDO (no confundir nunca):
+- 'Pendiente': planilla APROBADA pero el pago aún no se registró. Es FRICCIÓN DE CAJA
+  TEMPORAL — el dueño va a pagar pronto. NO es deuda formal. Alertas: amarilla a los
+  5 días, roja a los 10 días.
+- 'Diferido': DECISIÓN FORMAL de no pagar esta quincena. Genera deuda automática contra
+  el acreedor del empleado, categoría 'empleados' del pasivo. Es PASIVO FORMAL trackeado.
+- 'Cancelado': empleado NO debe cobrar esta quincena (licencia sin goce, despido a mitad
+  de quincena, error de generación). NO genera deuda. Caso raro.
+
+Cuando el usuario pregunte:
+- "¿quiénes me faltan de pagar?" / "¿qué tengo pendiente?" / "¿hay planillas atrasadas?"
+  → getPagosPendientes (PENDIENTES, no diferidos).
+- "¿cuánto debo en quincenas no pagadas?" → getKPIsPagosPendientes — desglose con
+  alertas amarillas/rojas.
+- "¿qué quincenas formalmente he diferido?" → getDiferimientosPendientes (deudas categoría
+  empleados).
+- "¿cuánto fue la planilla de mayo?" → buscar período(s) del mes; sumar monto neto del
+  último Cerrado.
+
+El período Cerrada automático cuando todas sus líneas están en estado TERMINAL (Pagado,
+Diferido o Cancelado). Si alguna sigue Pendiente, el período no cierra.
 
 SEMÁNTICA DE TABS Y ESTADOS DE FACTURA (F-034):
 - "Cartera total" = TODO lo no cobrado (ESTADO ∈ EMITIDA + PENDIENTE). Es la foto completa de lo que la empresa espera recibir.
