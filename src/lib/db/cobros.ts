@@ -748,6 +748,8 @@ export interface SaldoFactura {
   noFactura: string;
   totalFactura: number;
   cobradoPrevio: number;
+  /** F-045: suma de NCs ACTIVAS de la factura, también restada al saldo. */
+  ncsActivas: number;
   saldoPendiente: number;
   estado: string;
 }
@@ -779,14 +781,28 @@ export async function getSaldoPendiente(noFactura: string): Promise<SaldoFactura
         .filter(r => esCobroActivoFields(r.fields as Record<string, unknown>))
         .reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
     );
-    const saldoPendiente = round2(Math.max(0, totalFactura - cobradoPrevio));
+    // F-045: NCs ACTIVAS también reducen el saldo. Import dinámico para
+    // evitar ciclo cobros.ts ↔ notas-credito.ts (NCs leen factura por id).
+    let ncsActivas = 0;
+    try {
+      const { montoNCsActivasDeFactura } = await import('./notas-credito');
+      // El facturaId del NC es el record-id del principal. Lo deducimos
+      // tomando el ID con TOTAL más alto del bucket, espejo de consolidateRecords.
+      const principal = activas.reduce((a, b) =>
+        Number(b.fields[F.TOTAL] ?? 0) > Number(a.fields[F.TOTAL] ?? 0) ? b : a,
+      );
+      ncsActivas = await montoNCsActivasDeFactura(principal.id);
+    } catch {
+      // Tabla NOTAS_CREDITO no existe aún o falló: 0 sin romper saldo.
+    }
+    const saldoPendiente = round2(Math.max(0, totalFactura - cobradoPrevio - ncsActivas));
     // Estado consolidado: si alguna línea está COBRADO PARCIAL gana sobre EMITIDA/PENDIENTE
     const estados = activas.map(r => estadoCanon(r.fields[F.ESTADO]));
     const estado = estados.includes('COBRADO PARCIAL') ? 'COBRADO PARCIAL'
                  : estados.includes('PENDIENTE')       ? 'PENDIENTE'
                  : estados.includes('EMITIDA')         ? 'EMITIDA'
                  : estados[0] ?? '';
-    return { noFactura: nf, totalFactura, cobradoPrevio, saldoPendiente, estado };
+    return { noFactura: nf, totalFactura, cobradoPrevio, ncsActivas, saldoPendiente, estado };
   } catch (err) {
     console.error('Error leyendo saldo pendiente:', err);
     return null;
