@@ -31,7 +31,9 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
  * ============================================================ */
 
 export type EstadoPeriodo = 'Borrador' | 'Aprobada' | 'En pago' | 'Cerrada';
-export type EstadoPagoLinea = 'Pendiente' | 'Pagado' | 'Diferido';
+// F-038.4: 'Cancelado' = empleado no debe cobrar esta quincena (licencia sin goce,
+// despido a mitad de quincena, etc.). NO genera deuda como 'Diferido'.
+export type EstadoPagoLinea = 'Pendiente' | 'Pagado' | 'Diferido' | 'Cancelado';
 
 export interface Periodo {
   id: string;
@@ -71,6 +73,11 @@ export interface LineaPlanilla {
   fechaPago?: string;
   notas?: string;
   deudaVinculadaId?: string;
+  // F-038.4: auditoría temporal de cada transición.
+  fechaPagoRegistrada?: string;
+  fechaDiferimiento?: string;
+  fechaCancelacion?: string;
+  motivoCancelacion?: string;
 }
 
 export interface KPIsPeriodo {
@@ -79,6 +86,7 @@ export interface KPIsPeriodo {
   pagados: number;
   pendientes: number;
   diferidos: number;
+  cancelados: number;   // F-038.4
 }
 
 /* ============================================================
@@ -115,6 +123,11 @@ const FL = {
   ESTADO_PAGO:       'ESTADO_PAGO',
   DEUDA_VINCULADA:   'DEUDA_VINCULADA',
   NOTAS:             'NOTAS',
+  // F-038.4
+  FECHA_PAGO_REG:    'FECHA_PAGO_REGISTRADA',
+  FECHA_DIFERIMIENTO: 'FECHA_DIFERIMIENTO',
+  FECHA_CANCELACION: 'FECHA_CANCELACION',
+  MOTIVO_CANCELACION: 'MOTIVO_CANCELACION',
 } as const;
 
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -147,7 +160,7 @@ function estadoPeriodoFromAirtable(v: unknown): EstadoPeriodo {
 
 function estadoPagoFromAirtable(v: unknown): EstadoPagoLinea {
   const s = selectName(v);
-  if (s === 'Pagado' || s === 'Diferido' || s === 'Pendiente') return s;
+  if (s === 'Pagado' || s === 'Diferido' || s === 'Pendiente' || s === 'Cancelado') return s;
   return 'Pendiente';
 }
 
@@ -206,6 +219,10 @@ function recordToLinea(record: { id: string; fields: Record<string, unknown> }, 
     fechaPago:  String(f[FL.FECHA_PAGO] ?? '') || undefined,
     notas:      String(f[FL.NOTAS] ?? '') || undefined,
     deudaVinculadaId: arrFirst(f[FL.DEUDA_VINCULADA]) || undefined,
+    fechaPagoRegistrada: String(f[FL.FECHA_PAGO_REG] ?? '') || undefined,
+    fechaDiferimiento:   String(f[FL.FECHA_DIFERIMIENTO] ?? '') || undefined,
+    fechaCancelacion:    String(f[FL.FECHA_CANCELACION] ?? '') || undefined,
+    motivoCancelacion:   String(f[FL.MOTIVO_CANCELACION] ?? '') || undefined,
   };
 }
 
@@ -510,9 +527,11 @@ export async function aprobarPeriodo(periodoId: string, usuarioEmail: string): P
 
 /**
  * Recalcula el estado del período según las líneas:
- *  - Si todas Pagado o Diferido → Cerrada (registra PAGADO_POR y FECHA_CIERRE).
- *  - Si al menos una Pagada/Diferida pero faltan → En pago.
+ *  - Si todas en estado TERMINAL (Pagado, Diferido, Cancelado) → Cerrada.
+ *  - Si al menos una concluida pero faltan → En pago.
  *  - Si todas Pendientes → no cambia (queda en Aprobada).
+ *
+ * F-038.4: 'Cancelado' es terminal — el empleado no debe cobrar esta quincena.
  */
 async function recalcularEstadoPeriodo(periodoId: string, usuarioEmail: string): Promise<void> {
   if (!airtable) return;
@@ -523,7 +542,8 @@ async function recalcularEstadoPeriodo(periodoId: string, usuarioEmail: string):
 
   const pagadas    = datos.lineas.filter(l => l.estadoPago === 'Pagado').length;
   const diferidas  = datos.lineas.filter(l => l.estadoPago === 'Diferido').length;
-  const concluidas = pagadas + diferidas;
+  const canceladas = datos.lineas.filter(l => l.estadoPago === 'Cancelado').length;
+  const concluidas = pagadas + diferidas + canceladas;
 
   const hoy = new Date().toISOString().slice(0, 10);
   type AField = string | number | string[] | undefined;
@@ -577,11 +597,13 @@ export async function registrarPagoEmpleado(input: RegistrarPagoEmpleadoInput): 
     const sufijo = `Pago ${input.fechaPago}${input.referencia ? ` ref ${input.referencia}` : ''} (${input.usuarioEmail || 'sistema'})`;
     const notaNueva = notaActual ? `${notaActual} · ${sufijo}` : sufijo;
 
+    const hoy = new Date().toISOString().slice(0, 10);
     type AField = string | number | string[] | undefined;
     const fields: Record<string, AField> = {
-      [FL.ESTADO_PAGO]: 'Pagado',
-      [FL.FECHA_PAGO]:  input.fechaPago,
-      [FL.NOTAS]:       notaNueva,
+      [FL.ESTADO_PAGO]:   'Pagado',
+      [FL.FECHA_PAGO]:    input.fechaPago,
+      [FL.FECHA_PAGO_REG]: hoy,    // F-038.4
+      [FL.NOTAS]:         notaNueva,
     };
     await airtable(TABLES.PLANILLA).update([{ id: input.lineaId, fields }]);
 
@@ -627,11 +649,13 @@ export async function diferirPagoEmpleado(input: DiferirPagoEmpleadoInput): Prom
     const sufijo = `Diferido por ${input.usuarioEmail || 'sistema'}: ${input.motivo.trim()}`;
     const notaNueva = notaActual ? `${notaActual} · ${sufijo}` : sufijo;
 
+    const hoy = new Date().toISOString().slice(0, 10);
     type AField = string | number | string[] | undefined;
     const fields: Record<string, AField> = {
-      [FL.ESTADO_PAGO]:     'Diferido',
-      [FL.DEUDA_VINCULADA]: [deudaRes.deudaId],
-      [FL.NOTAS]:           notaNueva,
+      [FL.ESTADO_PAGO]:        'Diferido',
+      [FL.DEUDA_VINCULADA]:    [deudaRes.deudaId],
+      [FL.FECHA_DIFERIMIENTO]: hoy,   // F-038.4
+      [FL.NOTAS]:              notaNueva,
     };
     await airtable(TABLES.PLANILLA).update([{ id: input.lineaId, fields }]);
 
@@ -640,6 +664,177 @@ export async function diferirPagoEmpleado(input: DiferirPagoEmpleadoInput): Prom
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+/* ============================================================
+ * F-038.4: cancelar pago (sin generar deuda)
+ * Caso de uso: licencia sin goce, despido a mitad de quincena, error en
+ * la generación de la planilla, etc. Es distinto de Diferir — Diferido
+ * SÍ genera deuda formal, Cancelado NO.
+ * ============================================================ */
+
+export interface CancelarPagoEmpleadoInput {
+  lineaId: string;
+  motivo: string;
+  usuarioEmail: string;
+}
+
+export async function cancelarPagoEmpleado(input: CancelarPagoEmpleadoInput): Promise<PlanillaMutationResult> {
+  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!input.motivo?.trim()) return { ok: false, error: 'Motivo requerido para cancelar.' };
+
+  try {
+    const datos = await periodoDeLinea(input.lineaId);
+    if (!datos) return { ok: false, error: 'Período de la línea no encontrado.' };
+    if (datos.periodo.estado !== 'Aprobada' && datos.periodo.estado !== 'En pago') {
+      return { ok: false, error: `El período está ${datos.periodo.estado} — solo se cancela en Aprobada o En pago.` };
+    }
+    const linea = datos.lineas.find(l => l.id === input.lineaId);
+    if (!linea) return { ok: false, error: 'Línea no encontrada en el período.' };
+    if (linea.estadoPago !== 'Pendiente') {
+      return { ok: false, error: `La línea ya está ${linea.estadoPago}.` };
+    }
+
+    const hoy = new Date().toISOString().slice(0, 10);
+    const motivoCompleto = `${input.motivo.trim()} — por ${input.usuarioEmail || 'sistema'} el ${hoy}`;
+    const notaActual = linea.notas ?? '';
+    const sufijo = `Cancelado por ${input.usuarioEmail || 'sistema'}: ${input.motivo.trim()}`;
+    const notaNueva = notaActual ? `${notaActual} · ${sufijo}` : sufijo;
+
+    type AField = string | number | string[] | undefined;
+    const fields: Record<string, AField> = {
+      [FL.ESTADO_PAGO]:        'Cancelado',
+      [FL.FECHA_CANCELACION]:  hoy,
+      [FL.MOTIVO_CANCELACION]: motivoCompleto,
+      [FL.NOTAS]:              notaNueva,
+    };
+    await airtable(TABLES.PLANILLA).update([{ id: input.lineaId, fields }]);
+
+    await recalcularEstadoPeriodo(datos.periodo.id, input.usuarioEmail);
+    return { ok: true, lineaId: input.lineaId, mensaje: `Pago cancelado para ${linea.empleadoNombre} (no genera deuda).` };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/* ============================================================
+ * F-038.4: vista consolidada de pagos pendientes (cross-period)
+ * ============================================================ */
+
+export type AlertaPendiente = 'normal' | 'amarilla' | 'roja';
+
+export interface PagoPendiente {
+  planillaId: string;
+  empleadoId: string;
+  empleadoNombre: string;
+  departamento: string;
+  netoAPagar: number;
+  periodoId: string;
+  periodoNombre: string;
+  fechaAprobacion?: string;
+  diasPendiente: number;
+  alerta: AlertaPendiente;
+}
+
+function alertaPorDias(dias: number): AlertaPendiente {
+  if (dias >= 10) return 'roja';
+  if (dias >= 5)  return 'amarilla';
+  return 'normal';
+}
+
+function diasEntre(desdeISO: string | undefined, hoy: Date = new Date()): number {
+  if (!desdeISO) return 0;
+  const d = new Date(desdeISO);
+  if (!Number.isFinite(d.getTime())) return 0;
+  return Math.max(0, Math.floor((hoy.getTime() - d.getTime()) / 86400000));
+}
+
+/** Todas las líneas Pendientes en períodos Aprobada o En pago. */
+export async function getPagosPendientes(): Promise<PagoPendiente[]> {
+  if (USE_MOCK || !airtable) return [];
+  try {
+    const periodos = await getPeriodos();
+    const activos  = periodos.filter(p => p.estado === 'Aprobada' || p.estado === 'En pago');
+    if (activos.length === 0) return [];
+
+    const empleados = await getEmpleados({ status: 'todos' });
+    const empById = new Map(empleados.map(e => [e.id, e]));
+
+    // getPeriodos ya hidrata con líneas — usamos getLineasPorPeriodo(null) por consistencia
+    const todasLineas = await getLineasPorPeriodo(null);
+    const periodoById = new Map(activos.map(p => [p.id, p]));
+
+    const out: PagoPendiente[] = [];
+    for (const l of todasLineas) {
+      if (l.estadoPago !== 'Pendiente') continue;
+      const periodo = periodoById.get(l.periodoId);
+      if (!periodo) continue;   // período no está Aprobada/En pago
+      const emp = empById.get(l.empleadoId);
+      const dias = diasEntre(periodo.fechaAprobacion);
+      out.push({
+        planillaId:      l.id,
+        empleadoId:      l.empleadoId,
+        empleadoNombre:  l.empleadoNombre || emp?.nombre || '—',
+        departamento:    emp?.departamento ?? 'Sin departamento',
+        netoAPagar:      l.netoPagar,
+        periodoId:       periodo.id,
+        periodoNombre:   periodo.nombre,
+        fechaAprobacion: periodo.fechaAprobacion,
+        diasPendiente:   dias,
+        alerta:          alertaPorDias(dias),
+      });
+    }
+    // Más viejo (más días) primero.
+    out.sort((a, b) => b.diasPendiente - a.diasPendiente);
+    return out;
+  } catch (err) {
+    console.error('Error leyendo pagos pendientes:', err);
+    return [];
+  }
+}
+
+export interface KPIsPagosPendientes {
+  totalEmpleadosPendientes: number;
+  montoTotalPendiente: number;
+  alertasAmarillas: number;
+  alertasRojas: number;
+  promedioDiasPendiente: number;
+  porPeriodo: Array<{ periodoId: string; periodoNombre: string; cantidad: number; monto: number; maxDias: number; fechaAprobacion?: string }>;
+}
+
+export async function getKPIsPagosPendientes(): Promise<KPIsPagosPendientes> {
+  const pendientes = await getPagosPendientes();
+  if (pendientes.length === 0) {
+    return {
+      totalEmpleadosPendientes: 0, montoTotalPendiente: 0,
+      alertasAmarillas: 0, alertasRojas: 0,
+      promedioDiasPendiente: 0, porPeriodo: [],
+    };
+  }
+  const monto = round2(pendientes.reduce((s, p) => s + p.netoAPagar, 0));
+  const am = pendientes.filter(p => p.alerta === 'amarilla').length;
+  const rj = pendientes.filter(p => p.alerta === 'roja').length;
+  const prom = Math.round(pendientes.reduce((s, p) => s + p.diasPendiente, 0) / pendientes.length);
+
+  const porPeriodoMap = new Map<string, { periodoId: string; periodoNombre: string; cantidad: number; monto: number; maxDias: number; fechaAprobacion?: string }>();
+  for (const p of pendientes) {
+    const cur = porPeriodoMap.get(p.periodoId) ?? {
+      periodoId: p.periodoId, periodoNombre: p.periodoNombre,
+      cantidad: 0, monto: 0, maxDias: 0, fechaAprobacion: p.fechaAprobacion,
+    };
+    cur.cantidad += 1;
+    cur.monto    += p.netoAPagar;
+    cur.maxDias   = Math.max(cur.maxDias, p.diasPendiente);
+    porPeriodoMap.set(p.periodoId, cur);
+  }
+  return {
+    totalEmpleadosPendientes: pendientes.length,
+    montoTotalPendiente: monto,
+    alertasAmarillas: am,
+    alertasRojas: rj,
+    promedioDiasPendiente: prom,
+    porPeriodo: [...porPeriodoMap.values()].sort((a, b) => b.maxDias - a.maxDias),
+  };
 }
 
 /* ============================================================

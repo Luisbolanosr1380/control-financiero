@@ -54,6 +54,7 @@ const ESTADO_PAGO_BADGE: Record<EstadoPagoLinea, { cls: string; text: string }> 
   Pendiente: { cls: 'badge-outline', text: 'Pendiente' },
   Pagado:    { cls: 'badge-olive',   text: 'Pagado' },
   Diferido:  { cls: 'badge-wine',    text: 'Diferido' },
+  Cancelado: { cls: 'badge-mute',    text: 'Cancelado' },   // F-038.4
 };
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
