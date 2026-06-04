@@ -334,6 +334,185 @@ export async function getKPIsPlanilla(): Promise<KPIsPlanilla> {
 }
 
 /* ============================================================
+ * F-042 — Vista por centro de costo + resumen consolidado de pendientes
+ * ============================================================ */
+
+export interface CentroCostoPlanillaItem {
+  centroCostoId: string;
+  centroCostoNombre: string;
+  cantidadEmpleados: number;
+  salariosBase: number;             // suma de Salario Mensual (base + bonif + bono var)
+  prestaciones: number;             // IGSS patronal + Bono14 + Aguinaldo + Vac + Indem
+  costoTotalMensual: number;        // Salario Total (fórmula Airtable)
+  costoTotalAnual: number;          // *12
+  porcentajePrestaciones: number;   // (prestaciones / salariosBase) * 100
+}
+
+export interface PlanillaPorCentroCosto {
+  centrosCosto: CentroCostoPlanillaItem[];
+  totalEmpleados: number;
+  totalCostoMensual: number;
+  totalCostoAnual: number;
+}
+
+const SIN_CC_ID = '__sin_cc__';
+
+export async function getPlanillaPorCentroCosto(): Promise<PlanillaPorCentroCosto> {
+  const empleados = await getEmpleados();
+  const activos = empleados.filter(e => esActivo(e.status));
+
+  const grupos = new Map<string, {
+    id: string;
+    nombre: string;
+    cantidadEmpleados: number;
+    salariosBase: number;
+    prestaciones: number;
+    costoTotalMensual: number;
+  }>();
+
+  for (const e of activos) {
+    const id = e.centroCostoId ?? SIN_CC_ID;
+    const nombre = e.centroCostoNombre ?? 'Sin centro asignado';
+    const prest =
+      e.igssPatronal +
+      e.provisionBono14 +
+      e.provisionAguinaldo +
+      e.provisionVacaciones +
+      e.provisionIndemnizacion;
+    const g = grupos.get(id) ?? { id, nombre, cantidadEmpleados: 0, salariosBase: 0, prestaciones: 0, costoTotalMensual: 0 };
+    g.cantidadEmpleados += 1;
+    g.salariosBase += e.salarioMensual;
+    g.prestaciones += prest;
+    g.costoTotalMensual += e.costoTotalMensual;
+    grupos.set(id, g);
+  }
+
+  const items: CentroCostoPlanillaItem[] = [...grupos.values()]
+    .map(g => ({
+      centroCostoId: g.id,
+      centroCostoNombre: g.nombre,
+      cantidadEmpleados: g.cantidadEmpleados,
+      salariosBase: round2(g.salariosBase),
+      prestaciones: round2(g.prestaciones),
+      costoTotalMensual: round2(g.costoTotalMensual),
+      costoTotalAnual: round2(g.costoTotalMensual * 12),
+      porcentajePrestaciones: g.salariosBase > 0 ? round2((g.prestaciones / g.salariosBase) * 100) : 0,
+    }))
+    .sort((a, b) => b.costoTotalMensual - a.costoTotalMensual);
+
+  const totalCostoMensual = round2(items.reduce((s, i) => s + i.costoTotalMensual, 0));
+  return {
+    centrosCosto: items,
+    totalEmpleados: activos.length,
+    totalCostoMensual,
+    totalCostoAnual: round2(totalCostoMensual * 12),
+  };
+}
+
+export interface PendientePlanillaItem {
+  empleadoId: string;
+  empleadoNombre: string;
+  departamento: string;
+  centroCosto: string;
+  periodoNombre: string;
+  netoAPagar: number;
+  diasPendiente: number;
+  alerta: 'normal' | 'amarilla' | 'naranja' | 'roja';
+  planillaId: string;
+}
+
+export interface DiferidoItem {
+  empleadoId: string;
+  empleadoNombre: string;
+  departamento: string;
+  centroCosto: string;
+  deudaId: string;
+  monto: number;
+  fechaDiferimiento: string;
+  diasEnMora: number;
+}
+
+export interface ResumenSalariosPendientesConsolidado {
+  pendientesPlanilla: {
+    cantidad: number;
+    montoTotal: number;
+    empleados: PendientePlanillaItem[];
+  };
+  diferidos: {
+    cantidad: number;
+    montoTotal: number;
+    empleados: DiferidoItem[];
+  };
+  totalConsolidado: number;
+}
+
+export async function getResumenSalariosPendientesConsolidado(): Promise<ResumenSalariosPendientesConsolidado> {
+  // F-042: import dinámico de planillas para evitar ciclo a nivel de módulo
+  // (planillas.ts ya importa getEmpleados desde acá).
+  const planillasModule = await import('./planillas');
+  const [pendientes, empleados, deudas] = await Promise.all([
+    planillasModule.getPagosPendientes(),
+    getEmpleados({ status: 'todos' }),
+    getDeudas(),
+  ]);
+
+  const empById = new Map(empleados.map(e => [e.id, e]));
+  const empByAcreedor = new Map<string, Empleado>();
+  for (const e of empleados) if (e.acreedorVinculadoId) empByAcreedor.set(e.acreedorVinculadoId, e);
+
+  // PENDIENTES: planilla aprobada sin pago registrado
+  const pendienteItems: PendientePlanillaItem[] = pendientes.map(p => {
+    const emp = empById.get(p.empleadoId);
+    return {
+      empleadoId: p.empleadoId,
+      empleadoNombre: p.empleadoNombre,
+      departamento: p.departamento,
+      centroCosto: emp?.centroCostoNombre ?? 'Sin centro asignado',
+      periodoNombre: p.periodoNombre,
+      netoAPagar: p.netoAPagar,
+      diasPendiente: p.diasPendiente,
+      alerta: p.alerta,
+      planillaId: p.planillaId,
+    };
+  });
+  const pendienteMontoTotal = round2(pendienteItems.reduce((s, p) => s + p.netoAPagar, 0));
+
+  // DIFERIDOS: deudas formales Tipo_Documento = 'Salario Pendiente' con saldo > 0
+  const diferidoItems: DiferidoItem[] = [];
+  for (const d of deudas) {
+    if (d.tipoDocumento !== 'Salario Pendiente') continue;
+    if (d.saldoPendiente <= 0.01) continue;
+    const emp = empByAcreedor.get(d.acreedorId);
+    diferidoItems.push({
+      empleadoId: emp?.id ?? '',
+      empleadoNombre: emp?.nombre ?? d.acreedorNombre,
+      departamento: emp?.departamento ?? 'Sin departamento',
+      centroCosto: emp?.centroCostoNombre ?? d.centroCostoNombre ?? 'Sin centro asignado',
+      deudaId: d.id,
+      monto: d.saldoPendiente,
+      fechaDiferimiento: d.fechaEmision,
+      diasEnMora: d.diasEnMora,
+    });
+  }
+  diferidoItems.sort((a, b) => b.diasEnMora - a.diasEnMora);
+  const diferidoMontoTotal = round2(diferidoItems.reduce((s, d) => s + d.monto, 0));
+
+  return {
+    pendientesPlanilla: {
+      cantidad: pendienteItems.length,
+      montoTotal: pendienteMontoTotal,
+      empleados: pendienteItems,
+    },
+    diferidos: {
+      cantidad: diferidoItems.length,
+      montoTotal: diferidoMontoTotal,
+      empleados: diferidoItems,
+    },
+    totalConsolidado: round2(pendienteMontoTotal + diferidoMontoTotal),
+  };
+}
+
+/* ============================================================
  * CRUD (crear/editar/dar de baja)
  * ============================================================ */
 
