@@ -23,7 +23,7 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { getEmpleados, crearDeudaSalarioPendiente, type Empleado } from './empleados';
 import { calcularQuincena, type AjustesQuincena, type QuincenaCalculada } from '../calculos/planilla-calc';
-import { obtenerFechaHoyGuatemala } from '../utils/fechas';
+import { obtenerFechaHoyGuatemala, diferenciaDias } from '../utils/fechas';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -746,11 +746,11 @@ function alertaPorDias(dias: number): AlertaPendiente {
   return 'normal';
 }
 
-function diasEntre(desdeISO: string | undefined, hoy: Date = new Date()): number {
+function diasEntre(desdeISO: string | undefined): number {
   if (!desdeISO) return 0;
-  const d = new Date(desdeISO);
-  if (!Number.isFinite(d.getTime())) return 0;
-  return Math.max(0, Math.floor((hoy.getTime() - d.getTime()) / 86400000));
+  // F-041: delegar a diferenciaDias que normaliza ambas fechas al día Guatemala
+  // antes de restar — elimina el off-by-one cuando la app corre en otro TZ.
+  return Math.max(0, diferenciaDias(desdeISO));
 }
 
 /** Todas las líneas Pendientes en períodos Aprobada o En pago. */

@@ -7,6 +7,7 @@ import { resolverPeriodo } from '@/lib/db/periodos';
 import { getRolUsuario } from '@/lib/auth/allowlist';
 import { tienePermiso, getLimiteAuros } from '@/lib/auth/permissions';
 import { registrarUsoAuros, getConsumoMensual } from '@/lib/db/uso-auros';
+import { partesFechaHoy } from '@/lib/utils/fechas';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -20,14 +21,20 @@ const DIAS_SEM = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes
 function buildContextoTemporal(hoy: Date): string {
   const mesActual = resolverPeriodo('mes_actual', hoy);
   const mesAnt    = resolverPeriodo('mes_anterior', hoy);
-  const trimestre = Math.floor(hoy.getMonth() / 3) + 1;
+  // F-041: el contexto temporal SIEMPRE en zona Guatemala. partesFechaHoy()
+  // devuelve dia/mes/anio/weekday calculados con TZ_GUATEMALA, no con la TZ
+  // del servidor (Vercel UTC). Antes a las 11 PM hora Guatemala Auros decía
+  // "hoy es 5 de junio" cuando para Stark eran las 11 PM del 4.
+  const partes = partesFechaHoy();
+  const trimestre = Math.floor((partes.mes - 1) / 3) + 1;
 
-  return `CONTEXTO TEMPORAL DE LA CONVERSACIÓN
-Hoy es ${DIAS_SEM[hoy.getDay()]} ${hoy.getDate()} de ${MESES[hoy.getMonth()]} de ${hoy.getFullYear()}.
+  return `CONTEXTO TEMPORAL DE LA CONVERSACIÓN (hora Guatemala, UTC-6)
+Hoy es ${DIAS_SEM[partes.weekday]} ${partes.dia} de ${MESES[partes.mes - 1]} de ${partes.anio}.
 Día ${mesActual.dias_transcurridos} de ${mesActual.dias_totales} del mes (${mesActual.pct_transcurrido}% transcurrido).
-Mes actual: ${MESES[hoy.getMonth()]} ${hoy.getFullYear()} (NO CERRADO).
+Mes actual: ${MESES[partes.mes - 1]} ${partes.anio} (NO CERRADO).
 Último mes cerrado: ${mesAnt.etiqueta_humana}.
-Trimestre: Q${trimestre} ${hoy.getFullYear()}.`;
+Trimestre: Q${trimestre} ${partes.anio}.
+Cuando hables de fechas con el usuario, siempre en zona Guatemala — nunca menciones UTC.`;
 }
 
 function buildSystemPrompt(hoy: Date = new Date()): string {
@@ -39,7 +46,7 @@ REGLAS ESTRICTAS DE PERÍODO Y COMPARACIÓN:
 1. Cuando el usuario pregunte "este mes", "cómo voy", "cuánto llevo este mes", "el facturado del mes", llamá a las tools con periodo="mes_actual". NUNCA respondas con el acumulado YTD a menos que el usuario explícitamente pregunte por "el año", "acumulado", "YTD" o "lo del año".
 2. NUNCA sumes manualmente arrays de meses (p.ej. serieMensualTotal de getAnaliticaIngresos). Si necesitás el monto de un período, PEDILO específicamente con la tool correspondiente y su parámetro periodo.
 3. Cada respuesta de tool incluye un bloque "metadata" con fecha_desde, fecha_hasta, estado_periodo, dias_transcurridos, dias_totales y pct_transcurrido. LEELO antes de redactar.
-4. Si una comparación involucra un período "en_curso" (mes_actual / ytd) contra uno "cerrado", advertí explícitamente: "ojo, ${MESES[hoy.getMonth()]} todavía no está cerrado (${resolverPeriodo('mes_actual', hoy).dias_transcurridos} de ${resolverPeriodo('mes_actual', hoy).dias_totales} días)".
+4. Si una comparación involucra un período "en_curso" (mes_actual / ytd) contra uno "cerrado", advertí explícitamente: "ojo, ${MESES[partesFechaHoy().mes - 1]} todavía no está cerrado (${resolverPeriodo('mes_actual', hoy).dias_transcurridos} de ${resolverPeriodo('mes_actual', hoy).dias_totales} días)".
 5. Cuando el usuario pregunte "cómo voy este mes" o "cómo viene el mes", SIEMPRE incluí en la respuesta el facturado real + la proyección al fin de mes, marcando claramente "real" vs "proyectado". (En PARTE C habrá una tool específica de proyección; mientras tanto, hacé regla de tres sobre dias_transcurridos / dias_totales y declaralo como "proyectado lineal".)
 6. Si el usuario pide "lo cerrado" o "los meses cerrados", usá períodos cerrados (mes_anterior / ultimos_3_meses / ultimos_6_meses) y NO incluyas el mes en curso.
 

@@ -17,7 +17,14 @@
  *
  * Las funciones reciben Date objects o strings YYYY-MM-DD. Devuelven Q
  * con 2 decimales.
+ *
+ * F-041: las funciones que aceptan `fechaCorte` por default usan la fecha
+ * actual EN ZONA GUATEMALA. Esto elimina el off-by-one cuando la función se
+ * evalúa desde un server en zona distinta (Vercel UTC → mostraba 1 día más
+ * de antigüedad en la noche local Guatemala).
  */
+
+import { obtenerFechaHoyGuatemala } from '../utils/fechas';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -38,7 +45,7 @@ export interface Antiguedad {
   textoLegible: string; // ej. "3 años, 4 meses"
 }
 
-export function calcularAntiguedad(fechaIngreso: string | Date, fechaCorte: string | Date = new Date()): Antiguedad {
+export function calcularAntiguedad(fechaIngreso: string | Date, fechaCorte: string | Date = obtenerFechaHoyGuatemala()): Antiguedad {
   const ing = parseFecha(fechaIngreso);
   const cor = parseFecha(fechaCorte);
   if (!ing || !cor || cor < ing) {
@@ -133,9 +140,9 @@ export interface EmpleadoParaCalculo {
  */
 export function calcularProvisionesAcumuladas(
   emp: EmpleadoParaCalculo,
-  fechaCorte: string | Date = new Date(),
+  fechaCorte: string | Date = obtenerFechaHoyGuatemala(),
 ): ProvisionesAcumuladas {
-  const corte = parseFecha(fechaCorte) ?? new Date();
+  const corte = parseFecha(fechaCorte) ?? parseFecha(obtenerFechaHoyGuatemala()) ?? new Date();
   const ingreso = parseFecha(emp.fechaIngreso);
   if (!ingreso || corte < ingreso || !(emp.salarioMensual > 0)) {
     return {
