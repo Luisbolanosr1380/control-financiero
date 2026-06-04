@@ -11,6 +11,16 @@ import {
   type CambiosFacturaPermitidos,
 } from '@/lib/db/facturas';
 import {
+  crearNotaCredito,
+  anularNotaCredito,
+  aprobarNotaCredito,
+  type CrearNotaCreditoInput,
+  type CrearNotaCreditoResult,
+  type AnularNCResult,
+  type AprobarNCResult,
+} from '@/lib/db/notas-credito';
+import { getRolUsuario } from '@/lib/auth/allowlist';
+import {
   registrarCobro, anularCobro, anularCobroLegacy,
   type RegistrarCobroInput, type RegistrarCobroResult, type AnularCobroResult,
 } from '@/lib/db/cobros';
@@ -36,6 +46,7 @@ function revalidarTodo() {
   revalidatePath('/cobros');
   revalidatePath('/cobros/identificar');
   revalidatePath('/retenciones');
+  revalidatePath('/notas-credito');           // F-045
 }
 
 export async function anularFacturaAction(
@@ -100,6 +111,35 @@ export async function registrarCobroAction(formData: FormData): Promise<CobroRes
 
   if (result.ok || result.cobrosCreados > 0) revalidarTodo();
   return avisos.length > 0 ? { ...result, avisos } : result;
+}
+
+/* F-045: emitir nota de crédito desde el detalle de factura. */
+export async function emitirNotaCreditoAction(input: CrearNotaCreditoInput): Promise<CrearNotaCreditoResult> {
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
+  const result = await crearNotaCredito(input, email);
+  if (result.ok) revalidarTodo();
+  return result;
+}
+
+/* F-045: aprobar una NC (solo admin). */
+export async function aprobarNotaCreditoAction(ncId: string): Promise<AprobarNCResult> {
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
+  const rol = getRolUsuario(email);
+  const esAdmin = rol === 'admin';
+  const result = await aprobarNotaCredito(ncId, email || 'sistema', esAdmin);
+  if (result.ok) revalidarTodo();
+  return result;
+}
+
+/* F-045: anular una NC (revierte el saldo). */
+export async function anularNotaCreditoAction(ncId: string, motivo: string): Promise<AnularNCResult> {
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
+  const result = await anularNotaCredito(ncId, motivo, email);
+  if (result.ok) revalidarTodo();
+  return result;
 }
 
 /* F-044: editar campos NO-contables de una factura. */

@@ -6,10 +6,13 @@ import { LINES } from '@/lib/mock-data';
 import { AdjuntoViewer } from '@/components/facturas/adjunto-viewer';
 import { AnularFacturaButton } from '@/components/facturas/anular-factura-button';
 import { EditarFacturaButton } from '@/components/facturas/editar-factura-button';
+import { EmitirNCButton } from '@/components/facturas/emitir-nc-button';
+import { NotasCreditoSection } from '@/components/facturas/notas-credito-section';
 import { RegistrarCobroButton } from '@/components/facturas/registrar-cobro-button';
 import { AnularCobroButton } from '@/components/facturas/anular-cobro-button';
 import type { Banco } from '@/lib/db/bancos';
 import type { GrupoCobro } from '@/lib/db/cobros';
+import type { NotaCredito } from '@/lib/db/notas-credito';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
 const STATUS_BADGE: Record<InvoiceStatus, { cls: string; text: string }> = {
@@ -28,6 +31,8 @@ interface Props {
   bancos: Banco[];
   saldoPendiente: number;   // F-035: viene del server (real, no del balance consolidado)
   cobros: GrupoCobro[];     // F-035: historial agrupado de cobros
+  notasCredito: NotaCredito[];   // F-045
+  esAdmin: boolean;              // F-045: solo admin aprueba NCs > Q5K
 }
 
 const formatFechaShort = (s: string): string =>
@@ -60,7 +65,7 @@ function dedupeComponentes(g: GrupoCobro): { metodo: string; bancoNombre: string
   return [...buckets.values()];
 }
 
-export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros }: Props) {
+export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros, notasCredito, esAdmin }: Props) {
   const badge = STATUS_BADGE[inv.status] ?? { cls: 'badge-mute', text: inv.status };
 
   const sumIva = inv.lineas.reduce((s, l) => s + (l.iva ?? 0), 0);
@@ -116,6 +121,14 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
             subtotal={sumSub}
             iva={sumIva}
             cobrosActivos={cobros.filter(g => g.estadoCobro === 'Activo').length}
+          />
+          <EmitirNCButton
+            facturaId={inv.id}
+            facturaNumero={inv.noFactura}
+            clienteNombre={clienteNombre}
+            total={inv.total}
+            saldoPendiente={saldoPendiente}
+            estadoBruto={inv.estadoBruto}
           />
           <AnularFacturaButton noFactura={inv.noFactura} status={inv.status} />
           <RegistrarCobroButton
@@ -280,6 +293,11 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
             })}
           </div>
         </div>
+      )}
+
+      {/* F-045: Notas de Crédito vinculadas a esta factura. */}
+      {notasCredito.length > 0 && (
+        <NotasCreditoSection notasCredito={notasCredito} esAdmin={esAdmin} />
       )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>

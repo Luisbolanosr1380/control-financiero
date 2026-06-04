@@ -1,8 +1,11 @@
 import Link from 'next/link';
+import { currentUser } from '@clerk/nextjs/server';
 import { getFactura } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { getBancosActivos } from '@/lib/db/bancos';
 import { getSaldoPendiente, getCobrosDeFactura } from '@/lib/db/cobros';
+import { getNotasCreditoFactura } from '@/lib/db/notas-credito';
+import { getRolUsuario } from '@/lib/auth/allowlist';
 import { FacturaDetalle } from '@/components/facturas/factura-detalle';
 import { I } from '@/components/common/icons';
 
@@ -27,12 +30,17 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
     );
   }
 
-  // F-035: leemos saldo real + lista de cobros (agrupados por Cobro_Grupo_ID).
-  const [clientes, bancos, saldoInfo, cobrosFactura] = await Promise.all([
+  // F-035 + F-045: saldo + cobros + NCs vinculadas + rol del usuario actual.
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
+  const rol = getRolUsuario(email);
+
+  const [clientes, bancos, saldoInfo, cobrosFactura, notasCredito] = await Promise.all([
     getClientes(),
     getBancosActivos(),
     getSaldoPendiente(factura.noFactura),
     getCobrosDeFactura(factura.noFactura),
+    getNotasCreditoFactura(factura.id),
   ]);
 
   const cliente = clientes.find(c => c.id === factura.custId);
@@ -45,6 +53,8 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
       bancos={bancos}
       saldoPendiente={saldoPendiente}
       cobros={cobrosFactura}
+      notasCredito={notasCredito}
+      esAdmin={rol === 'admin'}
     />
   );
 }
