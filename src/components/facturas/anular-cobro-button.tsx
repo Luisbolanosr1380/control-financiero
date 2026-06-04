@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { formatearFecha } from '@/lib/utils/fechas';
 import { anularCobroAction } from '@/app/(app)/facturacion/[id]/actions';
 import type { GrupoCobro } from '@/lib/db/cobros';
 
@@ -15,13 +16,8 @@ interface Props {
   totalFactura: number;
 }
 
-function formatFechaShort(s: string): string {
-  if (!s) return '—';
-  const d = s.slice(0, 10);
-  const [y, m, day] = d.split('-');
-  if (!y || !m || !day) return s;
-  return `${day}/${m}/${y}`;
-}
+const formatFechaShort = (s: string): string =>
+  !s ? '—' : formatearFecha(s, 'dd/MM/yyyy');
 
 export function AnularCobroButton({ grupo, saldoActual, totalFactura }: Props) {
   const [open, setOpen] = useState(false);

@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
+import { formatearFecha } from '@/lib/utils/fechas';
 import { LINES } from '@/lib/mock-data';
 import { AdjuntoViewer } from '@/components/facturas/adjunto-viewer';
 import { AnularFacturaButton } from '@/components/facturas/anular-factura-button';
@@ -28,13 +29,8 @@ interface Props {
   cobros: GrupoCobro[];     // F-035: historial agrupado de cobros
 }
 
-function formatFechaShort(s: string): string {
-  if (!s) return '—';
-  const d = s.slice(0, 10);
-  const [y, m, day] = d.split('-');
-  if (!y || !m || !day) return s;
-  return `${day}/${m}/${y}`;
-}
+const formatFechaShort = (s: string): string =>
+  !s ? '—' : formatearFecha(s, 'dd/MM/yyyy');
 
 /** Agrupa componentes del mismo grupo cuando se generaron N records por multi-línea
  *  pero todos comparten método+referencia. Suma sus montos para presentación limpia. */

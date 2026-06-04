@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { formatearFecha } from '@/lib/utils/fechas';
 import { RegistrarPagoButton } from '@/components/deudas/registrar-pago-button';
 import { EditarDeudaButton } from '@/components/deudas/editar-deuda-button';
 import { AnularPagoButton } from '@/components/deudas/anular-pago-button';
@@ -15,13 +16,8 @@ interface Props {
   centros: Array<{ id: string; nombre: string }>;
 }
 
-function formatFecha(s: string): string {
-  if (!s || s === 'SIN-FECHA') return '—';
-  const d = s.slice(0, 10);
-  const [y, m, day] = d.split('-');
-  if (!y || !m || !day) return s;
-  return `${day}/${m}/${y}`;
-}
+const formatFecha = (s: string): string =>
+  !s || s === 'SIN-FECHA' ? '—' : formatearFecha(s, 'dd/MM/yyyy');
 
 export function DeudaDetalle({ deuda: d, pagos, cuentasBanco, acreedores, centros }: Props) {
   const pctAvance = Math.max(0, Math.min(100, d.pctAvance));

@@ -18,6 +18,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { formatearFecha } from '@/lib/utils/fechas';
 import { ajustarLineaAction } from '@/app/(app)/planillas/actions';
 import { ModalAprobarPlanilla } from './modal-aprobar-planilla';
 import { ModalPagarEmpleado } from './modal-pagar-empleado';
@@ -76,13 +77,8 @@ const ESTADO_PAGO_BADGE: Record<EstadoPagoLinea, { cls: string; text: string }> 
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
-function formatFecha(s: string | undefined): string {
-  if (!s || s === 'SIN-FECHA') return '—';
-  const d = s.slice(0, 10);
-  const [y, m, day] = d.split('-');
-  if (!y || !m || !day) return s;
-  return `${day}/${m}/${y}`;
-}
+const formatFecha = (s: string | undefined): string =>
+  !s || s === 'SIN-FECHA' ? '—' : formatearFecha(s, 'dd/MM/yyyy');
 
 export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, bancos }: Props) {
   const [aprobarOpen, setAprobarOpen] = useState(false);

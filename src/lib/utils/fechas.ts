@@ -22,10 +22,21 @@ export const TZ_GUATEMALA = 'America/Guatemala';
 
 type FechaInput = string | Date | null | undefined;
 
+/** Detecta strings 'YYYY-MM-DD' (Date-only de Airtable) sin componente de tiempo. */
+const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
+
 function aDate(fecha: FechaInput): Date | null {
   if (!fecha) return null;
   if (fecha instanceof Date) return Number.isFinite(fecha.getTime()) ? fecha : null;
   try {
+    // F-041: si es Date-only ('YYYY-MM-DD') de Airtable, hay que interpretarlo
+    // como medianoche Guatemala — no UTC. parseISO de "2026-06-04" da UTC
+    // midnight, que al mostrar en GT (-6h) retrocede al día anterior. Usamos
+    // fromZonedTime para fijar el instante correcto.
+    if (DATE_ONLY_RE.test(fecha)) {
+      const d = fromZonedTime(`${fecha}T00:00:00`, TZ_GUATEMALA);
+      return Number.isFinite(d.getTime()) ? d : null;
+    }
     const d = parseISO(fecha);
     return Number.isFinite(d.getTime()) ? d : null;
   } catch {
@@ -130,9 +141,12 @@ export function diferenciaDias(desde: FechaInput, hasta: FechaInput = new Date()
 
 /** Día (1-31), mes (1-12), año, weekday (0-6, domingo=0) en zona Guatemala. */
 export function partesFechaHoy(): { dia: number; mes: number; anio: number; weekday: number } {
-  const iso = obtenerFechaHoyGuatemala();
+  const ahora = new Date();
+  const iso = formatInTimeZone(ahora, TZ_GUATEMALA, 'yyyy-MM-dd');
   const [y, m, d] = iso.split('-').map(Number);
-  // Calculamos el weekday con la fecha parseada en zona Guatemala.
-  const fechaGT = parseISO(iso);
-  return { dia: d, mes: m, anio: y, weekday: fechaGT.getDay() };
+  // weekday: formatInTimeZone con 'i' devuelve ISO (1=lunes…7=domingo).
+  // Convertimos a convención JS getDay (0=domingo, 1=lunes…6=sábado).
+  const isoDay = Number(formatInTimeZone(ahora, TZ_GUATEMALA, 'i'));
+  const weekday = isoDay === 7 ? 0 : isoDay;
+  return { dia: d, mes: m, anio: y, weekday };
 }

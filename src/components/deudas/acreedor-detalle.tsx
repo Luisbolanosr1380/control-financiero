@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { formatearFecha } from '@/lib/utils/fechas';
 import type { Acreedor, Deuda, CategoriaPasivo } from '@/lib/db/deudas';
 import type { PagoDeuda } from '@/lib/db/pagos-deudas';
 
@@ -19,13 +20,8 @@ const CATEGORIA_BADGE: Record<CategoriaPasivo, { cls: string; text: string; icon
   asesores_relacionados: { cls: 'badge-mute',    text: 'Asesor / relacionado', icon: '🤵' },
 };
 
-function formatFecha(s: string): string {
-  if (!s || s === 'SIN-FECHA') return '—';
-  const d = s.slice(0, 10);
-  const [y, m, day] = d.split('-');
-  if (!y || !m || !day) return s;
-  return `${day}/${m}/${y}`;
-}
+const formatFecha = (s: string): string =>
+  !s || s === 'SIN-FECHA' ? '—' : formatearFecha(s, 'dd/MM/yyyy');
 
 export function AcreedorDetalle({ acreedor: a, categoria, deudas, pagos }: Props) {
   const badge = CATEGORIA_BADGE[categoria];

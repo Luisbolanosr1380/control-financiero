@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { formatearFecha } from '@/lib/utils/fechas';
 import type { Acreedor } from '@/lib/db/deudas';
 import type { PagoEnriquecido } from '@/lib/db/pagos-deudas';
 
@@ -14,13 +15,8 @@ interface Props {
 
 const METODOS = ['Transferencia', 'Cheque', 'Efectivo', 'Tarjeta', 'Domiciliado', 'Compensación'];
 
-function formatFecha(s: string): string {
-  if (!s || s === 'SIN-FECHA') return '—';
-  const d = s.slice(0, 10);
-  const [y, m, day] = d.split('-');
-  if (!y || !m || !day) return s;
-  return `${day}/${m}/${y}`;
-}
+const formatFecha = (s: string): string =>
+  !s || s === 'SIN-FECHA' ? '—' : formatearFecha(s, 'dd/MM/yyyy');
 
 export function PagosDeudasClient({ pagos, acreedores }: Props) {
   const router = useRouter();
