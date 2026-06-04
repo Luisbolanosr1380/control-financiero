@@ -16,6 +16,7 @@
 import { getFacturasLiviano, predicadoFiltro } from './facturas';
 import { getKPIsPagosPendientes } from './planillas';
 import { getKPIsDeudas } from './deudas';
+import { getNotasCreditoPendientesAprobacion } from './notas-credito';
 
 export interface SidebarBadges {
   /** Facturas en cobranza activa con Estatus_Cobranza = VENCIDA. Matchea /facturacion tab "Vencidas". */
@@ -26,6 +27,8 @@ export interface SidebarBadges {
   pagosPendientesAlertasRojas: number;
   /** Deudas vigentes con vencida=true o diasEnMora>0. Matchea /deudas tab "Vencidas". */
   deudasVencidas: number;
+  /** F-045: NCs en estado Pendiente Aprobación (badge solo se muestra a admin). */
+  ncsPendientesAprobacion: number;
 }
 
 async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
@@ -37,10 +40,11 @@ async function safe<T>(fn: () => Promise<T>): Promise<T | null> {
 }
 
 export async function getSidebarBadges(): Promise<SidebarBadges> {
-  const [livianasResult, kpResult, kdResult] = await Promise.all([
+  const [livianasResult, kpResult, kdResult, ncsPendResult] = await Promise.all([
     safe(() => getFacturasLiviano()),
     safe(() => getKPIsPagosPendientes()),
     safe(() => getKPIsDeudas()),
+    safe(() => getNotasCreditoPendientesAprobacion()),
   ]);
 
   const facturasVencidas = livianasResult
@@ -52,5 +56,6 @@ export async function getSidebarBadges(): Promise<SidebarBadges> {
     pagosPendientes:             kpResult?.totalEmpleadosPendientes ?? 0,
     pagosPendientesAlertasRojas: kpResult?.alertasRojas ?? 0,
     deudasVencidas:              kdResult?.vencidas.cantidad ?? 0,
+    ncsPendientesAprobacion:     ncsPendResult?.length ?? 0,
   };
 }

@@ -25,6 +25,8 @@ interface Props {
   } | null;
   pendientesKpis?: KPIsPagosPendientes;   // F-038.4
   esOperativo?: boolean;
+  /** F-045: NCs pendientes de aprobación — solo se pasa si el usuario es admin. */
+  alertaNCsPendientes?: { cantidad: number; monto: number } | null;
 }
 
 const RIESGO_BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
@@ -42,7 +44,7 @@ function TendenciaIcon({ t }: { t: Tendencia }) {
   return <span style={{ display: 'inline-block', width: 9, height: 2, background: 'var(--ink-4)', borderRadius: 1 }} />;
 }
 
-export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo, alertaDeudasVencidas, pendientesKpis, esOperativo }: Props) {
+export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo, alertaDeudasVencidas, pendientesKpis, esOperativo, alertaNCsPendientes }: Props) {
   const router = useRouter();
 
   const agingTotal = aging.reduce((s, b) => s + b.amount, 0);
@@ -76,6 +78,32 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
           </div>
           <span style={{ fontSize: 12.5, color: 'var(--wine)', display: 'flex', alignItems: 'center', gap: 4 }}>
             Ver detalle <I.ChevDown size={12} style={{ transform: 'rotate(-90deg)' }} />
+          </span>
+        </button>
+      )}
+
+      {/* F-045: banner NCs pendientes de aprobación (solo admin) */}
+      {alertaNCsPendientes && (
+        <button
+          type="button"
+          onClick={() => router.push('/notas-credito?estado=pendientes')}
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12,
+            width: '100%', textAlign: 'left',
+            background: '#FBF1DC', border: '1px solid var(--warn)',
+            borderLeft: '4px solid var(--warn)', borderRadius: 6,
+            padding: '12px 16px', marginBottom: 18, cursor: 'pointer',
+            fontFamily: 'inherit',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: 'var(--ink-2)' }}>
+            <I.Alert size={16} style={{ color: 'var(--warn)' }} />
+            <span style={{ fontSize: 13.5, fontWeight: 600 }}>
+              {alertaNCsPendientes.cantidad} nota{alertaNCsPendientes.cantidad === 1 ? '' : 's'} de crédito espera{alertaNCsPendientes.cantidad === 1 ? '' : 'n'} tu aprobación · <span className="num">{Q(alertaNCsPendientes.monto)}</span>
+            </span>
+          </div>
+          <span style={{ fontSize: 12.5, color: 'var(--ink-2)', display: 'flex', alignItems: 'center', gap: 4 }}>
+            Revisar <I.ChevDown size={12} style={{ transform: 'rotate(-90deg)' }} />
           </span>
         </button>
       )}

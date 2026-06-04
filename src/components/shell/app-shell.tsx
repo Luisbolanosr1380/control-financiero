@@ -13,13 +13,14 @@ interface AppShellProps {
   deudasVencidasCount?: number;
   pagosPendientesCount?: number;           // F-038.4
   pagosPendientesAlertasRojas?: number;    // F-038.4
+  ncsPendientesCount?: number;             // F-045
   rol: Role;
   email: string;
   consumoAuros?: number;
   limiteAuros?: number;
 }
 
-export function AppShell({ children, facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol, email, consumoAuros, limiteAuros }: AppShellProps) {
+export function AppShell({ children, facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, email, consumoAuros, limiteAuros }: AppShellProps) {
   const [aiOpen, setAiOpen] = useState(false);
   const [showCmdK, setShowCmdK] = useState(false);
 
@@ -47,6 +48,7 @@ export function AppShell({ children, facturasVencidasCount, deudasVencidasCount,
         deudasVencidasCount={deudasVencidasCount}
         pagosPendientesCount={pagosPendientesCount}
         pagosPendientesAlertasRojas={pagosPendientesAlertasRojas}
+        ncsPendientesCount={ncsPendientesCount}
         rol={rol}
         email={email}
       />

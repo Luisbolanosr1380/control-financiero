@@ -18,7 +18,7 @@ interface NavGroup {
   items: NavItem[];
 }
 
-function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: number; pagosPendientesCount?: number; pagosPendientesAlertasRojas?: number; rol?: Role } = {}): NavGroup[] {
+function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: number; pagosPendientesCount?: number; pagosPendientesAlertasRojas?: number; ncsPendientesCount?: number; rol?: Role } = {}): NavGroup[] {
   // F-043: badge dinámico de facturas vencidas (antes hardcoded "5 vencidas").
   // Fuente: getFacturasLiviano + predicadoFiltro('vencidas') vía getSidebarBadges.
   const facturasBadge = opts.facturasVencidasCount && opts.facturasVencidasCount > 0
@@ -35,6 +35,11 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
       ? { text: `${opts.pagosPendientesCount} pend.`, kind: 'warn' as const }
       : undefined;
   const rol = opts.rol;
+  const esAdmin0 = rol === 'admin';
+  // F-045: badge "X aprobar" SOLO para admin (los demás usuarios no aprueban).
+  const ncsBadge = esAdmin0 && opts.ncsPendientesCount && opts.ncsPendientesCount > 0
+    ? { text: `${opts.ncsPendientesCount} aprobar`, kind: 'warn' as const }
+    : undefined;
   const verAvanzada = rol && PERMISSIONS[rol].verAnaliticaAvanzada;
   const esAdmin = rol === 'admin';
 
@@ -42,6 +47,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
     { group: 'Operación', items: [
       { href: '/dashboard',    label: 'Dashboard',    icon: 'Dashboard' },
       { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: facturasBadge },
+      { href: '/notas-credito',label: 'Notas de Crédito', icon: 'Receipt', badge: ncsBadge },   // F-045
       { href: '/cobros',       label: 'Cobros',       icon: 'Coins' },
       { href: '/cobros/identificar', label: 'Identificar pago', icon: 'Search' },
       { href: '/clientes',     label: 'Clientes',     icon: 'Users' },
@@ -88,13 +94,14 @@ interface SidebarProps {
   deudasVencidasCount?: number;
   pagosPendientesCount?: number;          // F-038.4
   pagosPendientesAlertasRojas?: number;   // F-038.4
+  ncsPendientesCount?: number;            // F-045
   rol?: Role;
   email?: string;
 }
 
-export function Sidebar({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol }: SidebarProps = {}) {
+export function Sidebar({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol }: SidebarProps = {}) {
   const pathname = usePathname();
-  const NAV = buildNav({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol });
+  const NAV = buildNav({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol });
 
   // El item activo es el de href más específico que matchea (evita que
   // /cobros y /cobros/identificar se marquen ambos a la vez).

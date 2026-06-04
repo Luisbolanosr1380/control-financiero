@@ -36,6 +36,7 @@ export default async function AppLayout({
       deudasVencidasCount={badges.deudasVencidas}
       pagosPendientesCount={badges.pagosPendientes}
       pagosPendientesAlertasRojas={badges.pagosPendientesAlertasRojas}
+      ncsPendientesCount={badges.ncsPendientesAprobacion}
       rol={rol}
       email={email}
       consumoAuros={consumoAuros}
