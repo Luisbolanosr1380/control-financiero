@@ -10,6 +10,7 @@ import { LINES, MONTHLY, AI_INSIGHTS } from '@/lib/mock-data';
 import type { LineStats, AgingEntry, MonthlyEntry, AIInsight } from '@/lib/types';
 import type { DashboardKPIs, TopDeudor } from '@/lib/db/kpis';
 import type { AnalisisCliente, ClienteClasificacion, Tendencia } from '@/lib/db/clientes-analisis';
+import type { KPIsPagosPendientes } from '@/lib/db/planillas';
 
 interface Props {
   kpis: DashboardKPIs;
@@ -22,6 +23,7 @@ interface Props {
     cantidad: number;
     diasPromedio: number;
   } | null;
+  pendientesKpis?: KPIsPagosPendientes;   // F-038.4
   esOperativo?: boolean;
 }
 
@@ -40,7 +42,7 @@ function TendenciaIcon({ t }: { t: Tendencia }) {
   return <span style={{ display: 'inline-block', width: 9, height: 2, background: 'var(--ink-4)', borderRadius: 1 }} />;
 }
 
-export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo, alertaDeudasVencidas, esOperativo }: Props) {
+export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo, alertaDeudasVencidas, pendientesKpis, esOperativo }: Props) {
   const router = useRouter();
 
   const agingTotal = aging.reduce((s, b) => s + b.amount, 0);
@@ -129,6 +131,45 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
         </div>
       )}
       {kpis.numServiciosActivos <= kpis.numFacturasActivas && <div style={{ marginBottom: 22 }} />}
+
+      {/* F-038.4: card de pagos pendientes a empleados. Se oculta si no hay pendientes. */}
+      {pendientesKpis && pendientesKpis.totalEmpleadosPendientes > 0 && (
+        <div
+          className="card"
+          style={{
+            marginBottom: 22,
+            borderColor: pendientesKpis.alertasRojas > 0 ? 'var(--wine)' : pendientesKpis.alertasAmarillas > 0 ? 'var(--warn)' : 'var(--line-2)',
+            background: pendientesKpis.alertasRojas > 0 ? 'rgba(123, 28, 45, 0.04)' : undefined,
+          }}
+        >
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', padding: '14px 20px', gap: 14, alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: 11.5, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--ink-4)', marginBottom: 6 }}>
+                ⏸ Pagos pendientes a empleados
+              </div>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, flexWrap: 'wrap' }}>
+                <span className="num" style={{ fontSize: 22, fontWeight: 600, color: 'var(--ink)' }}>{Q(pendientesKpis.montoTotalPendiente)}</span>
+                <span style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
+                  <strong className="num">{pendientesKpis.totalEmpleadosPendientes}</strong> empleado{pendientesKpis.totalEmpleadosPendientes === 1 ? '' : 's'} esperando
+                </span>
+                {pendientesKpis.alertasAmarillas > 0 && (
+                  <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>
+                    · ⚠ <strong className="num">{pendientesKpis.alertasAmarillas}</strong> amarilla{pendientesKpis.alertasAmarillas === 1 ? '' : 's'}
+                  </span>
+                )}
+                {pendientesKpis.alertasRojas > 0 && (
+                  <span style={{ fontSize: 12, color: 'var(--wine)', fontWeight: 500 }}>
+                    · 🔴 <strong className="num">{pendientesKpis.alertasRojas}</strong> roja{pendientesKpis.alertasRojas === 1 ? '' : 's'} (10+ días)
+                  </span>
+                )}
+              </div>
+            </div>
+            <button className="btn btn-secondary" onClick={() => router.push('/planillas/pendientes')}>
+              Ver todos <I.ArrowRight size={11} />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Dos columnas: líneas + alertas */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20, marginBottom: 22 }}>

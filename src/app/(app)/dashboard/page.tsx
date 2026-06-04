@@ -4,6 +4,7 @@ import { getClientes } from '@/lib/db/clientes';
 import { getDashboardKPIs, getLineStats, getAging, getTopDeudores } from '@/lib/db/kpis';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getKPIsDeudas } from '@/lib/db/deudas';
+import { getKPIsPagosPendientes } from '@/lib/db/planillas';
 import { getRolUsuario } from '@/lib/auth/allowlist';
 import { DashboardClient } from '@/components/dashboard/dashboard-client';
 
@@ -17,13 +18,14 @@ export default async function DashboardPage() {
 
   const [facturas, clientes] = await Promise.all([getFacturas(), getClientes()]);
 
-  const [kpis, lineStats, aging, topDeudores, analisis, deudasKpis] = await Promise.all([
+  const [kpis, lineStats, aging, topDeudores, analisis, deudasKpis, pendientesKpis] = await Promise.all([
     getDashboardKPIs(facturas),
     getLineStats(facturas),
     getAging(facturas),
     getTopDeudores(5, facturas, clientes),
     getAnalisisClientes(),
     getKPIsDeudas(),
+    getKPIsPagosPendientes(),   // F-038.4
   ]);
 
   // Banner de alerta de pasivos en mora (F-027): se muestra si el monto
@@ -58,6 +60,7 @@ export default async function DashboardPage() {
       topDeudores={topDeudores}
       clientesRiesgo={clientesRiesgo}
       alertaDeudasVencidas={alertaDeudasVencidas}
+      pendientesKpis={pendientesKpis}
       esOperativo={esOperativo}
     />
   );
