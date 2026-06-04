@@ -1,5 +1,6 @@
 import { getFacturasPagina, getFacturasLiviano, type FiltroTabFactura } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
+import { getKPIsNotasCredito } from '@/lib/db/notas-credito';
 import { FacturasListClient, type FacturasTab } from '@/components/facturas/list-client';
 
 export const revalidate = 30;
@@ -22,10 +23,11 @@ export default async function FacturacionPage({
   // dependen de la ventana FECHA_EMISION desc del default global.
   // Las livianas siguen siendo el dataset completo: alimentan los counts
   // por tab y el header agregado de F-033.
-  const [pagina, livianas, clientes] = await Promise.all([
+  const [pagina, livianas, clientes, ncsKpis] = await Promise.all([
     getFacturasPagina({ limit: 50, filtro }),
     getFacturasLiviano(),
     getClientes(),
+    getKPIsNotasCredito(),   // F-045: para mostrar facturado bruto vs neto
   ]);
   return (
     <FacturasListClient
@@ -36,6 +38,7 @@ export default async function FacturacionPage({
       facturasLivianas={livianas}
       clientes={clientes}
       initialTab={initialTab}
+      ncsActivasAnio={ncsKpis.montoActivasAnio}
     />
   );
 }

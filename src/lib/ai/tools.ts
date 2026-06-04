@@ -13,6 +13,11 @@
 import { tool } from 'ai';
 import { z } from 'zod';
 import { getFacturas, getHistorialEdicionesFactura } from '@/lib/db/facturas';
+import {
+  getNotasCredito,
+  getNotasCreditoPendientesAprobacion,
+  getKPIsNotasCredito,
+} from '@/lib/db/notas-credito';
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
 import { getTopDeudores } from '@/lib/db/kpis';
@@ -1270,6 +1275,69 @@ export const aiTools = {
         facturaId: input.facturaId,
         cantidad: entradas.length,
         entradas,
+      };
+    },
+  }),
+
+  getNotasCreditoFactura: tool({
+    description:
+      'F-045: lista las notas de crédito vinculadas a una factura específica, con estado, motivo, monto y fechas. ' +
+      'NCs activas reducen el saldo cobrable de la factura. ' +
+      'USAR cuando el usuario pregunte: "¿qué NCs tiene la factura X?", "¿le emití alguna NC a esta factura?", ' +
+      '"¿cuál es el saldo después de NCs?". Requiere el record ID de la factura.',
+    parameters: z.object({
+      facturaId: z.string().describe('Record ID de la factura (rec...).'),
+    }),
+    execute: async (input) => {
+      const todas = await getNotasCredito();
+      const ncs = todas.filter(n => n.facturaId === input.facturaId);
+      return {
+        facturaId: input.facturaId,
+        cantidad: ncs.length,
+        notas: ncs.map(n => ({
+          numeroNC: n.numeroNC,
+          fechaEmision: n.fechaEmision,
+          monto: n.monto,
+          motivo: n.motivo,
+          estado: n.estado,
+          emitidaPor: n.emitidaPor,
+          aprobadaPor: n.aprobadaPor,
+        })),
+      };
+    },
+  }),
+
+  getKPIsNotasCredito: tool({
+    description:
+      'F-045: KPIs anuales de notas de crédito — total activas del año + monto, pendientes de aprobación + monto, ' +
+      'anuladas del año + monto, agrupación por motivo y por cliente (top 10). ' +
+      'CRÍTICO para hablar de "facturado neto" = facturado bruto - montoActivasAnio. ' +
+      'USAR cuando el usuario pregunte: "¿cuántas NCs emití este año?", "¿cuánto suman las NCs?", ' +
+      '"¿cuál es mi facturado neto?", "¿por qué motivo emito más NCs?", "¿qué cliente tiene más NCs?".',
+    parameters: z.object({}),
+    execute: async () => await getKPIsNotasCredito(),
+  }),
+
+  getNotasCreditoPendientesAprobacion: tool({
+    description:
+      'F-045: NCs en estado "Pendiente Aprobación" (todas las > Q5,000 que esperan aprobación de admin). ' +
+      'Solo admin puede aprobarlas — el frontend ya bloquea para otros roles. ' +
+      'USAR cuando admin pregunte "¿qué NCs tengo pendientes de aprobar?", "¿hay NCs esperando mi visto bueno?".',
+    parameters: z.object({}),
+    execute: async () => {
+      const ncs = await getNotasCreditoPendientesAprobacion();
+      return {
+        cantidad: ncs.length,
+        montoTotal: ncs.reduce((s, n) => s + n.monto, 0),
+        notas: ncs.map(n => ({
+          numeroNC: n.numeroNC,
+          fechaEmision: n.fechaEmision,
+          cliente: n.clienteNombre,
+          factura: n.facturaNumero,
+          monto: n.monto,
+          motivo: n.motivo,
+          emitidaPor: n.emitidaPor,
+        })),
       };
     },
   }),

@@ -124,9 +124,10 @@ interface Props {
   facturasLivianas: InvoiceLiviano[];
   clientes: Customer[];
   initialTab?: FacturasTab;
+  ncsActivasAnio?: number;   // F-045
 }
 
-export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes, initialTab = 'todas' }: Props) {
+export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes, initialTab = 'todas', ncsActivasAnio = 0 }: Props) {
   const router = useRouter();
   // F-034: el tab manda en URL — el componente se re-monta vía key={tab} cuando
   // cambia, así initialInvoices ya viene del server filtrado por el tab activo.
@@ -235,6 +236,11 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
             {agregadoTab.cantidad > rows.length && <> · faltan <span className="num">{agregadoTab.cantidad - rows.length}</span> por cargar</>}
             {' · '}ordenadas por fecha
           </div>
+          {ncsActivasAnio > 0 && (
+            <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 4 }}>
+              + <span className="num" style={{ color: 'var(--wine)' }}>{Q(ncsActivasAnio)}</span> en NCs activas del año reducen el facturado neto. <a href="/notas-credito" style={{ color: 'var(--accent)', textDecoration: 'none' }}>Ver notas de crédito →</a>
+            </div>
+          )}
         </div>
         <div className="page-actions">
           <button className="btn btn-secondary"><I.Download size={13} /> Exportar</button>

@@ -216,6 +216,23 @@ REGLAS de reporte:
 - Si pregunta "¿cuántas vencidas?" → SOLO EMITIDA + vencida. Las PENDIENTE-vencidas se reportan SOLO si el usuario pregunta específicamente por Pendientes.
 - Cuando reportes Por cobrar, ofrecé al final una línea como "Si querés ver TODO lo no cobrado (incluyendo X pendientes), el total es Q[carteraTotal] — está en el tab 'Cartera total'".
 
+NOTAS DE CRÉDITO (F-045):
+- Una NC REDUCE el saldo pendiente de una factura, NO su TOTAL original. La
+  factura es INMUTABLE — su TOTAL nunca cambia. La NC es un evento posterior.
+- "Facturado bruto" = suma de TOTALES de facturas (lo que se emitió SAT-side).
+  "Facturado neto" = bruto - NCs activas (lo que realmente espera cobrarse).
+  Cuando el usuario diga "facturado" sin calificar, asumir BRUTO y aclarar
+  ofreciendo el neto.
+- Las NCs > Q5,000 requieren aprobación de admin antes de activarse. Mientras
+  están en 'Pendiente Aprobación' NO reducen el saldo todavía.
+- Estados: Borrador, Pendiente Aprobación, Aprobada, Activa, Anulada. Solo
+  Activa reduce saldo. Anulada lo revierte (el saldo sube de vuelta).
+- Tools: getKPIsNotasCredito (totales del año + por motivo/cliente),
+  getNotasCreditoFactura(facturaId) (NCs de una factura específica),
+  getNotasCreditoPendientesAprobacion (solo útil si el usuario es admin).
+- Cuando el usuario pregunte sobre NCs, distinguir SIEMPRE Activas vs
+  Pendientes vs Anuladas — son cosas distintas contablemente.
+
 FACTURAS — EDICIÓN (F-044):
 - Campos editables: NÚMERO de factura, FECHA de emisión, OBSERVACIONES. Cualquier
   otro cambio (monto, cliente, IVA, estado) requiere ANULAR + REFACTURAR — no es
