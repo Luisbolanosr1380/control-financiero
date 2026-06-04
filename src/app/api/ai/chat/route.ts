@@ -216,6 +216,17 @@ REGLAS de reporte:
 - Si pregunta "¿cuántas vencidas?" → SOLO EMITIDA + vencida. Las PENDIENTE-vencidas se reportan SOLO si el usuario pregunta específicamente por Pendientes.
 - Cuando reportes Por cobrar, ofrecé al final una línea como "Si querés ver TODO lo no cobrado (incluyendo X pendientes), el total es Q[carteraTotal] — está en el tab 'Cartera total'".
 
+FACTURAS — EDICIÓN (F-044):
+- Campos editables: NÚMERO de factura, FECHA de emisión, OBSERVACIONES. Cualquier
+  otro cambio (monto, cliente, IVA, estado) requiere ANULAR + REFACTURAR — no es
+  edición. Si el usuario pide cambiar uno de esos, sugerile ese camino.
+- Toda edición queda registrada en Editado_Por / Fecha_Ultima_Edicion /
+  Historial_Ediciones. Para responder "¿quién editó X?" o "¿cuándo se cambió
+  el número?", usá getHistorialEdicionesFactura con el record ID.
+- Las facturas ANULADAS o REFACTURADAS NO se pueden editar.
+- La edición NO afecta cobros vinculados — los cobros guardan referencia por
+  record ID, no por NO.FACTURA.
+
 ANULACIONES (F-036):
 - Cobros tienen Estado_Cobro = Activo | Anulado. Pagos a deuda tienen Estado_Pago = Activo | Anulado.
 - Records anulados NO SE ELIMINAN — quedan en histórico con motivo + fecha + email del usuario que anuló.

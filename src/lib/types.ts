@@ -78,6 +78,12 @@ export interface Invoice {
   adjuntoUrl?: string;
   adjuntoNombre?: string;
   asientoRef?: string;
+  /** F-044: email del último editor (campos no-contables). undefined si nunca se editó. */
+  editadoPor?: string;
+  /** F-044: ISO datetime del último cambio. undefined si nunca se editó. */
+  fechaUltimaEdicion?: string;
+  /** F-044: texto libre line-by-line con cambios históricos. Para parsear, ver getHistorialEdicionesFactura. */
+  historialEdiciones?: string;
 }
 
 export interface LineStats {

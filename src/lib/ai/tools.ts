@@ -12,7 +12,7 @@
  */
 import { tool } from 'ai';
 import { z } from 'zod';
-import { getFacturas } from '@/lib/db/facturas';
+import { getFacturas, getHistorialEdicionesFactura } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
 import { getTopDeudores } from '@/lib/db/kpis';
@@ -1251,6 +1251,27 @@ export const aiTools = {
       'RESPONDER SIEMPRE diferenciando los dos buckets — son cosas distintas operacionalmente.',
     parameters: z.object({}),
     execute: async () => await getResumenSalariosPendientesConsolidado(),
+  }),
+
+  getHistorialEdicionesFactura: tool({
+    description:
+      'F-044: log de ediciones no-contables de una factura específica (número, fecha emisión, observaciones). ' +
+      'Devuelve lista de entradas con timestamp, email del editor y los cambios concretos ("campo: antes → después"). ' +
+      'NO incluye anulaciones ni cobros — solo ediciones del módulo F-044. ' +
+      'USAR cuando el usuario pregunte: "¿quién editó la factura X?", "¿cuándo se cambió el número?", ' +
+      '"¿cuál era el número original?", "¿qué cambios tiene esta factura?". ' +
+      'Requiere el record ID de Airtable (rec...).',
+    parameters: z.object({
+      facturaId: z.string().describe('Record ID de la factura en Airtable (rec...).'),
+    }),
+    execute: async (input) => {
+      const entradas = await getHistorialEdicionesFactura(input.facturaId);
+      return {
+        facturaId: input.facturaId,
+        cantidad: entradas.length,
+        entradas,
+      };
+    },
   }),
 } as const;
 

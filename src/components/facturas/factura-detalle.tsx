@@ -5,6 +5,7 @@ import { formatearFecha } from '@/lib/utils/fechas';
 import { LINES } from '@/lib/mock-data';
 import { AdjuntoViewer } from '@/components/facturas/adjunto-viewer';
 import { AnularFacturaButton } from '@/components/facturas/anular-factura-button';
+import { EditarFacturaButton } from '@/components/facturas/editar-factura-button';
 import { RegistrarCobroButton } from '@/components/facturas/registrar-cobro-button';
 import { AnularCobroButton } from '@/components/facturas/anular-cobro-button';
 import type { Banco } from '@/lib/db/bancos';
@@ -98,9 +99,24 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
           </div>
           <div className="page-subtitle" style={{ marginTop: 6 }}>
             {clienteNombre} · Emitida {formatDate(inv.fechaEmision)} · Vence {formatDate(inv.fechaVencimiento)}
+            {inv.fechaUltimaEdicion && (
+              <span
+                title={`Editada el ${formatDate(inv.fechaUltimaEdicion)}${inv.editadoPor ? ` por ${inv.editadoPor}` : ''}`}
+                style={{ marginLeft: 8, fontSize: 11 }}
+              >
+                · ✏️ Editada
+              </span>
+            )}
           </div>
         </div>
         <div className="page-actions">
+          <EditarFacturaButton
+            factura={inv}
+            clienteNombre={clienteNombre}
+            subtotal={sumSub}
+            iva={sumIva}
+            cobrosActivos={cobros.filter(g => g.estadoCobro === 'Activo').length}
+          />
           <AnularFacturaButton noFactura={inv.noFactura} status={inv.status} />
           <RegistrarCobroButton
             noFactura={inv.noFactura}

@@ -2,7 +2,14 @@
 
 import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
-import { anularFactura, type AnularFacturaResult, type MotivoAnulacion } from '@/lib/db/facturas';
+import {
+  anularFactura,
+  editarFacturaNoContable,
+  type AnularFacturaResult,
+  type EditarFacturaResult,
+  type MotivoAnulacion,
+  type CambiosFacturaPermitidos,
+} from '@/lib/db/facturas';
 import {
   registrarCobro, anularCobro, anularCobroLegacy,
   type RegistrarCobroInput, type RegistrarCobroResult, type AnularCobroResult,
@@ -93,6 +100,18 @@ export async function registrarCobroAction(formData: FormData): Promise<CobroRes
 
   if (result.ok || result.cobrosCreados > 0) revalidarTodo();
   return avisos.length > 0 ? { ...result, avisos } : result;
+}
+
+/* F-044: editar campos NO-contables de una factura. */
+export async function editarFacturaAction(
+  facturaId: string,
+  cambios: CambiosFacturaPermitidos,
+): Promise<EditarFacturaResult> {
+  const user = await currentUser();
+  const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
+  const result = await editarFacturaNoContable(facturaId, cambios, email);
+  if (result.ok) revalidarTodo();
+  return result;
 }
 
 /* F-036: anular un cobro por grupoId (o por recordId si es legacy). */

@@ -25,6 +25,12 @@ export const F = {
   ADJUNTO:          'ADJUNTO ',                          // con espacio al final; multipleAttachments
   ASIENTO_REF:      'ASIENTO_REF',
   OBSERVACIONES:    'Observaciones:',                    // con dos puntos al final; multilineText
+  // F-044 auditoría de edición no-contable. Campos opcionales en Airtable —
+  // si todavía no existen, la lectura cae a undefined y la escritura es
+  // fail-soft (un update separado). NO bloquear si faltan.
+  EDITADO_POR:      'Editado_Por',                       // single line text
+  FECHA_ULTIMA_EDIT:'Fecha_Ultima_Edicion',              // datetime
+  HISTORIAL_EDIT:   'Historial_Ediciones',               // long text
 } as const;
 
 // CENTRO_COSTO en Airtable es un linked record → llega como [recordId].
@@ -108,6 +114,10 @@ interface RawRow {
   adjuntoUrl?: string;
   adjuntoNombre?: string;
   asientoRef: string;
+  // F-044 auditoría (opcional)
+  editadoPor?: string;
+  fechaUltimaEdicion?: string;
+  historialEdiciones?: string;
 }
 
 function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
@@ -168,6 +178,9 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
     adjuntoUrl: adjunto?.url,
     adjuntoNombre: adjunto?.filename,
     asientoRef: String(f[F.ASIENTO_REF] ?? ''),
+    editadoPor:         f[F.EDITADO_POR]       ? String(f[F.EDITADO_POR])       : undefined,
+    fechaUltimaEdicion: f[F.FECHA_ULTIMA_EDIT] ? String(f[F.FECHA_ULTIMA_EDIT]) : undefined,
+    historialEdiciones: f[F.HISTORIAL_EDIT]    ? String(f[F.HISTORIAL_EDIT])    : undefined,
   };
 }
 
@@ -258,6 +271,9 @@ export function consolidateRecords(records: { id: string; fields: FieldSet }[]):
       adjuntoUrl:        conAdjunto.adjuntoUrl,
       adjuntoNombre:     conAdjunto.adjuntoNombre,
       asientoRef:        principal.asientoRef || undefined,
+      editadoPor:         principal.editadoPor,
+      fechaUltimaEdicion: principal.fechaUltimaEdicion,
+      historialEdiciones: principal.historialEdiciones,
     });
   }
 

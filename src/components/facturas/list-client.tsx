@@ -331,7 +331,17 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
                       setSelected(s);
                     }} />
                   </td>
-                  <td className="num cell-strong">{inv.noFactura}</td>
+                  <td className="num cell-strong">
+                    {inv.noFactura}
+                    {inv.fechaUltimaEdicion && (
+                      <span
+                        title={`Editada el ${formatDateDDMMYYYY(inv.fechaUltimaEdicion)}${inv.editadoPor ? ` por ${inv.editadoPor}` : ''}`}
+                        style={{ marginLeft: 6, fontSize: 11, color: 'var(--ink-4)' }}
+                      >
+                        ✏️
+                      </span>
+                    )}
+                  </td>
                   <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{formatDateDDMMYYYY(inv.fechaEmision)}</td>
                   <td className="cell-strong">{cust?.short ?? inv.custId ?? '—'}</td>
                   <td>

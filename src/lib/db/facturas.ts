@@ -1,5 +1,6 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { obtenerFechaHoyGuatemala } from "../utils/fechas";
+import { formatInTimeZone } from 'date-fns-tz';
 import { consolidateRecords, F } from './mappers';
 import { INVOICES as MOCK_INVOICES } from '../mock-data';
 import type { Invoice, InvoiceEstadoBruto } from '../types';
@@ -61,6 +62,10 @@ export interface InvoiceLiviano {
   estadoBruto: InvoiceEstadoBruto;
   vencida: boolean;
   numLineas: number;   // F-034.2: líneas crudas que se consolidaron en esta factura
+  /** F-044: si fue editada, ISO datetime del último cambio (para mostrar ✏️ en lista). */
+  fechaUltimaEdicion?: string;
+  /** F-044: email del último editor — usado en el tooltip del ✏️. */
+  editadoPor?: string;
 }
 
 const norm = (e: unknown) => String(e ?? '').toUpperCase().trim();
@@ -91,11 +96,17 @@ export async function getFacturasLiviano(): Promise<InvoiceLiviano[]> {
   }
   try {
     // F-034: sin maxRecords — `.all()` agota todas las páginas.
-    const records = await airtable(TABLES.FACTURAS)
-      .select({
-        fields: [F.NO_FACTURA, F.TOTAL, F.ESTADO, F.ESTATUS_COBRANZA, F.CLIENTE],
-      })
-      .all();
+    // F-044 fail-soft: pedimos también los campos de auditoría para mostrar
+    // el ✏️ en la lista. Si los campos aún no existen en Airtable, la query
+    // falla con INVALID_FIELD_NAME; ahí caemos al set base y seguimos.
+    const FIELDS_BASE = [F.NO_FACTURA, F.TOTAL, F.ESTADO, F.ESTATUS_COBRANZA, F.CLIENTE];
+    const FIELDS_CON_AUDIT = [...FIELDS_BASE, F.EDITADO_POR, F.FECHA_ULTIMA_EDIT];
+    let records;
+    try {
+      records = await airtable(TABLES.FACTURAS).select({ fields: FIELDS_CON_AUDIT }).all();
+    } catch {
+      records = await airtable(TABLES.FACTURAS).select({ fields: FIELDS_BASE }).all();
+    }
 
     type Row = { id: string; fields: Record<string, unknown> };
     // Bucket key igual a consolidateRecords: anuladas/refacturadas como rows individuales.
@@ -136,6 +147,8 @@ export async function getFacturasLiviano(): Promise<InvoiceLiviano[]> {
         estadoBruto: brutoDominante,
         vencida,
         numLineas: bucket.records.length,
+        editadoPor:         principal.fields[F.EDITADO_POR]       ? String(principal.fields[F.EDITADO_POR])       : undefined,
+        fechaUltimaEdicion: principal.fields[F.FECHA_ULTIMA_EDIT] ? String(principal.fields[F.FECHA_ULTIMA_EDIT]) : undefined,
       });
     }
     return out;
@@ -482,5 +495,231 @@ export async function anularFactura(
       recordsTotal: 0,
       error: err instanceof Error ? err.message : String(err),
     };
+  }
+}
+
+/* ============================================================
+ * F-044 — Edición no-contable de facturas
+ *
+ * Decisión CFO: solo se editan NÚMERO, FECHA EMISIÓN y OBSERVACIONES. Para
+ * cambiar monto/cliente/IVA hay que anular + refacturar (flujo separado).
+ *
+ * Multi-línea: una factura con N records (mismo NO.FACTURA) se actualiza en
+ * batch — todos los records reciben los mismos cambios para mantener la
+ * consolidación coherente.
+ *
+ * Audit fail-soft: los 3 campos nuevos (Editado_Por, Fecha_Ultima_Edicion,
+ * Historial_Ediciones) van en una SEGUNDA llamada. Si Stark aún no los
+ * agregó, el cambio funcional se aplica de todas formas y solo se pierde
+ * el log — devolvemos un aviso al UI para que lo muestre.
+ * ============================================================ */
+
+export interface CambiosFacturaPermitidos {
+  numeroFactura?: string;
+  fechaEmision?: string;      // YYYY-MM-DD
+  observaciones?: string;
+}
+
+export interface EditarFacturaResult {
+  ok: boolean;
+  facturaId: string;
+  numeroAnterior?: string;
+  numeroNuevo?: string;
+  recordsActualizados: number;
+  recordsTotal: number;
+  auditoriaPersistida: boolean;   // false si los campos no existen en Airtable
+  error?: string;
+  duplicado?: {                   // si el NO.FACTURA nuevo ya existe en otra factura activa
+    noFactura: string;
+    facturaId: string;
+    estadoBruto: InvoiceEstadoBruto;
+  };
+}
+
+/** Compone una entrada de historial line-by-line: "[YYYY-MM-DD HH:mm] email: campo: 'antes' → 'después'". */
+function formatearEntradaHistorial(usuarioEmail: string, cambios: Array<{ campo: string; antes: string; despues: string }>): string {
+  const ts = formatInTimeZone(new Date(), 'America/Guatemala', "yyyy-MM-dd HH:mm");
+  const cuerpo = cambios.map(c => `${c.campo}: '${c.antes}' → '${c.despues}'`).join('; ');
+  return `[${ts}] ${usuarioEmail}: ${cuerpo}`;
+}
+
+/** Lee los records de una factura por su NO.FACTURA actual (excluye ANULADO/REFACTURADO). */
+async function leerRecordsDeFactura(noFactura: string): Promise<Array<{ id: string; fields: Record<string, unknown> }>> {
+  if (!airtable) throw new Error('Airtable no está configurado.');
+  const esc = noFactura.replace(/"/g, '\\"');
+  const records = await airtable(TABLES.FACTURAS)
+    .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
+    .all();
+  return records
+    .map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }))
+    .filter(r => {
+      const e = String(r.fields[F.ESTADO] ?? '').toUpperCase().trim();
+      return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
+    });
+}
+
+export async function editarFacturaNoContable(
+  facturaId: string,
+  cambios: CambiosFacturaPermitidos,
+  usuarioEmail: string,
+): Promise<EditarFacturaResult> {
+  if (!airtable) {
+    return { ok: false, facturaId, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: 'Airtable no está configurado.' };
+  }
+
+  // Whitelist estricta: cualquier campo no contemplado se ignora.
+  const hayCambios = !!(cambios.numeroFactura ?? cambios.fechaEmision ?? cambios.observaciones);
+  if (!hayCambios) {
+    return { ok: false, facturaId, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: 'No hay cambios para guardar.' };
+  }
+
+  try {
+    // 1) Cargar el record principal para descubrir NO.FACTURA actual + bucket.
+    const principalRec = await airtable(TABLES.FACTURAS).find(facturaId).catch(() => null);
+    if (!principalRec) {
+      return { ok: false, facturaId, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: 'Factura no encontrada.' };
+    }
+    const numeroAnterior = String(principalRec.fields[F.NO_FACTURA] ?? '').trim();
+    const fechaAnterior = String(principalRec.fields[F.FECHA_EMISION] ?? '').slice(0, 10);
+    const obsAnteriores = String(principalRec.fields[F.OBSERVACIONES] ?? '');
+    const estadoBrutoPrincipal = String(principalRec.fields[F.ESTADO] ?? '').toUpperCase().trim();
+    if (estadoBrutoPrincipal === 'ANULADO' || estadoBrutoPrincipal === 'ANULADA' || estadoBrutoPrincipal === 'REFACTURADO' || estadoBrutoPrincipal === 'REFACTURADA') {
+      return { ok: false, facturaId, numeroAnterior, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: `No se puede editar una factura ${estadoBrutoPrincipal.toLowerCase()}.` };
+    }
+
+    const records = await leerRecordsDeFactura(numeroAnterior);
+    if (records.length === 0) {
+      return { ok: false, facturaId, numeroAnterior, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: `No se encontraron líneas activas para la factura ${numeroAnterior}.` };
+    }
+
+    // 2) Si el número cambia: validar duplicado contra una factura ACTIVA distinta.
+    const numeroNuevo = cambios.numeroFactura?.trim();
+    if (numeroNuevo && numeroNuevo !== numeroAnterior) {
+      const esc = numeroNuevo.replace(/"/g, '\\"');
+      const colisiones = await airtable(TABLES.FACTURAS)
+        .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 50 })
+        .all();
+      const colisionActiva = colisiones.find(r => {
+        const e = String(r.fields[F.ESTADO] ?? '').toUpperCase().trim();
+        return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
+      });
+      if (colisionActiva) {
+        return {
+          ok: false,
+          facturaId,
+          numeroAnterior,
+          numeroNuevo,
+          recordsActualizados: 0,
+          recordsTotal: records.length,
+          auditoriaPersistida: false,
+          error: `El número ${numeroNuevo} ya está en uso por otra factura activa. Solo podés reutilizarlo si la otra está anulada o refacturada.`,
+          duplicado: {
+            noFactura: numeroNuevo,
+            facturaId: colisionActiva.id,
+            estadoBruto: 'emitida',   // no nos importa el sub-estado, solo que está activa
+          },
+        };
+      }
+    }
+
+    // 3) Construir el patch funcional (sin auditoría todavía).
+    const patchFuncional: Record<string, string> = {};
+    if (numeroNuevo && numeroNuevo !== numeroAnterior)               patchFuncional[F.NO_FACTURA]    = numeroNuevo;
+    if (cambios.fechaEmision && cambios.fechaEmision !== fechaAnterior) patchFuncional[F.FECHA_EMISION] = cambios.fechaEmision;
+    if (cambios.observaciones !== undefined && cambios.observaciones !== obsAnteriores) patchFuncional[F.OBSERVACIONES] = cambios.observaciones;
+
+    if (Object.keys(patchFuncional).length === 0) {
+      return { ok: false, facturaId, numeroAnterior, recordsActualizados: 0, recordsTotal: records.length, auditoriaPersistida: false, error: 'Los valores enviados son idénticos a los actuales.' };
+    }
+
+    // 4) UPDATE funcional (batch de 10). Aplica a TODOS los records del bucket
+    // para mantener consolidateRecords coherente (multi-línea).
+    const payloadsFuncional = records.map(r => ({ id: r.id, fields: { ...patchFuncional } }));
+    const actualizados: string[] = [];
+    for (let i = 0; i < payloadsFuncional.length; i += 10) {
+      const lote = payloadsFuncional.slice(i, i + 10);
+      const res = await airtable(TABLES.FACTURAS).update(lote);
+      actualizados.push(...res.map(r => r.id));
+    }
+
+    // 5) UPDATE auditoría — separado, fail-soft. Solo al principal (el resto
+    // del bucket consolida desde el principal).
+    const cambiosLog: Array<{ campo: string; antes: string; despues: string }> = [];
+    if (numeroNuevo && numeroNuevo !== numeroAnterior)                       cambiosLog.push({ campo: 'numeroFactura',  antes: numeroAnterior, despues: numeroNuevo });
+    if (cambios.fechaEmision && cambios.fechaEmision !== fechaAnterior)      cambiosLog.push({ campo: 'fechaEmision',   antes: fechaAnterior,  despues: cambios.fechaEmision });
+    if (cambios.observaciones !== undefined && cambios.observaciones !== obsAnteriores) cambiosLog.push({ campo: 'observaciones', antes: obsAnteriores.slice(0, 40) + (obsAnteriores.length > 40 ? '…' : ''), despues: cambios.observaciones.slice(0, 40) + (cambios.observaciones.length > 40 ? '…' : '') });
+
+    const historialAnterior = String(principalRec.fields[F.HISTORIAL_EDIT] ?? '');
+    const nuevaEntrada = formatearEntradaHistorial(usuarioEmail, cambiosLog);
+    const historialNuevo = historialAnterior ? `${historialAnterior}\n${nuevaEntrada}` : nuevaEntrada;
+
+    let auditoriaPersistida = false;
+    try {
+      await airtable(TABLES.FACTURAS).update([{
+        id: principalRec.id,
+        fields: {
+          [F.EDITADO_POR]:        usuarioEmail,
+          [F.FECHA_ULTIMA_EDIT]:  new Date().toISOString(),
+          [F.HISTORIAL_EDIT]:     historialNuevo,
+        },
+      }]);
+      auditoriaPersistida = true;
+    } catch (err) {
+      // Los campos de auditoría aún no existen en Airtable. El cambio funcional
+      // ya se aplicó — solo perdemos el log.
+      console.warn('F-044: auditoría no persistida (campos posiblemente ausentes):', err instanceof Error ? err.message : err);
+    }
+
+    return {
+      ok: true,
+      facturaId,
+      numeroAnterior,
+      numeroNuevo: numeroNuevo && numeroNuevo !== numeroAnterior ? numeroNuevo : numeroAnterior,
+      recordsActualizados: actualizados.length,
+      recordsTotal: records.length,
+      auditoriaPersistida,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      facturaId,
+      recordsActualizados: 0,
+      recordsTotal: 0,
+      auditoriaPersistida: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+export interface EntradaHistorialEdicion {
+  fecha: string;       // ISO datetime tal como lo guardamos
+  usuario: string;
+  cambios: string;     // texto crudo tras el "email:" (puede listar varios campos)
+}
+
+/** Parsea el long-text Historial_Ediciones en entradas estructuradas. */
+export function parsearHistorialEdiciones(raw: string | undefined): EntradaHistorialEdicion[] {
+  if (!raw) return [];
+  // Formato: "[YYYY-MM-DD HH:mm] email: cambios…" — una línea por entrada.
+  const RE = /^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2})\] ([^:]+): (.+)$/;
+  return raw.split('\n')
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(l => {
+      const m = RE.exec(l);
+      if (!m) return null;
+      return { fecha: m[1], usuario: m[2].trim(), cambios: m[3].trim() };
+    })
+    .filter((x): x is EntradaHistorialEdicion => x !== null)
+    .reverse();   // más recientes primero
+}
+
+export async function getHistorialEdicionesFactura(facturaId: string): Promise<EntradaHistorialEdicion[]> {
+  if (!airtable) return [];
+  try {
+    const rec = await airtable(TABLES.FACTURAS).find(facturaId);
+    return parsearHistorialEdiciones(String(rec.fields[F.HISTORIAL_EDIT] ?? ''));
+  } catch {
+    return [];
   }
 }
