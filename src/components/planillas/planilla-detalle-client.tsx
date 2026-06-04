@@ -13,9 +13,8 @@
  * notifica con `toast.error` en fallos.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
@@ -26,7 +25,7 @@ import { ModalDiferirPago } from './modal-diferir-pago';
 import { ModalCancelarPago } from './modal-cancelar-pago';
 import { ModalAgregarDescuento } from './modal-agregar-descuento';
 import type { LineaPlanilla, Periodo, EstadoPeriodo, EstadoPagoLinea } from '@/lib/db/planillas';
-import type { AjustesQuincena, DescuentoQuincena } from '@/lib/calculos/planilla-calc';
+import { calcularQuincena, type AjustesQuincena, type DescuentoQuincena } from '@/lib/calculos/planilla-calc';
 
 interface BancoOption {
   id: string;
@@ -40,8 +39,25 @@ interface Props {
   bancos: BancoOption[];
 }
 
+/**
+ * F-038.5: estado de guardado por línea para edición inline.
+ * - 'idle'    sin cambios pendientes ni recientes
+ * - 'dirty'   el usuario hizo cambios locales que aún no se envían
+ * - 'saving'  request en vuelo
+ * - 'saved'   guardado ok (auto-vuelve a idle a los 2s)
+ * - 'error'   el guardado falló; se descartan los cambios locales
+ */
+type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error';
+
 interface LineaUI extends LineaPlanilla {
   descuentos: DescuentoQuincena[];
+  // F-038.5: borrador de campos editables — solo se sincroniza al servidor en blur/Enter.
+  draft: {
+    comisiones?: number;
+    isr?: number;
+    otrosIngresos?: number;
+  };
+  saveState: SaveState;
 }
 
 const ESTADO_BADGE: Record<EstadoPeriodo, { cls: string; text: string }> = {
@@ -69,7 +85,6 @@ function formatFecha(s: string | undefined): string {
 }
 
 export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, bancos }: Props) {
-  const router = useRouter();
   const [aprobarOpen, setAprobarOpen] = useState(false);
   const [pagarLinea, setPagarLinea]   = useState<LineaPlanilla | null>(null);
   const [diferirLinea, setDiferirLinea] = useState<LineaPlanilla | null>(null);
@@ -77,18 +92,25 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
   const [descuentoLineaId, setDescuentoLineaId] = useState<string | null>(null);
   // F-038.4: filtro de estado de pago en la tabla.
   const [filtroEstadoPago, setFiltroEstadoPago] = useState<'todos' | EstadoPagoLinea>('todos');
-  // estado local de líneas para soportar edición inline + descuentos no persistidos en el server.
+  // F-038.5: estado local de líneas. Cada línea tiene su propio `draft` para
+  // edición inline. Los inputs no se sincronizan con el server hasta blur/Enter.
   const [lineasUI, setLineasUI] = useState<LineaUI[]>(() =>
-    lineas.map(l => ({ ...l, descuentos: [] })),
+    lineas.map(l => ({ ...l, descuentos: [], draft: {}, saveState: 'idle' as SaveState })),
   );
-  // resaltado breve cuando un ajuste se persiste.
-  const [savingIds, setSavingIds] = useState<Record<string, boolean>>({});
 
-  // Sincronizamos cuando cambia el server snapshot (router.refresh()).
+  // Sincronización cuando llega snapshot nuevo del server (después de
+  // navegación). NO sobreescribir líneas que tengan draft o saving en vuelo —
+  // de lo contrario se pierden dígitos que el usuario está tipeando.
   useEffect(() => {
     setLineasUI(prev => lineas.map(l => {
       const previo = prev.find(p => p.id === l.id);
-      return { ...l, descuentos: previo?.descuentos ?? [] };
+      if (!previo) return { ...l, descuentos: [], draft: {}, saveState: 'idle' as SaveState };
+      // Si la línea está siendo editada o tiene save en vuelo, mantenemos el
+      // estado local intacto excepto por los campos que el server confirmó.
+      if (previo.saveState === 'dirty' || previo.saveState === 'saving') {
+        return { ...previo };
+      }
+      return { ...l, descuentos: previo.descuentos, draft: {}, saveState: 'idle' as SaveState };
     }));
   }, [lineas]);
 
@@ -107,95 +129,143 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
   const badge = ESTADO_BADGE[periodo.estado];
   const fechaSugerida = periodo.fechaFin;
 
-  const aplicarAjuste = async (linea: LineaUI, ajustes: AjustesQuincena) => {
-    setSavingIds(s => ({ ...s, [linea.id]: true }));
+  /**
+   * F-038.5: API unificada para edición inline.
+   *
+   * `onEdit` actualiza solo el draft + saveState='dirty'. No llama al server.
+   * El neto se recalcula localmente con calcularQuincena.
+   *
+   * `onCommit` lee el draft, dispara ajustarLineaAction y al terminar limpia
+   * el draft + setea saveState a 'saved' (2s) o 'error'.
+   *
+   * `onCancel` descarta el draft sin enviar nada.
+   */
+  type CampoEditable = 'comisiones' | 'isr' | 'otrosIngresos';
+
+  const onEdit = (lineaId: string, campo: CampoEditable, valor: number) => {
+    setLineasUI(prev => prev.map(l =>
+      l.id !== lineaId ? l
+        : { ...l, draft: { ...l.draft, [campo]: valor }, saveState: 'dirty' as SaveState }
+    ));
+  };
+
+  const onCancel = (lineaId: string, campo: CampoEditable) => {
+    setLineasUI(prev => prev.map(l => {
+      if (l.id !== lineaId) return l;
+      const nuevoDraft = { ...l.draft };
+      delete nuevoDraft[campo];
+      const haySinGuardar = Object.keys(nuevoDraft).length > 0;
+      return { ...l, draft: nuevoDraft, saveState: haySinGuardar ? 'dirty' : 'idle' as SaveState };
+    }));
+  };
+
+  const onCommit = async (lineaId: string) => {
+    const linea = lineasUI.find(l => l.id === lineaId);
+    if (!linea) return;
+    // Si no hay nada en el draft, no hacemos nada (no era un cambio real).
+    const draftKeys = Object.keys(linea.draft) as CampoEditable[];
+    if (draftKeys.length === 0) return;
+
+    // Valores efectivos: draft sobrescribe línea canónica.
+    const comisiones    = linea.draft.comisiones    ?? linea.comisiones;
+    const otrosIngresos = linea.draft.otrosIngresos ?? linea.otrosIngresos;
+
+    // Ajustes que mandamos al server. El server recalcula IGSS/ISR/neto
+    // desde estos y los persiste en Airtable.
+    const ajustes: AjustesQuincena = {
+      extraordinario: linea.extraordinario,
+      bonoKPI:        comisiones,
+      otrosIngresos:  otrosIngresos,
+      descuentos:     linea.descuentos.length > 0 ? linea.descuentos : undefined,
+    };
+
+    setLineasUI(prev => prev.map(l => l.id === lineaId ? { ...l, saveState: 'saving' as SaveState } : l));
+
     try {
-      const res = await ajustarLineaAction(linea.id, ajustes);
+      const res = await ajustarLineaAction(lineaId, ajustes);
       if (!res.ok) {
-        toast.error(res.error ?? 'No se pudo actualizar la línea.');
-        // revertir refresh para traer estado real.
-        router.refresh();
-      } else {
-        // Silencioso. Solo refrescamos para traer monto recalculado.
-        router.refresh();
+        toast.error(res.error ?? 'No se pudo guardar el cambio.');
+        // Revertir: descartar draft y volver al estado del server.
+        setLineasUI(prev => prev.map(l => l.id === lineaId ? { ...l, draft: {}, saveState: 'error' as SaveState } : l));
+        return;
       }
+      // Éxito: confiamos en calcularQuincena local para neto/igss/isr y aplicamos
+      // los drafts a la línea canónica. La próxima navegación traerá el snapshot
+      // del server; el useEffect respeta el draft cuando saveState='saving',
+      // así que no hay race.
+      const calc = calcularQuincena({
+        empleado: { id: linea.empleadoId, nombre: linea.empleadoNombre, salarioBase: round2(linea.ordinario * 2) },
+        ajustes,
+      });
+      setLineasUI(prev => prev.map(l => l.id !== lineaId ? l : {
+        ...l,
+        comisiones:    calc.comisiones,
+        otrosIngresos: calc.otrosIngresos,
+        igssLaboral:   calc.igssLaboral,
+        isr:           calc.isr,
+        netoPagar:     calc.netoPagar,
+        draft:         {},
+        saveState:     'saved' as SaveState,
+      }));
+      // Auto-vuelta a idle a los 2s.
+      setTimeout(() => {
+        setLineasUI(prev => prev.map(l => l.id === lineaId && l.saveState === 'saved' ? { ...l, saveState: 'idle' as SaveState } : l));
+      }, 2000);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Error de red');
-      router.refresh();
-    } finally {
-      setSavingIds(s => {
-        const next = { ...s };
-        delete next[linea.id];
-        return next;
-      });
+      setLineasUI(prev => prev.map(l => l.id === lineaId ? { ...l, draft: {}, saveState: 'error' as SaveState } : l));
     }
   };
 
-  /** Construye AjustesQuincena con todo el estado UI actual de la línea (no solo el cambio). */
-  const ajustesDeLinea = (linea: LineaUI): AjustesQuincena => ({
-    extraordinario: linea.extraordinario,
-    bonoKPI:        linea.comisiones,
-    otrosIngresos:  linea.otrosIngresos,
-    descuentos:     linea.descuentos.length > 0 ? linea.descuentos : undefined,
-  });
-
-  const onChangeBonoKPI = (linea: LineaUI, valor: number) => {
-    setLineasUI(prev => prev.map(l => l.id === linea.id ? { ...l, comisiones: valor } : l));
-  };
-  const onBlurBonoKPI = (linea: LineaUI, valor: number) => {
-    if (round2(valor) === round2(linea.comisiones)) return;
-    void aplicarAjuste({ ...linea, comisiones: valor }, { ...ajustesDeLinea(linea), bonoKPI: valor });
-  };
-
-  const onChangeIGSS = (linea: LineaUI, valor: number) => {
-    setLineasUI(prev => prev.map(l => l.id === linea.id ? { ...l, igssLaboral: valor } : l));
-  };
-  const onBlurIGSS = (linea: LineaUI, valor: number) => {
-    // IGSS y ISR no se ajustan manualmente desde la UI editable: el server los recalcula
-    // siempre desde salarioBase + bonoKPI. Si el usuario fuerza un override visual,
-    // el server lo sobrescribe; igualmente disparamos el recálculo para mantener consistencia.
-    if (round2(valor) === round2(linea.igssLaboral)) return;
-    void aplicarAjuste(linea, ajustesDeLinea(linea));
-  };
-
-  const onChangeISR = (linea: LineaUI, valor: number) => {
-    setLineasUI(prev => prev.map(l => l.id === linea.id ? { ...l, isr: valor } : l));
-  };
-  const onBlurISR = (linea: LineaUI, valor: number) => {
-    if (round2(valor) === round2(linea.isr)) return;
-    void aplicarAjuste(linea, ajustesDeLinea(linea));
+  /** F-038.5: aplicar un cambio de descuentos (agregar o quitar) + persistir. */
+  const aplicarCambioDescuentos = async (lineaId: string, nuevosDescuentos: DescuentoQuincena[]) => {
+    const linea = lineasUI.find(l => l.id === lineaId);
+    if (!linea) return;
+    const nuevoTotal = round2(nuevosDescuentos.reduce((s, d) => s + (d.monto || 0), 0));
+    setLineasUI(prev => prev.map(l => l.id !== lineaId ? l : {
+      ...l, descuentos: nuevosDescuentos, otrosDescuentos: nuevoTotal, saveState: 'saving' as SaveState,
+    }));
+    const ajustes: AjustesQuincena = {
+      extraordinario: linea.extraordinario,
+      bonoKPI:        linea.draft.comisiones    ?? linea.comisiones,
+      otrosIngresos:  linea.draft.otrosIngresos ?? linea.otrosIngresos,
+      descuentos:     nuevosDescuentos.length > 0 ? nuevosDescuentos : undefined,
+    };
+    try {
+      const res = await ajustarLineaAction(lineaId, ajustes);
+      if (!res.ok) {
+        toast.error(res.error ?? 'No se pudo actualizar la línea.');
+        setLineasUI(prev => prev.map(l => l.id === lineaId ? { ...l, saveState: 'error' as SaveState } : l));
+        return;
+      }
+      const calc = calcularQuincena({
+        empleado: { id: linea.empleadoId, nombre: linea.empleadoNombre, salarioBase: round2(linea.ordinario * 2) },
+        ajustes,
+      });
+      setLineasUI(prev => prev.map(l => l.id !== lineaId ? l : {
+        ...l,
+        igssLaboral: calc.igssLaboral, isr: calc.isr, netoPagar: calc.netoPagar,
+        saveState: 'saved' as SaveState,
+      }));
+      setTimeout(() => {
+        setLineasUI(prev => prev.map(l => l.id === lineaId && l.saveState === 'saved' ? { ...l, saveState: 'idle' as SaveState } : l));
+      }, 2000);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Error de red');
+      setLineasUI(prev => prev.map(l => l.id === lineaId ? { ...l, saveState: 'error' as SaveState } : l));
+    }
   };
 
   const onAgregarDescuento = (lineaId: string, desc: DescuentoQuincena) => {
-    setLineasUI(prev => prev.map(l => {
-      if (l.id !== lineaId) return l;
-      const descuentos = [...l.descuentos, desc];
-      const nuevoTotal = round2(descuentos.reduce((s, d) => s + (d.monto || 0), 0));
-      return { ...l, descuentos, otrosDescuentos: nuevoTotal };
-    }));
     const linea = lineasUI.find(l => l.id === lineaId);
     if (!linea) return;
-    const nuevaUI: LineaUI = {
-      ...linea,
-      descuentos: [...linea.descuentos, desc],
-    };
-    void aplicarAjuste(nuevaUI, ajustesDeLinea(nuevaUI));
+    void aplicarCambioDescuentos(lineaId, [...linea.descuentos, desc]);
   };
 
   const removerDescuento = (lineaId: string, idx: number) => {
-    setLineasUI(prev => prev.map(l => {
-      if (l.id !== lineaId) return l;
-      const descuentos = l.descuentos.filter((_, i) => i !== idx);
-      const nuevoTotal = round2(descuentos.reduce((s, d) => s + (d.monto || 0), 0));
-      return { ...l, descuentos, otrosDescuentos: nuevoTotal };
-    }));
     const linea = lineasUI.find(l => l.id === lineaId);
     if (!linea) return;
-    const nuevaUI: LineaUI = {
-      ...linea,
-      descuentos: linea.descuentos.filter((_, i) => i !== idx),
-    };
-    void aplicarAjuste(nuevaUI, ajustesDeLinea(nuevaUI));
+    void aplicarCambioDescuentos(lineaId, linea.descuentos.filter((_, i) => i !== idx));
   };
 
   const esBorrador = periodo.estado === 'Borrador';
@@ -304,13 +374,9 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
       {esBorrador && (
         <TablaEditable
           lineas={lineasUI}
-          savingIds={savingIds}
-          onChangeBonoKPI={onChangeBonoKPI}
-          onBlurBonoKPI={onBlurBonoKPI}
-          onChangeIGSS={onChangeIGSS}
-          onBlurIGSS={onBlurIGSS}
-          onChangeISR={onChangeISR}
-          onBlurISR={onBlurISR}
+          onEdit={onEdit}
+          onCommit={onCommit}
+          onCancel={onCancel}
           onAgregarDescuento={(id) => setDescuentoLineaId(id)}
           onRemoverDescuento={removerDescuento}
         />
@@ -417,23 +483,44 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
 
 interface TablaEditableProps {
   lineas: LineaUI[];
-  savingIds: Record<string, boolean>;
-  onChangeBonoKPI: (linea: LineaUI, valor: number) => void;
-  onBlurBonoKPI: (linea: LineaUI, valor: number) => void;
-  onChangeIGSS: (linea: LineaUI, valor: number) => void;
-  onBlurIGSS: (linea: LineaUI, valor: number) => void;
-  onChangeISR: (linea: LineaUI, valor: number) => void;
-  onBlurISR: (linea: LineaUI, valor: number) => void;
+  onEdit: (lineaId: string, campo: 'comisiones' | 'isr' | 'otrosIngresos', valor: number) => void;
+  onCommit: (lineaId: string) => void | Promise<void>;
+  onCancel: (lineaId: string, campo: 'comisiones' | 'isr' | 'otrosIngresos') => void;
   onAgregarDescuento: (lineaId: string) => void;
   onRemoverDescuento: (lineaId: string, idx: number) => void;
 }
 
+/**
+ * F-038.5: cálculo LOCAL del neto cuando hay draft. Reusa calcularQuincena con
+ * los valores actuales del draft superpuestos sobre la línea canónica.
+ * Esto es lo que se muestra en la columna "Neto a pagar" mientras el usuario
+ * está escribiendo — sin esperar al server.
+ */
+function netoLocal(linea: LineaUI): number {
+  const haDraft = Object.keys(linea.draft).length > 0;
+  if (!haDraft) return linea.netoPagar;
+  const calc = calcularQuincena({
+    empleado: { id: linea.empleadoId, nombre: linea.empleadoNombre, salarioBase: round2(linea.ordinario * 2) },
+    ajustes: {
+      extraordinario: linea.extraordinario,
+      bonoKPI:        linea.draft.comisiones    ?? linea.comisiones,
+      otrosIngresos:  linea.draft.otrosIngresos ?? linea.otrosIngresos,
+      descuentos:     linea.descuentos.length > 0 ? linea.descuentos : undefined,
+    },
+  });
+  return calc.netoPagar;
+}
+
+function IndicadorSave({ estado }: { estado: SaveState }) {
+  if (estado === 'idle')   return null;
+  if (estado === 'dirty')  return <span style={{ fontSize: 10.5, color: 'var(--ink-4)' }}>● Sin guardar</span>;
+  if (estado === 'saving') return <span style={{ fontSize: 10.5, color: '#B59E2A' }}>⏳ Guardando…</span>;
+  if (estado === 'saved')  return <span style={{ fontSize: 10.5, color: 'var(--olive)' }}>✓ Guardado</span>;
+  return <span style={{ fontSize: 10.5, color: 'var(--wine)' }}>✗ Error · revertido</span>;
+}
+
 function TablaEditable({
-  lineas, savingIds,
-  onChangeBonoKPI, onBlurBonoKPI,
-  onChangeIGSS, onBlurIGSS,
-  onChangeISR, onBlurISR,
-  onAgregarDescuento, onRemoverDescuento,
+  lineas, onEdit, onCommit, onCancel, onAgregarDescuento, onRemoverDescuento,
 }: TablaEditableProps) {
   if (lineas.length === 0) {
     return (
@@ -450,7 +537,7 @@ function TablaEditable({
       <div className="card-head">
         <div className="card-title">Líneas de planilla · editable</div>
         <div className="card-actions">
-          <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>{lineas.length} empleado(s) · blur guarda el cambio</span>
+          <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>{lineas.length} empleado(s) · Tab/Enter guarda, Esc descarta</span>
         </div>
       </div>
       <table className="table">
@@ -459,40 +546,64 @@ function TablaEditable({
             <th>Empleado</th>
             <th className="num">Ordinario</th>
             <th className="num">Bonif.</th>
-            <th className="num" style={{ width: 110 }}>Bono KPI</th>
-            <th className="num" style={{ width: 110 }}>IGSS</th>
-            <th className="num" style={{ width: 110 }}>ISR</th>
+            <th className="num" style={{ width: 120 }}>Bono KPI</th>
+            <th className="num" style={{ width: 120 }}>Otros ingresos</th>
+            <th className="num">IGSS</th>
+            <th className="num" style={{ width: 120 }}>ISR</th>
             <th style={{ minWidth: 180 }}>Otros desc.</th>
             <th className="num">Neto a pagar</th>
           </tr>
         </thead>
         <tbody>
           {lineas.map(l => {
-            const saving = !!savingIds[l.id];
+            const saving  = l.saveState === 'saving';
+            const neto    = netoLocal(l);
+            const cambio  = round2(neto - l.netoPagar);
+            const bgRow   = saving ? '#FBF7E6'
+                          : l.saveState === 'dirty' ? '#FFFCE8'
+                          : l.saveState === 'saved' ? '#EFF5E0'
+                          : l.saveState === 'error' ? '#F5E2DD' : undefined;
             return (
-              <tr key={l.id} style={{ background: saving ? '#FBF7E6' : undefined }}>
-                <td className="cell-strong">{l.empleadoNombre || '—'}</td>
+              <tr key={l.id} style={{ background: bgRow }}>
+                <td className="cell-strong">
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <span>{l.empleadoNombre || '—'}</span>
+                    <IndicadorSave estado={l.saveState} />
+                  </div>
+                </td>
                 <td className="num">{Q(l.ordinario)}</td>
                 <td className="num">{Q(l.bonificacion)}</td>
                 <td className="num">
                   <CeldaNumeroEditable
-                    valor={l.comisiones}
-                    onChange={(v) => onChangeBonoKPI(l, v)}
-                    onBlur={(v) => onBlurBonoKPI(l, v)}
+                    valorServer={l.comisiones}
+                    valorDraft={l.draft.comisiones}
+                    onEdit={(v) => onEdit(l.id, 'comisiones', v)}
+                    onCommit={() => onCommit(l.id)}
+                    onCancel={() => onCancel(l.id, 'comisiones')}
+                    disabled={saving}
                   />
                 </td>
                 <td className="num">
                   <CeldaNumeroEditable
-                    valor={l.igssLaboral}
-                    onChange={(v) => onChangeIGSS(l, v)}
-                    onBlur={(v) => onBlurIGSS(l, v)}
+                    valorServer={l.otrosIngresos}
+                    valorDraft={l.draft.otrosIngresos}
+                    onEdit={(v) => onEdit(l.id, 'otrosIngresos', v)}
+                    onCommit={() => onCommit(l.id)}
+                    onCancel={() => onCancel(l.id, 'otrosIngresos')}
+                    disabled={saving}
                   />
+                </td>
+                <td className="num cell-mute" title="Recalculado por el server desde ordinario y bono KPI">
+                  {Q(l.igssLaboral)}
                 </td>
                 <td className="num">
                   <CeldaNumeroEditable
-                    valor={l.isr}
-                    onChange={(v) => onChangeISR(l, v)}
-                    onBlur={(v) => onBlurISR(l, v)}
+                    valorServer={l.isr}
+                    valorDraft={l.draft.isr}
+                    onEdit={(v) => onEdit(l.id, 'isr', v)}
+                    onCommit={() => onCommit(l.id)}
+                    onCancel={() => onCancel(l.id, 'isr')}
+                    disabled={saving}
                   />
                 </td>
                 <td>
@@ -512,6 +623,7 @@ function TablaEditable({
                               style={{ padding: '0 4px', fontSize: 10 }}
                               onClick={() => onRemoverDescuento(l.id, i)}
                               title="Quitar"
+                              disabled={saving}
                             >
                               <I.X size={11} />
                             </button>
@@ -524,12 +636,22 @@ function TablaEditable({
                       className="btn btn-ghost"
                       style={{ padding: '2px 6px', fontSize: 11, alignSelf: 'flex-start' }}
                       onClick={() => onAgregarDescuento(l.id)}
+                      disabled={saving}
                     >
                       <I.Plus size={11} /> Agregar descuento
                     </button>
                   </div>
                 </td>
-                <td className="num cell-strong">{Q(l.netoPagar)}</td>
+                <td className="num cell-strong">
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                    <span>{Q(neto)}</span>
+                    {cambio !== 0 && (
+                      <span style={{ fontSize: 10.5, color: cambio > 0 ? 'var(--olive)' : 'var(--wine)' }}>
+                        {cambio > 0 ? '+' : ''}{Q(cambio)}
+                      </span>
+                    )}
+                  </div>
+                </td>
               </tr>
             );
           })}
@@ -540,34 +662,76 @@ function TablaEditable({
 }
 
 interface CeldaProps {
-  valor: number;
-  onChange: (v: number) => void;
-  onBlur: (v: number) => void;
+  valorServer: number;                        // valor confirmado por el server
+  valorDraft?: number;                        // valor en draft (si existe)
+  onEdit: (v: number) => void;                // keystroke con número parseado (no persiste)
+  onCommit: () => void;                       // Enter o blur con cambio → guardar
+  onCancel: () => void;                       // Escape → descartar
+  disabled?: boolean;
 }
 
-/** Input numérico inline con focus discreto. */
-function CeldaNumeroEditable({ valor, onChange, onBlur }: CeldaProps) {
-  const [texto, setTexto] = useState<string>(valor.toFixed(2));
-  // si cambia el valor desde fuera (refresh), sincronizamos.
-  useEffect(() => { setTexto(valor.toFixed(2)); }, [valor]);
+/**
+ * F-038.5: input numérico inline edit-on-commit.
+ *
+ * Mantiene su PROPIO texto local. NO se resincroniza con `valorServer` mientras
+ * el input está focused — eso era el bug viejo: el server bajaba un valor
+ * desfasado y el useEffect reescribía el input cortando dígitos en pleno tipeo.
+ *
+ * Teclas:
+ *  - Enter   → blur (que dispara commit si hubo cambio)
+ *  - Escape  → restaura el texto al valor server y cancela
+ *  - Tab     → blur normal del navegador → commit si hubo cambio
+ */
+function CeldaNumeroEditable({ valorServer, valorDraft, onEdit, onCommit, onCancel, disabled }: CeldaProps) {
+  const inicial = (valorDraft ?? valorServer).toFixed(2);
+  const [texto, setTexto] = useState<string>(inicial);
+  const focusedRef = useRef(false);
+
+  // Sync con server: SOLO cuando NO estamos focused.
+  useEffect(() => {
+    if (focusedRef.current) return;
+    setTexto((valorDraft ?? valorServer).toFixed(2));
+  }, [valorServer, valorDraft]);
+
+  const parseNum = (s: string): number => {
+    const n = parseFloat(s.replace(/[^\d.-]/g, ''));
+    return Number.isFinite(n) ? round2(n) : 0;
+  };
+
   return (
     <input
       type="text"
       inputMode="decimal"
       className="num"
       value={texto}
+      disabled={disabled}
       onChange={(e) => {
         const t = e.target.value;
         setTexto(t);
-        const n = parseFloat(t.replace(/[^\d.-]/g, ''));
-        if (Number.isFinite(n)) onChange(round2(n));
+        onEdit(parseNum(t));
       }}
-      onFocus={(e) => e.currentTarget.select()}
+      onFocus={(e) => {
+        focusedRef.current = true;
+        e.currentTarget.select();
+      }}
       onBlur={(e) => {
-        const n = parseFloat(e.currentTarget.value.replace(/[^\d.-]/g, ''));
-        const final = Number.isFinite(n) ? round2(n) : 0;
+        focusedRef.current = false;
+        const final = parseNum(e.currentTarget.value);
         setTexto(final.toFixed(2));
-        onBlur(final);
+        if (round2(final) !== round2(valorServer)) {
+          onCommit();
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          (e.currentTarget as HTMLInputElement).blur();
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          setTexto(valorServer.toFixed(2));
+          onCancel();
+          (e.currentTarget as HTMLInputElement).blur();
+        }
       }}
       style={{
         width: '100%', textAlign: 'right',
