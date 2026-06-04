@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { darDeBajaEmpleadoAction } from '@/app/(app)/empleados/actions';
 import { calcularLiquidacion, type MotivoSalida } from '@/lib/calculos/planilla';
 import type { Empleado, StatusEmpleado } from '@/lib/db/empleados';
@@ -35,7 +36,7 @@ const STATUS_POR_MOTIVO: Record<MotivoSalida, StatusEmpleado> = {
 
 export function ModalDarDeBaja({ empleado, onClose }: Props) {
   const router = useRouter();
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = obtenerFechaHoyGuatemala();
   const [fecha, setFecha] = useState(hoy);
   const [motivo, setMotivo] = useState<MotivoSalida>('Renuncia');
   const [detalle, setDetalle] = useState('');

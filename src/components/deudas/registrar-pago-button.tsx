@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { registrarPagoDeudaAction } from '@/app/(app)/deudas/[id]/actions';
 import type { MetodoPagoDeuda } from '@/lib/db/pagos-deudas';
 
@@ -50,7 +51,7 @@ interface ModalProps extends Omit<Props, 'estaLiquidada'> {
 }
 
 function RegistrarPagoModal({ deudaId, deudaNombre, acreedorNombre, saldoPendiente, cuentasBanco, onClose }: ModalProps) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = obtenerFechaHoyGuatemala();
   const [fecha, setFecha] = useState(today);
   const [montoTotal, setMontoTotal] = useState('');
   const [desglosar, setDesglosar] = useState(false);

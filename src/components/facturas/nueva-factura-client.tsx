@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { crearFacturaAction, checkFacturaExiste } from '@/app/(app)/facturacion/nueva/actions';
 import type { Customer } from '@/lib/types';
 import type { CentroCosto } from '@/lib/db/centros';
@@ -82,7 +83,7 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
     defaultValues: {
       noFactura: '',
       custId: '',
-      fechaEmision: new Date().toISOString().slice(0, 10),
+      fechaEmision: obtenerFechaHoyGuatemala(),
       lineas: [{ centroCostoId: '', total: '', iva: '' }],
     },
   });

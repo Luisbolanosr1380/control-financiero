@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { crearEmpleadoAction, editarEmpleadoAction } from '@/app/(app)/empleados/actions';
 import type { Empleado } from '@/lib/db/empleados';
 
@@ -22,7 +23,7 @@ export function ModalEmpleadoForm({ modo, empleado, centros, departamentos, onCl
   const router = useRouter();
   const [nombre, setNombre]               = useState(empleado?.nombre ?? '');
   const [numeroDocumento, setNoDoc]       = useState(empleado?.numeroDocumento ?? '');
-  const [fechaIngreso, setFechaIng]       = useState(empleado?.fechaIngreso ?? new Date().toISOString().slice(0, 10));
+  const [fechaIngreso, setFechaIng]       = useState(empleado?.fechaIngreso ?? obtenerFechaHoyGuatemala());
   const [departamento, setDepto]          = useState(empleado?.departamento ?? '');
   const [centroId, setCentroId]           = useState(empleado?.centroCostoId ?? '');
   const [tipoContrato, setTipoContrato]   = useState(empleado?.tipoContrato ?? 'Indefinido');

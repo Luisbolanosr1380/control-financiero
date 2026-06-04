@@ -7,6 +7,7 @@
 import { getFacturas } from './facturas';
 import { getClientes } from './clientes';
 import { getCentrosCosto, buildNaturalezaMap, type CentroCosto, type Naturaleza } from './centros';
+import { fechaParaAirtable } from '../utils/fechas';
 import type { Customer, Invoice } from '../types';
 import type { SerieMes } from './clientes-analisis';
 
@@ -235,7 +236,7 @@ function computarAnalitica(
       reciente: agg.totalReciente,
       variacionQ,
       variacionPct,
-      ultimaFactura: agg.ultimaFactura.toISOString().slice(0, 10),
+      ultimaFactura: fechaParaAirtable(agg.ultimaFactura),
     });
   }
   const cayeron   = moversAll.filter(m => m.variacionQ < 0).sort((a, b) => a.variacionQ - b.variacionQ).slice(0, 15);
@@ -257,7 +258,7 @@ function computarAnalitica(
       custId,
       nombre: nombreCliente.get(custId) || custId || '—',
       ultimoMonto: agg.ultimoMonto,
-      ultimaFactura: agg.ultimaFactura.toISOString().slice(0, 10),
+      ultimaFactura: fechaParaAirtable(agg.ultimaFactura),
     });
   }
   const clientesApagadosPorMes = buckets.map(m => {

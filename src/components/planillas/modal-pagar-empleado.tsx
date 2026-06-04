@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { registrarPagoEmpleadoAction } from '@/app/(app)/planillas/actions';
 import type { LineaPlanilla } from '@/lib/db/planillas';
 
@@ -22,7 +23,7 @@ interface Props {
 
 export function ModalPagarEmpleado({ linea, bancos, onClose }: Props) {
   const router = useRouter();
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = obtenerFechaHoyGuatemala();
   const [fechaPago, setFechaPago]   = useState(hoy);
   const [bancoId, setBancoId]       = useState(bancos[0]?.id ?? '');
   const [referencia, setReferencia] = useState('');

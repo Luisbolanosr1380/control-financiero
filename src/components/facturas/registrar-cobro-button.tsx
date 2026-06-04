@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { registrarCobroAction } from '@/app/(app)/facturacion/[id]/actions';
 import type { Banco } from '@/lib/db/bancos';
 import type { MetodoCobro, MonedaCobro, ComponenteCobro } from '@/lib/db/cobros';
@@ -106,7 +107,7 @@ interface ModalProps {
 }
 
 function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSuccess }: ModalProps) {
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = obtenerFechaHoyGuatemala();
   const [fecha, setFecha]         = useState(hoy);
   const [moneda, setMoneda]       = useState<MonedaCobro>('GTQ');
   const [tipoCambio, setTipoCambio] = useState<string>('1');

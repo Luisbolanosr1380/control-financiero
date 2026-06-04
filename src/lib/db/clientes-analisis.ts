@@ -7,6 +7,7 @@
 import { getFacturas } from './facturas';
 import { getClientes } from './clientes';
 import { getCentrosCosto, buildNaturalezaMap, type Naturaleza } from './centros';
+import { fechaParaAirtable } from '../utils/fechas';
 import type { Invoice } from '../types';
 
 export type ClienteClasificacion =
@@ -173,7 +174,7 @@ export async function getAnalisisClientes(): Promise<AnalisisCliente[]> {
       montoBase,
       tendencia,
       serieMensual,
-      ultimaFactura: ultima.toISOString().slice(0, 10),
+      ultimaFactura: fechaParaAirtable(ultima),
       naturalezaDominante,
       pctRecurrente,
       contextoComercial: contextoById.get(custId) || undefined,

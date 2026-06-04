@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import type { RetencionesAgregadas, RetencionRecord, TipoRetencion } from '@/lib/db/retenciones';
 
 interface Props {
@@ -68,7 +69,7 @@ export function RetencionesClient({ data }: Props) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `retenciones-${data.anio}-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = `retenciones-${data.anio}-${obtenerFechaHoyGuatemala()}.csv`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

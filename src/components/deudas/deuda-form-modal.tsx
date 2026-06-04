@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import {
   crearDeudaAction,
   editarDeudaAction,
@@ -37,7 +38,7 @@ const CONTEXT_PERIODICO: TipoDocumento[] = ['Obligación Seguridad Social', 'Dev
 
 export function DeudaFormModal({ acreedores, centros, modo, deudaActual, numPagos = 0, onClose }: Props) {
   const router = useRouter();
-  const today = new Date().toISOString().slice(0, 10);
+  const today = obtenerFechaHoyGuatemala();
 
   // ─────────────────────────────────────────────────────────
   // Sub-modal "Crear acreedor"

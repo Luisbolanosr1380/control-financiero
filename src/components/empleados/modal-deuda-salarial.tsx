@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { crearDeudaSalarialAction } from '@/app/(app)/empleados/actions';
 
 interface Props {
@@ -18,7 +19,7 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function ModalDeudaSalarial({ empleadoId, empleadoNombre, salarioSugerido, onClose }: Props) {
   const router = useRouter();
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = obtenerFechaHoyGuatemala();
   const [fecha, setFecha] = useState(hoy);
   const [monto, setMonto] = useState(salarioSugerido ? salarioSugerido.toFixed(2) : '');
   const [notas, setNotas] = useState('');
