@@ -9,6 +9,7 @@ import type { Role } from '@/lib/auth/allowlist';
 
 interface AppShellProps {
   children: React.ReactNode;
+  facturasVencidasCount?: number;          // F-043
   deudasVencidasCount?: number;
   pagosPendientesCount?: number;           // F-038.4
   pagosPendientesAlertasRojas?: number;    // F-038.4
@@ -18,7 +19,7 @@ interface AppShellProps {
   limiteAuros?: number;
 }
 
-export function AppShell({ children, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol, email, consumoAuros, limiteAuros }: AppShellProps) {
+export function AppShell({ children, facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol, email, consumoAuros, limiteAuros }: AppShellProps) {
   const [aiOpen, setAiOpen] = useState(false);
   const [showCmdK, setShowCmdK] = useState(false);
 
@@ -42,6 +43,7 @@ export function AppShell({ children, deudasVencidasCount, pagosPendientesCount, 
   return (
     <div className={'app' + (aiOpen ? ' ai-open' : '')}>
       <Sidebar
+        facturasVencidasCount={facturasVencidasCount}
         deudasVencidasCount={deudasVencidasCount}
         pagosPendientesCount={pagosPendientesCount}
         pagosPendientesAlertasRojas={pagosPendientesAlertasRojas}

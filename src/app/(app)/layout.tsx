@@ -3,8 +3,7 @@ import { currentUser } from '@clerk/nextjs/server';
 import { AppShell } from '@/components/shell/app-shell';
 import { getRolUsuario } from '@/lib/auth/allowlist';
 import { getLimiteAuros } from '@/lib/auth/permissions';
-import { getKPIsDeudas } from '@/lib/db/deudas';
-import { getKPIsPagosPendientes } from '@/lib/db/planillas';
+import { getSidebarBadges } from '@/lib/db/sidebar-kpis';
 import { getConsumoMensual } from '@/lib/db/uso-auros';
 
 export default async function AppLayout({
@@ -19,18 +18,9 @@ export default async function AppLayout({
     redirect('/no-acceso');
   }
 
-  // Badges dinámicos para sidebar (silenciosos si fallan).
-  let deudasVencidasCount = 0;
-  let pagosPendientesCount = 0;
-  let pagosPendientesAlertasRojas = 0;
-  try {
-    const [kd, kp] = await Promise.all([getKPIsDeudas(), getKPIsPagosPendientes()]);
-    deudasVencidasCount = kd.vencidas.cantidad;
-    pagosPendientesCount = kp.totalEmpleadosPendientes;
-    pagosPendientesAlertasRojas = kp.alertasRojas;
-  } catch {
-    /* sin badges */
-  }
+  // F-043: única fuente de verdad para los badges del sidebar. Los counts
+  // ya vienen normalizados a 0 si una fuente falló (silenciosa).
+  const badges = await getSidebarBadges();
 
   // Consumo mensual de Auros para mostrar en el drawer (silencioso si falla).
   // Si el rol no usa el chat, omitimos el query para ahorrar Airtable.
@@ -42,9 +32,10 @@ export default async function AppLayout({
 
   return (
     <AppShell
-      deudasVencidasCount={deudasVencidasCount}
-      pagosPendientesCount={pagosPendientesCount}
-      pagosPendientesAlertasRojas={pagosPendientesAlertasRojas}
+      facturasVencidasCount={badges.facturasVencidas}
+      deudasVencidasCount={badges.deudasVencidas}
+      pagosPendientesCount={badges.pagosPendientes}
+      pagosPendientesAlertasRojas={badges.pagosPendientesAlertasRojas}
       rol={rol}
       email={email}
       consumoAuros={consumoAuros}

@@ -18,7 +18,12 @@ interface NavGroup {
   items: NavItem[];
 }
 
-function buildNav(opts: { deudasVencidasCount?: number; pagosPendientesCount?: number; pagosPendientesAlertasRojas?: number; rol?: Role } = {}): NavGroup[] {
+function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: number; pagosPendientesCount?: number; pagosPendientesAlertasRojas?: number; rol?: Role } = {}): NavGroup[] {
+  // F-043: badge dinámico de facturas vencidas (antes hardcoded "5 vencidas").
+  // Fuente: getFacturasLiviano + predicadoFiltro('vencidas') vía getSidebarBadges.
+  const facturasBadge = opts.facturasVencidasCount && opts.facturasVencidasCount > 0
+    ? { text: `${opts.facturasVencidasCount} vencidas`, kind: 'wine' as const }
+    : undefined;
   const deudasBadge = opts.deudasVencidasCount && opts.deudasVencidasCount > 0
     ? { text: `${opts.deudasVencidasCount} vencidas`, kind: 'wine' as const }
     : undefined;
@@ -36,7 +41,7 @@ function buildNav(opts: { deudasVencidasCount?: number; pagosPendientesCount?: n
   const groups: NavGroup[] = [
     { group: 'Operación', items: [
       { href: '/dashboard',    label: 'Dashboard',    icon: 'Dashboard' },
-      { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: { text: '5 vencidas', kind: 'wine' } },
+      { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: facturasBadge },
       { href: '/cobros',       label: 'Cobros',       icon: 'Coins' },
       { href: '/cobros/identificar', label: 'Identificar pago', icon: 'Search' },
       { href: '/clientes',     label: 'Clientes',     icon: 'Users' },
@@ -61,7 +66,10 @@ function buildNav(opts: { deudasVencidasCount?: number; pagosPendientesCount?: n
   if (verAvanzada) {
     groups.push({ group: 'Inteligencia', items: [
       { href: '/analitica', label: 'Analítica',   icon: 'TrendUp' },
-      { href: '/ai',        label: 'AI Insights', icon: 'Sparkles', badge: { text: '3 alertas', kind: 'warn' } },
+      // F-043: el badge "3 alertas" anterior era literal hardcoded sin fuente real
+      // (la tabla AI_ANALISIS no tiene concepto de "alertas"). Eliminado hasta que
+      // exista una métrica con sentido para mostrar acá.
+      { href: '/ai',        label: 'AI Insights', icon: 'Sparkles' },
     ]});
   }
 
@@ -76,6 +84,7 @@ function buildNav(opts: { deudasVencidasCount?: number; pagosPendientesCount?: n
 }
 
 interface SidebarProps {
+  facturasVencidasCount?: number;         // F-043
   deudasVencidasCount?: number;
   pagosPendientesCount?: number;          // F-038.4
   pagosPendientesAlertasRojas?: number;   // F-038.4
@@ -83,9 +92,9 @@ interface SidebarProps {
   email?: string;
 }
 
-export function Sidebar({ deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol }: SidebarProps = {}) {
+export function Sidebar({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol }: SidebarProps = {}) {
   const pathname = usePathname();
-  const NAV = buildNav({ deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol });
+  const NAV = buildNav({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, rol });
 
   // El item activo es el de href más específico que matchea (evita que
   // /cobros y /cobros/identificar se marquen ambos a la vez).
