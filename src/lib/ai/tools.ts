@@ -22,7 +22,13 @@ import { getProyeccionMesActual } from '@/lib/db/proyecciones';
 import { getKPIsDeudas, getDeudas, getAcreedores, clasificarPasivo } from '@/lib/db/deudas';
 import { getPagosPorDeuda, getPagosPorAcreedor, getPagosRecientes } from '@/lib/db/pagos-deudas';
 import { getRetencionesAgregadas } from '@/lib/db/retenciones';
-import { getEmpleados, getEmpleadoPorId, getKPIsPlanilla } from '@/lib/db/empleados';
+import {
+  getEmpleados,
+  getEmpleadoPorId,
+  getKPIsPlanilla,
+  getPlanillaPorCentroCosto,
+  getResumenSalariosPendientesConsolidado,
+} from '@/lib/db/empleados';
 import { getPeriodos, getPeriodoPorId, getLineasPlanilla, getPagosPendientes, getKPIsPagosPendientes } from '@/lib/db/planillas';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
@@ -1214,6 +1220,37 @@ export const aiTools = {
       '"¿tengo alertas críticas en planilla?".',
     parameters: z.object({}),
     execute: async () => await getKPIsPagosPendientes(),
+  }),
+
+  getPlanillaPorCentroCosto: tool({
+    description:
+      'F-042: distribución de la planilla MENSUAL agrupada por Centro de Costo (Polígrafo, ' +
+      'Socioeconómico, TalentTrack, Ventas, Administración, etc.). Por cada CC devuelve cantidad ' +
+      'de empleados activos, salarios base, prestaciones (IGSS+Bono14+Aguinaldo+Vac+Indem), ' +
+      'costo total mensual con prestaciones, costo total anual proyectado (*12) y porcentaje ' +
+      'de prestaciones sobre salarios. Ordenado por costoTotalMensual DESC. ' +
+      'CRÍTICO para CFO: permite calcular margen real por línea de negocio ' +
+      '(facturación CC / planilla CC). ' +
+      'USAR cuando el usuario pregunte: "¿cuánto cuesta la planilla de Polígrafo/Socioeconómico/etc.?", ' +
+      '"¿qué centro tiene más costo de planilla?", "¿cómo se reparte la planilla por línea?", ' +
+      '"¿cuál es el costo anual de planilla de X?".',
+    parameters: z.object({}),
+    execute: async () => await getPlanillaPorCentroCosto(),
+  }),
+
+  getResumenSalariosPendientesConsolidado: tool({
+    description:
+      'F-042: resumen CONSOLIDADO de salarios pendientes diferenciando dos buckets distintos: ' +
+      '(a) PENDIENTES = planilla aprobada sin pago registrado todavía (fricción TEMPORAL de caja — ' +
+      'el dueño todavía piensa pagar, no es deuda formal); ' +
+      '(b) DIFERIDOS = decisión formal de no pagar esa quincena, ya generaron deuda en /deudas con ' +
+      'Tipo_Documento="Salario Pendiente". Cada bucket trae cantidad, monto total y lista de ' +
+      'empleados (con departamento + centro de costo). También expone totalConsolidado = pendientes + diferidos. ' +
+      'USAR cuando el usuario pregunte: "¿cuántos salarios pendientes tengo?", "¿qué planillas debo?", ' +
+      '"¿cuál es mi exposición total con empleados?", "salarios sin pagar". ' +
+      'RESPONDER SIEMPRE diferenciando los dos buckets — son cosas distintas operacionalmente.',
+    parameters: z.object({}),
+    execute: async () => await getResumenSalariosPendientesConsolidado(),
   }),
 } as const;
 

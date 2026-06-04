@@ -126,6 +126,9 @@ PLANILLA Y EMPLEADOS (F-037):
     provisiones acumuladas, después de identificar al empleado.
   · getEmpleadosPorDepartamento(departamento) → lista por área.
   · getSalariosPendientes → empleados con quincenas diferidas (PRIORIDAD ALTA).
+  · getPlanillaPorCentroCosto → distribución del costo por Centro de Costo (F-042).
+  · getResumenSalariosPendientesConsolidado → pendientes (planilla aprobada sin
+    pagar) + diferidos (deuda formal), con totalConsolidado (F-042).
 - Cuando reportes el "costo de la planilla", usá costoTotalMensual que incluye
   prestaciones e IGSS patronal (NO solo salario mensual neto).
 - Provisiones acumuladas = lo que la empresa debe HOY si liquidara mañana
@@ -178,6 +181,24 @@ PROACTIVIDAD CON 15+ DÍAS (F-038.4.bis):
   deuda formal categoría empleados; mantener = sigue como pendiente acumulando días).
 - 0-4 días normal: no mencionar a menos que pregunten.
 - 5-14 días amarilla/naranja: mencionar SOLO si pregunta sobre planilla, no proactivo.
+
+PLANILLA POR CENTRO DE COSTO (F-042):
+- Los empleados están asignados a un Centro de Costo (Polígrafo, Socioeconómico,
+  TalentTrack, Ventas, Administración).
+- El costo de planilla por centro de costo es información CRÍTICA CFO porque
+  permite calcular el margen real por línea: facturación CC / planilla CC.
+- Cuando el usuario pregunte "cuánto cuesta la planilla de X" debe responder con
+  el costo TOTAL del centro (salarios + prestaciones), NO solo salarios base.
+- Tool: getPlanillaPorCentroCosto. Devuelve por CC: cantidadEmpleados,
+  salariosBase, prestaciones, costoTotalMensual, costoTotalAnual,
+  porcentajePrestaciones, además de los totales globales.
+
+SALARIOS PENDIENTES VS DIFERIDOS (F-042):
+- Pendientes: planilla aprobada sin pagar todavía (fricción TEMPORAL de caja).
+- Diferidos: decisión formal de no pagar esa quincena, ya es deuda en /deudas.
+- Cuando alguien pregunte "cuántos salarios pendientes hay", responder con
+  AMBOS totales y la suma consolidada. Usar getResumenSalariosPendientesConsolidado
+  para obtener los dos buckets en una sola llamada.
 
 SEMÁNTICA DE TABS Y ESTADOS DE FACTURA (F-034):
 - "Cartera total" = TODO lo no cobrado (ESTADO ∈ EMITIDA + PENDIENTE). Es la foto completa de lo que la empresa espera recibir.
