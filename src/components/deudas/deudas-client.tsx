@@ -13,6 +13,8 @@ interface Props {
   kpis: KPIsDeudas;
   acreedores: Acreedor[];
   centros: Array<{ id: string; nombre: string }>;
+  // F-042: deep-link desde /empleados a /deudas?categoria=empleados.
+  initialCategoria?: CategoriaPasivo | '';
 }
 
 type EstadoFiltro = 'todas' | 'vigentes' | 'vencidas';
@@ -44,14 +46,14 @@ const CATEGORIA_ICONS: Record<CategoriaPasivo, string> = {
 
 const DONUT_COLORS = ['#8A2A2A', '#B8801C', '#5A6A2E', '#2B3A6B', '#7A857F', '#1A3B33', '#A8B0AB', '#4A5A53'];
 
-export function DeudasClient({ deudas, kpis, acreedores, centros }: Props) {
+export function DeudasClient({ deudas, kpis, acreedores, centros, initialCategoria = '' }: Props) {
   const router = useRouter();
 
   const [estado, setEstado] = useState<EstadoFiltro>('todas');
   const [tipoDoc, setTipoDoc] = useState<string>('');
   const [acreedorId, setAcreedorId] = useState<string>('');
   const [centroId, setCentroId] = useState<string>('');
-  const [categoria, setCategoria] = useState<CategoriaPasivo | ''>('');
+  const [categoria, setCategoria] = useState<CategoriaPasivo | ''>(initialCategoria);
   const [search, setSearch] = useState('');
   const [verTodasVencidas, setVerTodasVencidas] = useState(false);
 
