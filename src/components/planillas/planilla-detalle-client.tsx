@@ -23,6 +23,7 @@ import { ajustarLineaAction } from '@/app/(app)/planillas/actions';
 import { ModalAprobarPlanilla } from './modal-aprobar-planilla';
 import { ModalPagarEmpleado } from './modal-pagar-empleado';
 import { ModalDiferirPago } from './modal-diferir-pago';
+import { ModalCancelarPago } from './modal-cancelar-pago';
 import { ModalAgregarDescuento } from './modal-agregar-descuento';
 import type { LineaPlanilla, Periodo, EstadoPeriodo, EstadoPagoLinea } from '@/lib/db/planillas';
 import type { AjustesQuincena, DescuentoQuincena } from '@/lib/calculos/planilla-calc';
@@ -72,7 +73,10 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
   const [aprobarOpen, setAprobarOpen] = useState(false);
   const [pagarLinea, setPagarLinea]   = useState<LineaPlanilla | null>(null);
   const [diferirLinea, setDiferirLinea] = useState<LineaPlanilla | null>(null);
+  const [cancelarLinea, setCancelarLinea] = useState<LineaPlanilla | null>(null);   // F-038.4
   const [descuentoLineaId, setDescuentoLineaId] = useState<string | null>(null);
+  // F-038.4: filtro de estado de pago en la tabla.
+  const [filtroEstadoPago, setFiltroEstadoPago] = useState<'todos' | EstadoPagoLinea>('todos');
   // estado local de líneas para soportar edición inline + descuentos no persistidos en el server.
   const [lineasUI, setLineasUI] = useState<LineaUI[]>(() =>
     lineas.map(l => ({ ...l, descuentos: [] })),
@@ -92,11 +96,12 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
     const total       = lineasUI.length;
     const pagadas     = lineasUI.filter(l => l.estadoPago === 'Pagado').length;
     const diferidas   = lineasUI.filter(l => l.estadoPago === 'Diferido').length;
-    const pendientes  = total - pagadas - diferidas;
+    const canceladas  = lineasUI.filter(l => l.estadoPago === 'Cancelado').length;   // F-038.4
+    const pendientes  = total - pagadas - diferidas - canceladas;
     const montoTotal  = round2(lineasUI.reduce((s, l) => s + l.netoPagar, 0));
     const igssLaboral = round2(lineasUI.reduce((s, l) => s + l.igssLaboral, 0));
     const isrTotal    = round2(lineasUI.reduce((s, l) => s + l.isr, 0));
-    return { total, pagadas, diferidas, pendientes, montoTotal, igssLaboral, isrTotal };
+    return { total, pagadas, diferidas, canceladas, pendientes, montoTotal, igssLaboral, isrTotal };
   }, [lineasUI]);
 
   const badge = ESTADO_BADGE[periodo.estado];
@@ -263,6 +268,11 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
                     <strong className="num">{totales.diferidas}</strong> diferido{totales.diferidas === 1 ? '' : 's'}
                   </span>
                 )}
+                {totales.canceladas > 0 && (
+                  <span style={{ color: 'var(--ink-4)' }}>
+                    <strong className="num">{totales.canceladas}</strong> cancelado{totales.canceladas === 1 ? '' : 's'}
+                  </span>
+                )}
                 {totales.pendientes > 0 && (
                   <span style={{ color: 'var(--ink-3)' }}>
                     <strong className="num">{totales.pendientes}</strong> pendiente{totales.pendientes === 1 ? '' : 's'}
@@ -278,6 +288,10 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
               <div style={{
                 width: `${totales.total > 0 ? (totales.diferidas / totales.total) * 100 : 0}%`,
                 background: 'var(--wine)', height: '100%', transition: 'width 0.3s',
+              }} />
+              <div style={{
+                width: `${totales.total > 0 ? (totales.canceladas / totales.total) * 100 : 0}%`,
+                background: 'var(--ink-4)', height: '100%', transition: 'width 0.3s',
               }} />
             </div>
           </div>
@@ -305,8 +319,12 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
       {esPagable && (
         <TablaPagable
           lineas={lineasUI}
+          fechaAprobacion={periodo.fechaAprobacion}
+          filtro={filtroEstadoPago}
+          onFiltroChange={setFiltroEstadoPago}
           onPagar={(l) => setPagarLinea(l)}
           onDiferir={(l) => setDiferirLinea(l)}
+          onCancelar={(l) => setCancelarLinea(l)}
         />
       )}
 
@@ -379,6 +397,9 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
       )}
       {diferirLinea && (
         <ModalDiferirPago linea={diferirLinea} onClose={() => setDiferirLinea(null)} />
+      )}
+      {cancelarLinea && (
+        <ModalCancelarPago linea={cancelarLinea} onClose={() => setCancelarLinea(null)} />
       )}
       {descuentoLineaId && (
         <ModalAgregarDescuento
@@ -573,11 +594,25 @@ function CeldaNumeroEditable({ valor, onChange, onBlur }: CeldaProps) {
 
 interface TablaPagableProps {
   lineas: LineaUI[];
+  fechaAprobacion?: string;       // F-038.4
+  filtro: 'todos' | EstadoPagoLinea;
+  onFiltroChange: (v: 'todos' | EstadoPagoLinea) => void;
   onPagar: (linea: LineaPlanilla) => void;
   onDiferir: (linea: LineaPlanilla) => void;
+  onCancelar: (linea: LineaPlanilla) => void;   // F-038.4
 }
 
-function TablaPagable({ lineas, onPagar, onDiferir }: TablaPagableProps) {
+function diasDesde(iso?: string): number {
+  if (!iso) return 0;
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return 0;
+  return Math.max(0, Math.floor((Date.now() - t) / 86400000));
+}
+
+function TablaPagable({ lineas, fechaAprobacion, filtro, onFiltroChange, onPagar, onDiferir, onCancelar }: TablaPagableProps) {
+  const visibles = filtro === 'todos' ? lineas : lineas.filter(l => l.estadoPago === filtro);
+  const diasPendiente = diasDesde(fechaAprobacion);
+
   if (lineas.length === 0) {
     return (
       <div className="card" style={{ marginBottom: 22 }}>
@@ -588,14 +623,42 @@ function TablaPagable({ lineas, onPagar, onDiferir }: TablaPagableProps) {
     );
   }
 
+  // Conteos por estado para los tabs.
+  const c = {
+    todos:     lineas.length,
+    Pendiente: lineas.filter(l => l.estadoPago === 'Pendiente').length,
+    Pagado:    lineas.filter(l => l.estadoPago === 'Pagado').length,
+    Diferido:  lineas.filter(l => l.estadoPago === 'Diferido').length,
+    Cancelado: lineas.filter(l => l.estadoPago === 'Cancelado').length,
+  };
+
   return (
     <div className="card" style={{ marginBottom: 22 }}>
       <div className="card-head">
         <div className="card-title">Pagos por empleado</div>
         <div className="card-actions">
-          <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>{lineas.length} línea(s)</span>
+          <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+            {visibles.length}/{lineas.length} líneas
+          </span>
         </div>
       </div>
+
+      {/* F-038.4: filtros tab por estado de pago. */}
+      <div style={{ display: 'flex', gap: 4, padding: '8px 14px', borderBottom: '1px solid var(--line-3)', flexWrap: 'wrap' }}>
+        {(['todos', 'Pendiente', 'Pagado', 'Diferido', 'Cancelado'] as const).map(opt => (
+          <button
+            key={opt}
+            type="button"
+            className={'tab' + (filtro === opt ? ' active' : '')}
+            onClick={() => onFiltroChange(opt)}
+            style={{ fontSize: 11, padding: '4px 10px' }}
+          >
+            {opt === 'todos' ? 'Todos' : opt}
+            <span className="tab-count num">{c[opt]}</span>
+          </button>
+        ))}
+      </div>
+
       <table className="table">
         <thead>
           <tr>
@@ -603,17 +666,28 @@ function TablaPagable({ lineas, onPagar, onDiferir }: TablaPagableProps) {
             <th className="num">Neto a pagar</th>
             <th>Estado pago</th>
             <th>Detalle</th>
-            <th style={{ width: 200 }}>Acciones</th>
+            <th style={{ width: 240 }}>Acciones</th>
           </tr>
         </thead>
         <tbody>
-          {lineas.map(l => {
+          {visibles.map(l => {
             const badge = ESTADO_PAGO_BADGE[l.estadoPago];
+            const alertaCls: string | null =
+              l.estadoPago === 'Pendiente' && diasPendiente >= 10 ? 'badge-wine'
+              : l.estadoPago === 'Pendiente' && diasPendiente >= 5 ? 'badge-warn'
+              : null;
             return (
               <tr key={l.id}>
                 <td className="cell-strong">{l.empleadoNombre || '—'}</td>
                 <td className="num cell-strong">{Q(l.netoPagar)}</td>
-                <td><span className={'badge ' + badge.cls}>{badge.text}</span></td>
+                <td>
+                  <span className={'badge ' + badge.cls}>{badge.text}</span>
+                  {alertaCls && (
+                    <span className={'badge ' + alertaCls} style={{ marginLeft: 4, fontSize: 9.5, padding: '1px 6px' }} title={`Pendiente hace ${diasPendiente} días`}>
+                      ⚠ {diasPendiente}d
+                    </span>
+                  )}
+                </td>
                 <td className="cell-mute" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 320 }} title={l.notas}>
                   {l.estadoPago === 'Pagado' && l.fechaPago && (
                     <>Pagado <span className="num">{formatFecha(l.fechaPago)}</span></>
@@ -621,18 +695,24 @@ function TablaPagable({ lineas, onPagar, onDiferir }: TablaPagableProps) {
                   {l.estadoPago === 'Diferido' && (
                     <>Diferido · {l.notas || 'sin nota'}</>
                   )}
+                  {l.estadoPago === 'Cancelado' && (
+                    <>Cancelado · {l.motivoCancelacion || l.notas || 'sin motivo'}</>
+                  )}
                   {l.estadoPago === 'Pendiente' && (
                     <span style={{ color: 'var(--ink-4)' }}>—</span>
                   )}
                 </td>
                 <td>
                   {l.estadoPago === 'Pendiente' ? (
-                    <div style={{ display: 'flex', gap: 6 }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       <button className="btn btn-primary" style={{ padding: '3px 9px', fontSize: 11 }} onClick={() => onPagar(l)}>
-                        <I.Bank size={11} /> Registrar pago
+                        <I.Bank size={11} /> Pagar
                       </button>
                       <button className="btn btn-secondary" style={{ padding: '3px 9px', fontSize: 11, color: 'var(--wine)' }} onClick={() => onDiferir(l)}>
                         <I.Clock size={11} /> Diferir
+                      </button>
+                      <button className="btn btn-ghost" style={{ padding: '3px 9px', fontSize: 11, color: 'var(--ink-3)' }} onClick={() => onCancelar(l)} title="Cancelar (sin deuda)">
+                        <I.X size={11} /> Cancelar
                       </button>
                     </div>
                   ) : l.estadoPago === 'Diferido' && l.deudaVinculadaId ? (

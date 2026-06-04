@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
 import {
   crearPeriodo, generarPlanilla, ajustarLineaPlanilla,
-  aprobarPeriodo, registrarPagoEmpleado, diferirPagoEmpleado,
+  aprobarPeriodo, registrarPagoEmpleado, diferirPagoEmpleado, cancelarPagoEmpleado,
   type CrearPeriodoInput, type GenerarPlanillaResult, type PlanillaMutationResult,
 } from '@/lib/db/planillas';
 import type { AjustesQuincena } from '@/lib/calculos/planilla-calc';
@@ -66,6 +66,17 @@ export async function diferirPagoEmpleadoAction(args: {
 }): Promise<PlanillaMutationResult> {
   const email = await emailUsuario();
   const result = await diferirPagoEmpleado({ ...args, usuarioEmail: email });
+  if (result.ok) revalidarTodo();
+  return result;
+}
+
+/* F-038.4: cancelar pago (NO genera deuda — caso licencia sin goce, etc.). */
+export async function cancelarPagoEmpleadoAction(args: {
+  lineaId: string;
+  motivo: string;
+}): Promise<PlanillaMutationResult> {
+  const email = await emailUsuario();
+  const result = await cancelarPagoEmpleado({ ...args, usuarioEmail: email });
   if (result.ok) revalidarTodo();
   return result;
 }
