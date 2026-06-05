@@ -23,6 +23,7 @@ import { ajustarLineaAction } from '@/app/(app)/planillas/actions';
 import { ModalAprobarPlanilla } from './modal-aprobar-planilla';
 import { ModalPagarEmpleado } from './modal-pagar-empleado';
 import { ModalDiferirPago } from './modal-diferir-pago';
+import { HelpButton } from '@/components/ayuda/help-button';
 import { ModalCancelarPago } from './modal-cancelar-pago';
 import { ModalAgregarDescuento } from './modal-agregar-descuento';
 import type { LineaPlanilla, Periodo, EstadoPeriodo, EstadoPagoLinea } from '@/lib/db/planillas';
@@ -301,9 +302,12 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
         </div>
         <div className="page-actions">
           {esBorrador && (
-            <button className="btn btn-primary" onClick={() => setAprobarOpen(true)} disabled={lineasUI.length === 0}>
-              <I.Check size={13} /> Aprobar planilla
-            </button>
+            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+              <button className="btn btn-primary" onClick={() => setAprobarOpen(true)} disabled={lineasUI.length === 0}>
+                <I.Check size={13} /> Aprobar planilla
+              </button>
+              <HelpButton tag="aprobar-planilla" />
+            </span>
           )}
         </div>
       </div>

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
+import { HelpButton } from '@/components/ayuda/help-button';
 import { ModalEmpleadoForm } from './modal-empleado-form';
 import type {
   Empleado,
@@ -95,7 +96,10 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Empleados</h1>
+          <h1 className="page-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Empleados
+            <HelpButton tag="modulo-empleados" />
+          </h1>
           <div className="page-subtitle">
             <span className="num">{kpis.numActivos}</span> activos · <span className="num">{kpis.numInactivos}</span> inactivos · planilla y prestaciones acumuladas
             {resumenPendientes.totalConsolidado === 0 && (

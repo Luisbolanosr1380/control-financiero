@@ -6,6 +6,7 @@ import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, ResponsiveContainer, 
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { NuevaDeudaButton } from '@/components/deudas/nueva-deuda-button';
+import { HelpButton } from '@/components/ayuda/help-button';
 import type { Acreedor, Deuda, KPIsDeudas, CategoriaPasivo } from '@/lib/db/deudas';
 
 interface Props {
@@ -113,7 +114,10 @@ export function DeudasClient({ deudas, kpis, acreedores, centros, initialCategor
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Deudas y pasivos</h1>
+          <h1 className="page-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Deudas y pasivos
+            <HelpButton tag="modulo-deudas" />
+          </h1>
           <div className="page-subtitle">
             Pasivo total: <span className="num">{Q(kpis.totalPasivo)}</span> · <span className="num">{deudas.length}</span> deudas vigentes
           </div>

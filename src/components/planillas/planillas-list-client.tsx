@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
+import { HelpButton } from '@/components/ayuda/help-button';
 import { ModalGenerarPlanilla } from './modal-generar-planilla';
 import type { Periodo, EstadoPeriodo } from '@/lib/db/planillas';
 
@@ -86,7 +87,10 @@ export function PlanillasListClient({ periodos, empleadosActivos, periodosExiste
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Planillas quincenales</h1>
+          <h1 className="page-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Planillas quincenales
+            <HelpButton tag="modulo-planillas" />
+          </h1>
           <div className="page-subtitle">
             <span className="num">{periodos.length}</span> período{periodos.length === 1 ? '' : 's'} registrado{periodos.length === 1 ? '' : 's'} · gestión de quincenas y pagos
           </div>

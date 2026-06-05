@@ -8,6 +8,7 @@ import { Q, formatDate } from '@/lib/utils';
 import { ModalEmpleadoForm } from './modal-empleado-form';
 import { ModalDarDeBaja } from './modal-dar-de-baja';
 import { ModalDeudaSalarial } from './modal-deuda-salarial';
+import { HelpButton } from '@/components/ayuda/help-button';
 import type { Empleado } from '@/lib/db/empleados';
 import type { Deuda } from '@/lib/db/deudas';
 import type { EstadoPagoLinea, EstadoPeriodo } from '@/lib/db/planillas';
@@ -102,9 +103,12 @@ export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, depart
         <div className="page-actions">
           <button className="btn btn-secondary" onClick={() => setEditar(true)}><I.Edit size={13} /> Editar</button>
           {!inactivo && (
-            <button className="btn btn-secondary" onClick={() => setDarBaja(true)} style={{ color: 'var(--wine)' }}>
-              <I.X size={13} /> Dar de baja
-            </button>
+            <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+              <button className="btn btn-secondary" onClick={() => setDarBaja(true)} style={{ color: 'var(--wine)' }}>
+                <I.X size={13} /> Dar de baja
+              </button>
+              <HelpButton tag="dar-baja-empleado" />
+            </span>
           )}
         </div>
       </div>
@@ -193,9 +197,12 @@ export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, depart
               </span>
             )}
             {!inactivo && (
-              <button className="btn btn-secondary" onClick={() => setCrearDeuda(true)} style={{ marginLeft: 8 }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', marginLeft: 8 }}>
+              <button className="btn btn-secondary" onClick={() => setCrearDeuda(true)}>
                 <I.Plus size={13} /> Registrar deuda salarial
               </button>
+              <HelpButton tag="deuda-salarial" />
+              </span>
             )}
           </div>
         </div>

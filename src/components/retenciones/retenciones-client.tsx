@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
+import { HelpButton } from '@/components/ayuda/help-button';
 import type { RetencionesAgregadas, RetencionRecord, TipoRetencion } from '@/lib/db/retenciones';
 
 interface Props {
@@ -83,7 +84,10 @@ export function RetencionesClient({ data }: Props) {
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Retenciones acumuladas</h1>
+          <h1 className="page-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Retenciones acumuladas
+            <HelpButton tag="modulo-retenciones" />
+          </h1>
           <div className="page-subtitle">
             Crédito fiscal del año {data.anio} · IVA + ISR retenidos por clientes
           </div>

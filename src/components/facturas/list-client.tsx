@@ -6,6 +6,7 @@ import { I } from '@/components/common/icons';
 import { Q, formatDateDDMMYYYY } from '@/lib/utils';
 import { LINES } from '@/lib/mock-data';
 import { cargarMasFacturasAction } from '@/app/(app)/facturacion/actions';
+import { HelpButton } from '@/components/ayuda/help-button';
 import type { Invoice, Customer } from '@/lib/types';
 import { predicadoFiltro, type InvoiceLiviano, type FiltroTabFactura } from '@/lib/db/facturas';
 
@@ -219,7 +220,10 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Facturación</h1>
+          <h1 className="page-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Facturación
+            <HelpButton tag="modulo-facturacion" />
+          </h1>
           <div className="page-subtitle" style={{ fontSize: 14, color: 'var(--ink-2)' }}>
             <span style={{ fontWeight: 500 }}>{TAB_LABELS[tab]}:</span>{' '}
             <span className="num" style={{ fontWeight: 500 }}>{agregadoTab.cantidad}</span> facturas

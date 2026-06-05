@@ -15,6 +15,7 @@ import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { formatearFecha } from '@/lib/utils/fechas';
 import { aprobarNotaCreditoAction, anularNotaCreditoAction } from '@/app/(app)/facturacion/[id]/actions';
+import { HelpButton } from '@/components/ayuda/help-button';
 import type { NotaCredito, EstadoNotaCredito } from '@/lib/db/notas-credito';
 
 const ESTADO_BADGE: Record<EstadoNotaCredito, { cls: string; text: string }> = {
@@ -125,25 +126,31 @@ export function NotasCreditoSection({ notasCredito, esAdmin }: Props) {
                     </a>
                   )}
                   {esAdmin && nc.estado === 'Pendiente Aprobación' && (
-                    <button
-                      type="button"
-                      className="btn btn-primary"
-                      style={{ fontSize: 11, padding: '3px 10px' }}
-                      onClick={() => aprobar(nc)}
-                      disabled={busyId === nc.id}
-                    >
-                      {busyId === nc.id ? 'Aprobando…' : 'Aprobar'}
-                    </button>
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        style={{ fontSize: 11, padding: '3px 10px' }}
+                        onClick={() => aprobar(nc)}
+                        disabled={busyId === nc.id}
+                      >
+                        {busyId === nc.id ? 'Aprobando…' : 'Aprobar'}
+                      </button>
+                      <HelpButton tag="aprobar-nc" />
+                    </span>
                   )}
                   {(nc.estado === 'Activa' || nc.estado === 'Aprobada') && !enAnulacion && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ fontSize: 11, padding: '3px 8px', color: 'var(--wine)' }}
-                      onClick={() => { setAnulandoId(nc.id); setMotivoAnul(''); }}
-                    >
-                      <I.X size={11} /> Anular NC
-                    </button>
+                    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        style={{ fontSize: 11, padding: '3px 8px', color: 'var(--wine)' }}
+                        onClick={() => { setAnulandoId(nc.id); setMotivoAnul(''); }}
+                      >
+                        <I.X size={11} /> Anular NC
+                      </button>
+                      <HelpButton tag="anular-nc" />
+                    </span>
                   )}
                 </div>
               )}

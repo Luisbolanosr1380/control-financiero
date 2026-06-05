@@ -10,6 +10,7 @@ import { EmitirNCButton } from '@/components/facturas/emitir-nc-button';
 import { NotasCreditoSection } from '@/components/facturas/notas-credito-section';
 import { RegistrarCobroButton } from '@/components/facturas/registrar-cobro-button';
 import { AnularCobroButton } from '@/components/facturas/anular-cobro-button';
+import { HelpButton } from '@/components/ayuda/help-button';
 import type { Banco } from '@/lib/db/bancos';
 import type { GrupoCobro } from '@/lib/db/cobros';
 import type { NotaCredito } from '@/lib/db/notas-credito';
@@ -115,30 +116,42 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
           </div>
         </div>
         <div className="page-actions">
-          <EditarFacturaButton
-            factura={inv}
-            clienteNombre={clienteNombre}
-            subtotal={sumSub}
-            iva={sumIva}
-            cobrosActivos={cobros.filter(g => g.estadoCobro === 'Activo').length}
-          />
-          <EmitirNCButton
-            facturaId={inv.id}
-            facturaNumero={inv.noFactura}
-            clienteNombre={clienteNombre}
-            total={inv.total}
-            saldoPendiente={saldoPendiente}
-            estadoBruto={inv.estadoBruto}
-          />
-          <AnularFacturaButton noFactura={inv.noFactura} status={inv.status} />
-          <RegistrarCobroButton
-            noFactura={inv.noFactura}
-            total={inv.total}
-            saldoPendiente={saldoPendiente}
-            status={inv.status}
-            estadoBruto={inv.estadoBruto === 'cobrado_parcial' ? 'COBRADO PARCIAL' : undefined}
-            bancos={bancos}
-          />
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <EditarFacturaButton
+              factura={inv}
+              clienteNombre={clienteNombre}
+              subtotal={sumSub}
+              iva={sumIva}
+              cobrosActivos={cobros.filter(g => g.estadoCobro === 'Activo').length}
+            />
+            <HelpButton tag="editar-factura" />
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <EmitirNCButton
+              facturaId={inv.id}
+              facturaNumero={inv.noFactura}
+              clienteNombre={clienteNombre}
+              total={inv.total}
+              saldoPendiente={saldoPendiente}
+              estadoBruto={inv.estadoBruto}
+            />
+            <HelpButton tag="emitir-nc" />
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <AnularFacturaButton noFactura={inv.noFactura} status={inv.status} />
+            <HelpButton tag="anular-factura" />
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+            <RegistrarCobroButton
+              noFactura={inv.noFactura}
+              total={inv.total}
+              saldoPendiente={saldoPendiente}
+              status={inv.status}
+              estadoBruto={inv.estadoBruto === 'cobrado_parcial' ? 'COBRADO PARCIAL' : undefined}
+              bancos={bancos}
+            />
+            <HelpButton tag="registrar-cobro" />
+          </span>
         </div>
       </div>
 

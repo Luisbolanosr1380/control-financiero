@@ -16,6 +16,7 @@ import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { formatearFecha } from '@/lib/utils/fechas';
+import { HelpButton } from '@/components/ayuda/help-button';
 import { aprobarNotaCreditoAction, anularNotaCreditoAction } from '@/app/(app)/facturacion/[id]/actions';
 import type {
   NotaCredito,
@@ -147,7 +148,10 @@ export function NotasCreditoClient({ notas, kpis, esAdmin, initialTab = 'todas' 
     <div className="page">
       <div className="page-header">
         <div>
-          <h1 className="page-title">Notas de Crédito</h1>
+          <h1 className="page-title" style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            Notas de Crédito
+            <HelpButton tag="modulo-notas-credito" />
+          </h1>
           <div className="page-subtitle">
             Año {kpis.anio} · <span className="num">{kpis.totalActivas}</span> activas por <span className="num">{Q(kpis.montoActivasAnio)}</span>
           </div>
