@@ -66,7 +66,7 @@ export function HelpButton({ tag, variant = 'icon', size = 'sm', label = 'Ayuda 
         onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--ink)'; e.currentTarget.style.background = 'var(--paper-2)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--ink-3)'; e.currentTarget.style.background = 'transparent'; }}
       >
-        <I.Alert size={px + 2} />
+        <I.Help size={px + 2} />
         {variant === 'text' && <span>Ayuda</span>}
       </button>
       {open && <HelpDrawer tag={tag} onClose={() => setOpen(false)} />}
@@ -125,7 +125,7 @@ function HelpDrawer({ tag, onClose }: DrawerProps) {
         aria-label="Ayuda contextual"
       >
         <header style={{ padding: '14px 18px', borderBottom: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <I.Alert size={15} style={{ color: 'var(--ink-2)' }} />
+          <I.Help size={15} style={{ color: 'var(--ink-2)' }} />
           <div style={{ fontSize: 13.5, fontWeight: 500, color: 'var(--ink)' }}>Ayuda</div>
           <span style={{ fontSize: 10, color: 'var(--ink-4)', letterSpacing: '0.04em', textTransform: 'uppercase' }}>
             tag: {tag}

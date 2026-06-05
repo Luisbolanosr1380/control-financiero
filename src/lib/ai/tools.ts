@@ -18,6 +18,7 @@ import {
   getNotasCreditoPendientesAprobacion,
   getKPIsNotasCredito,
 } from '@/lib/db/notas-credito';
+import { getArticulos } from '@/lib/db/ayuda';
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
 import { getTopDeudores } from '@/lib/db/kpis';
@@ -1338,6 +1339,34 @@ export const aiTools = {
           motivo: n.motivo,
           emitidaPor: n.emitidaPor,
         })),
+      };
+    },
+  }),
+
+  buscarAyuda: tool({
+    description:
+      'F-046: busca artículos del Centro de Ayuda relevantes a una pregunta del usuario sobre cómo hacer algo ' +
+      'en el sistema (emitir NC, registrar cobro, anular factura, qué es un cobro parcial, etc.). ' +
+      'Búsqueda full-text sobre título + descripción + contenido, case+accent insensitive. ' +
+      'Devuelve los top 3 matches con título, descripción corta y slug (para construir el link /ayuda/[slug]). ' +
+      'USAR ANTES de responder con conocimiento propio cuando la pregunta es "cómo se hace X" o "qué es Y" ' +
+      'en términos del sistema. Si hay match relevante, mencionar el artículo con su link y dar respuesta breve.',
+    parameters: z.object({
+      query: z.string().min(2).describe('Pregunta o fragmento del usuario (ej: "cómo emitir NC", "qué es un cobro parcial").'),
+    }),
+    execute: async (input) => {
+      const articulos = await getArticulos({ search: input.query, soloActivos: true });
+      const top = articulos.slice(0, 3).map(a => ({
+        titulo: a.titulo,
+        descripcionCorta: a.descripcionCorta,
+        slug: a.slug,
+        categoria: a.categoria,
+        url: `/ayuda/${a.slug}`,
+      }));
+      return {
+        query: input.query,
+        encontrados: top.length,
+        articulos: top,
       };
     },
   }),

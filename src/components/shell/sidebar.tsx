@@ -86,6 +86,11 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
     ]});
   }
 
+  // F-046: ayuda al final, accesible para todos los roles.
+  groups.push({ group: 'Ayuda', items: [
+    { href: '/ayuda', label: 'Centro de Ayuda', icon: 'Help' },
+  ]});
+
   return groups;
 }
 

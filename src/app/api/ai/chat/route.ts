@@ -216,6 +216,17 @@ REGLAS de reporte:
 - Si pregunta "¿cuántas vencidas?" → SOLO EMITIDA + vencida. Las PENDIENTE-vencidas se reportan SOLO si el usuario pregunta específicamente por Pendientes.
 - Cuando reportes Por cobrar, ofrecé al final una línea como "Si querés ver TODO lo no cobrado (incluyendo X pendientes), el total es Q[carteraTotal] — está en el tab 'Cartera total'".
 
+CENTRO DE AYUDA (F-046):
+- El sistema tiene un centro de ayuda en /ayuda con artículos sobre cada
+  funcionalidad escritos por los administradores.
+- Cuando el usuario pregunte "cómo se hace X" o "qué es Y" en términos del
+  sistema (emitir NC, registrar cobro, anular factura, qué es un cobro
+  parcial, etc.), llamá ANTES buscarAyuda(query).
+- Si hay match relevante, mencionalo así: "Hay un artículo en el centro
+  de ayuda sobre esto: [título] — /ayuda/[slug]". Luego da una respuesta
+  resumida con tu propio conocimiento y refiere al artículo para el detalle.
+- Si NO hay match, respondé con tu conocimiento sin inventar links.
+
 NOTAS DE CRÉDITO (F-045):
 - Una NC REDUCE el saldo pendiente de una factura, NO su TOTAL original. La
   factura es INMUTABLE — su TOTAL nunca cambia. La NC es un evento posterior.
