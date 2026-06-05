@@ -24,6 +24,8 @@ import { ModalAprobarPlanilla } from './modal-aprobar-planilla';
 import { ModalPagarEmpleado } from './modal-pagar-empleado';
 import { ModalDiferirPago } from './modal-diferir-pago';
 import { HelpButton } from '@/components/ayuda/help-button';
+import { BoletaAcciones } from './boleta-acciones';
+import { BoletasBulkButton } from './boletas-bulk-button';
 import { ModalCancelarPago } from './modal-cancelar-pago';
 import { ModalAgregarDescuento } from './modal-agregar-descuento';
 import type { LineaPlanilla, Periodo, EstadoPeriodo, EstadoPagoLinea } from '@/lib/db/planillas';
@@ -308,6 +310,12 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
               </button>
               <HelpButton tag="aprobar-planilla" />
             </span>
+          )}
+          {!esBorrador && (
+            <BoletasBulkButton
+              periodoId={periodo.id}
+              cantidadPagadas={lineasUI.filter(l => l.estadoPago === 'Pagado').length}
+            />
           )}
         </div>
       </div>
@@ -883,6 +891,13 @@ function TablaPagable({ lineas, fechaAprobacion, filtro, onFiltroChange, onPagar
                         <I.X size={11} /> Cancelar
                       </button>
                     </div>
+                  ) : l.estadoPago === 'Pagado' ? (
+                    <BoletaAcciones
+                      lineaId={l.id}
+                      empleadoNombre={l.empleadoNombre}
+                      estadoPago={l.estadoPago}
+                      boletaUrl={l.boletaUrl}
+                    />
                   ) : l.estadoPago === 'Diferido' && l.deudaVinculadaId ? (
                     <Link href={`/deudas/${l.deudaVinculadaId}`} className="btn btn-ghost" style={{ padding: '2px 8px', fontSize: 11 }}>
                       Ver deuda →

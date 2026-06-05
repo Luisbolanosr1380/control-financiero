@@ -79,6 +79,9 @@ export interface LineaPlanilla {
   fechaDiferimiento?: string;
   fechaCancelacion?: string;
   motivoCancelacion?: string;
+  // F-047: boleta PDF generada (puede no existir aún).
+  boletaUrl?: string;
+  boletaNombre?: string;
 }
 
 export interface KPIsPeriodo {
@@ -129,6 +132,8 @@ const FL = {
   FECHA_DIFERIMIENTO: 'FECHA_DIFERIMIENTO',
   FECHA_CANCELACION: 'FECHA_CANCELACION',
   MOTIVO_CANCELACION: 'MOTIVO_CANCELACION',
+  // F-047
+  BOLETA:            'Adjunto',
 } as const;
 
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -224,6 +229,9 @@ function recordToLinea(record: { id: string; fields: Record<string, unknown> }, 
     fechaDiferimiento:   String(f[FL.FECHA_DIFERIMIENTO] ?? '') || undefined,
     fechaCancelacion:    String(f[FL.FECHA_CANCELACION] ?? '') || undefined,
     motivoCancelacion:   String(f[FL.MOTIVO_CANCELACION] ?? '') || undefined,
+    // F-047
+    boletaUrl:    (f[FL.BOLETA] as Array<{ url?: string; filename?: string }> | undefined)?.[0]?.url,
+    boletaNombre: (f[FL.BOLETA] as Array<{ url?: string; filename?: string }> | undefined)?.[0]?.filename,
   };
 }
 
