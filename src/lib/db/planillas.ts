@@ -132,8 +132,11 @@ const FL = {
   FECHA_DIFERIMIENTO: 'FECHA_DIFERIMIENTO',
   FECHA_CANCELACION: 'FECHA_CANCELACION',
   MOTIVO_CANCELACION: 'MOTIVO_CANCELACION',
-  // F-047
-  BOLETA:            'Adjunto',
+  // F-047.2: el campo real en Airtable es 'ADJUNTO ' (todo mayúsculas, espacio
+  // al final — confirmado vía MCP). Lectura previa usaba 'Adjunto' y caía a
+  // undefined → boletaUrl quedaba sin poblar → UI mostraba "Generar boleta"
+  // aunque el PDF estaba en Airtable.
+  BOLETA:            'ADJUNTO ',
 } as const;
 
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',

@@ -72,7 +72,8 @@ export async function generarBoletaAction(
   let empleadoId: string | undefined;
   try {
     const rec = await airtable(TABLES.PLANILLA).find(lineaId);
-    const att = rec.fields['Adjunto'] as Array<{ url?: string }> | undefined;
+    // F-047.2: nombre real del campo es 'ADJUNTO ' (mayúsculas + espacio).
+    const att = rec.fields['ADJUNTO '] as Array<{ url?: string }> | undefined;
     yaExistia  = (att?.length ?? 0) > 0;
     periodoId  = (rec.fields['PERIODO']  as string[] | undefined)?.[0];
     empleadoId = (rec.fields['EMPLEADO '] as string[] | undefined)?.[0];   // OJO espacio (igual que FL.EMPLEADO)
@@ -93,7 +94,7 @@ export async function generarBoletaAction(
   // regeneraciones ya queda en NOTAS, no perdemos auditoría.
   if (yaExistia) {
     try {
-      await airtable(TABLES.PLANILLA).update([{ id: lineaId, fields: { 'Adjunto': [] } }]);
+      await airtable(TABLES.PLANILLA).update([{ id: lineaId, fields: { 'ADJUNTO ': [] } }]);
     } catch (err) {
       return { ok: false, lineaId, error: `No se pudo limpiar la boleta anterior: ${err instanceof Error ? err.message : String(err)}` };
     }
