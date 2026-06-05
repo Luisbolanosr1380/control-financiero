@@ -7,6 +7,8 @@
 // Field IDs (se usan IDs en vez de nombres para evitar problemas con espacios/acentos).
 export const ADJUNTO_FIELD_ID     = 'fldu9i1eWwtdLzpft';  // FACTURAS_CLIENTES.ADJUNTO
 export const CONSTANCIA_FIELD_ID  = 'fldFzyXYOGqGYjYLe';  // COBROS_CLIENTES.Constancia_Retencion
+export const BOLETA_FIELD_ID      = 'fldmnn1YD8HICzKAg';  // F-047: PLANILLA.Adjunto (boleta PDF por línea)
+export const FIRMA_EMPLEADO_FIELD = 'Firma_Digital';      // F-047: EMPLEADOS.Firma_Digital — placeholder por nombre hasta confirmar field ID
 
 // MIME types aceptados — mismo set que usa el flujo de facturas más imágenes
 // comunes para las constancias (las contadoras a veces escanean a JPG/PNG).
