@@ -32,6 +32,7 @@
   --accent-hover: #163B33;
   --amber:        #B8801C;   /* mustard amber - warning */
   --amber-bg:     #F2E2BD;
+  --warn:         var(--amber);   /* F-042.1: alias legacy — varios componentes usan var(--warn) */
   --wine:         #8A2A2A;   /* deep wine - critical */
   --wine-bg:      #EDD0CC;
   --olive:        #5A6A2E;   /* sober green - success/positive */
