@@ -49,4 +49,5 @@ export const TABLES = {
   ANALISIS_AI: 'ANALISIS_AI',
   USO_AUROS:   'USO_AUROS',
   NOTAS_CREDITO: 'NOTAS_CREDITO',        // F-045
+  AYUDA: 'AYUDA',                        // F-046
 } as const;
