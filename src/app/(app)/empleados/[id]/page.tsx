@@ -1,8 +1,10 @@
 import Link from 'next/link';
+import { currentUser } from '@clerk/nextjs/server';
 import { getEmpleadoPorId } from '@/lib/db/empleados';
 import { getDeudas } from '@/lib/db/deudas';
 import { getCentrosCostoActivos } from '@/lib/db/centros';
-import { getPeriodos, getLineasPlanilla, type LineaPlanilla, type Periodo } from '@/lib/db/planillas';
+import { getPeriodos, getLineasPlanilla, getBoletasDelEmpleado, type LineaPlanilla, type Periodo } from '@/lib/db/planillas';
+import { getRolUsuario } from '@/lib/auth/allowlist';
 import { EmpleadoDetalle, type LineaPlanillaHistorico } from '@/components/empleados/empleado-detalle';
 import { I } from '@/components/common/icons';
 
@@ -26,10 +28,15 @@ export default async function EmpleadoDetallePage({ params }: { params: Promise<
     );
   }
 
-  const [deudas, centros, periodos] = await Promise.all([
+  const user = await currentUser();
+  const rol = getRolUsuario(user?.emailAddresses?.[0]?.emailAddress ?? '');
+  const esAdmin = rol === 'admin';
+
+  const [deudas, centros, periodos, boletas] = await Promise.all([
     getDeudas(),
     getCentrosCostoActivos(),
     getPeriodos({ estado: 'todos' }),
+    esAdmin ? getBoletasDelEmpleado(id) : Promise.resolve([]),
   ]);
   const deudasSalariales = deudas
     .filter(d => d.acreedorId === empleado.acreedorVinculadoId && d.tipoDocumento === 'Salario Pendiente')
@@ -76,6 +83,8 @@ export default async function EmpleadoDetallePage({ params }: { params: Promise<
       centros={centrosUI}
       departamentos={departamentos}
       historicoPlanillas={historicoPlanillas}
+      boletas={boletas}
+      esAdmin={esAdmin}
     />
   );
 }

@@ -11,7 +11,8 @@ import { ModalDeudaSalarial } from './modal-deuda-salarial';
 import { HelpButton } from '@/components/ayuda/help-button';
 import type { Empleado } from '@/lib/db/empleados';
 import type { Deuda } from '@/lib/db/deudas';
-import type { EstadoPagoLinea, EstadoPeriodo } from '@/lib/db/planillas';
+import type { EstadoPagoLinea, EstadoPeriodo, BoletaHistorial } from '@/lib/db/planillas';
+import { BoletaAcciones } from '@/components/planillas/boleta-acciones';
 
 export interface LineaPlanillaHistorico {
   periodoId: string;
@@ -35,6 +36,10 @@ interface Props {
   centros: Array<{ id: string; nombre: string }>;
   departamentos: string[];
   historicoPlanillas?: LineaPlanillaHistorico[];
+  /** F-047: histórico de boletas del empleado (todas las Pagadas). */
+  boletas?: BoletaHistorial[];
+  /** F-047: solo admin/RH ve la sección de boletas. */
+  esAdmin?: boolean;
 }
 
 function formatFecha(s: string | undefined): string {
@@ -45,7 +50,7 @@ function formatFecha(s: string | undefined): string {
   return `${day}/${m}/${y}`;
 }
 
-export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, departamentos, historicoPlanillas }: Props) {
+export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, departamentos, historicoPlanillas, boletas, esAdmin }: Props) {
   const router = useRouter();
   const [editar, setEditar] = useState(false);
   const [darBaja, setDarBaja] = useState(false);
@@ -326,6 +331,60 @@ export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, depart
               )}
             </div>
           </>
+        )}
+
+        {/* F-047: Boletas de pago — solo admin */}
+        {esAdmin && boletas && boletas.length > 0 && (
+          <div className="card" style={{ marginTop: 22 }}>
+            <div className="card-head">
+              <div className="card-title">
+                Boletas de pago
+                <HelpButton tag="boleta-pago" />
+              </div>
+              <div className="card-actions">
+                <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
+                  {boletas.length} pagada{boletas.length === 1 ? '' : 's'} · {boletas.filter(b => b.boletaUrl).length} con PDF
+                </span>
+              </div>
+            </div>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Período</th>
+                  <th>Fecha pago</th>
+                  <th className="num">Neto pagado</th>
+                  <th>Boleta</th>
+                  <th style={{ width: 220 }}>Acciones</th>
+                </tr>
+              </thead>
+              <tbody>
+                {boletas.map(b => (
+                  <tr key={b.lineaId}>
+                    <td className="cell-strong">
+                      <Link href={`/planillas/${b.periodoId}`} style={{ color: 'var(--accent)', textDecoration: 'none' }}>
+                        {b.periodoNombre}
+                      </Link>
+                    </td>
+                    <td className="cell-mute">{b.fechaPago ? formatFecha(b.fechaPago) : '—'}</td>
+                    <td className="num cell-strong">{Q(b.netoPagar)}</td>
+                    <td>
+                      {b.boletaUrl
+                        ? <span style={{ fontSize: 11, color: 'var(--olive)' }} title={b.boletaNombre}>📄✓</span>
+                        : <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>—</span>}
+                    </td>
+                    <td>
+                      <BoletaAcciones
+                        lineaId={b.lineaId}
+                        empleadoNombre={e.nombre}
+                        estadoPago={b.estadoPago}
+                        boletaUrl={b.boletaUrl}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
 

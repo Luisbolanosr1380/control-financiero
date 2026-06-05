@@ -897,3 +897,60 @@ export async function previewGeneracion(): Promise<PreviewGeneracion> {
     empleados: detalle,
   };
 }
+
+/* ============================================================
+ * F-047 — Histórico de boletas por empleado
+ * ============================================================ */
+
+export interface BoletaHistorial {
+  lineaId: string;
+  periodoId: string;
+  periodoNombre: string;
+  anio: number;
+  mes: number;
+  quincena: 1 | 2;
+  fechaPago?: string;
+  netoPagar: number;
+  estadoPago: EstadoPagoLinea;
+  boletaUrl?: string;
+  boletaNombre?: string;
+}
+
+export async function getBoletasDelEmpleado(empleadoId: string, anio?: number): Promise<BoletaHistorial[]> {
+  if (USE_MOCK || !airtable) return [];
+  try {
+    const periodos = await getPeriodos({ estado: 'todos' });
+    const out: BoletaHistorial[] = [];
+    for (const p of periodos) {
+      if (anio && p.anio !== anio) continue;
+      const lineas = await getLineasPlanilla(p.id);
+      for (const l of lineas) {
+        if (l.empleadoId !== empleadoId) continue;
+        if (l.estadoPago !== 'Pagado') continue;   // solo Pagadas se reportan
+        out.push({
+          lineaId: l.id,
+          periodoId: p.id,
+          periodoNombre: p.nombre,
+          anio: p.anio,
+          mes: p.mes,
+          quincena: p.quincena,
+          fechaPago: l.fechaPago,
+          netoPagar: l.netoPagar,
+          estadoPago: l.estadoPago,
+          boletaUrl: l.boletaUrl,
+          boletaNombre: l.boletaNombre,
+        });
+      }
+    }
+    // Más reciente primero
+    out.sort((a, b) => {
+      if (a.anio !== b.anio) return b.anio - a.anio;
+      if (a.mes !== b.mes)   return b.mes - a.mes;
+      return b.quincena - a.quincena;
+    });
+    return out;
+  } catch (err) {
+    console.error('Error leyendo boletas del empleado:', err);
+    return [];
+  }
+}

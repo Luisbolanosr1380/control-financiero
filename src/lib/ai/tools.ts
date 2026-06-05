@@ -35,7 +35,7 @@ import {
   getPlanillaPorCentroCosto,
   getResumenSalariosPendientesConsolidado,
 } from '@/lib/db/empleados';
-import { getPeriodos, getPeriodoPorId, getLineasPlanilla, getPagosPendientes, getKPIsPagosPendientes } from '@/lib/db/planillas';
+import { getPeriodos, getPeriodoPorId, getLineasPlanilla, getPagosPendientes, getKPIsPagosPendientes, getBoletasDelEmpleado } from '@/lib/db/planillas';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -1339,6 +1339,56 @@ export const aiTools = {
           motivo: n.motivo,
           emitidaPor: n.emitidaPor,
         })),
+      };
+    },
+  }),
+
+  boletasDelEmpleado: tool({
+    description:
+      'F-047: lista las boletas de pago de un empleado (todas las quincenas Pagadas). Devuelve por boleta: ' +
+      'período, fecha de pago, neto y si ya existe el PDF generado (boletaUrl). Acepta opcionalmente un año ' +
+      'para filtrar. Útil para: "¿qué boletas tiene Juan este año?", "¿le falta una boleta?", "¿cuánto pagué a X en mayo?".',
+    parameters: z.object({
+      empleadoId: z.string().describe('Record ID del empleado (rec...).'),
+      anio: z.number().int().optional().describe('Año YYYY para filtrar (opcional).'),
+    }),
+    execute: async (input) => {
+      const boletas = await getBoletasDelEmpleado(input.empleadoId, input.anio);
+      return {
+        empleadoId: input.empleadoId,
+        anio: input.anio,
+        cantidad: boletas.length,
+        conPdf: boletas.filter(b => !!b.boletaUrl).length,
+        boletas: boletas.map(b => ({
+          periodo: b.periodoNombre,
+          fechaPago: b.fechaPago,
+          neto: b.netoPagar,
+          tienePdf: !!b.boletaUrl,
+        })),
+      };
+    },
+  }),
+
+  boletasDelPeriodo: tool({
+    description:
+      'F-047: estado de generación de boletas para un período de planilla. Devuelve cuántas líneas están Pagadas, ' +
+      'cuántas ya tienen boleta PDF, cuántas faltan. Útil para: "¿faltan boletas por generar de la planilla actual?", ' +
+      '"¿le emití la boleta a todos?".',
+    parameters: z.object({
+      periodoId: z.string().describe('Record ID del período de planilla (rec...).'),
+    }),
+    execute: async (input) => {
+      const periodo = await getPeriodoPorId(input.periodoId);
+      if (!periodo) return { encontrado: false };
+      const pagadas = periodo.lineas.filter(l => l.estadoPago === 'Pagado');
+      const conBoleta = pagadas.filter(l => !!l.boletaUrl).length;
+      return {
+        encontrado: true,
+        periodo: periodo.periodo.nombre,
+        totalLineas: periodo.lineas.length,
+        pagadas: pagadas.length,
+        boletasGeneradas: conBoleta,
+        boletasFaltantes: pagadas.length - conBoleta,
       };
     },
   }),
