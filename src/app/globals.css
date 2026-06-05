@@ -1087,3 +1087,77 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
 .sk-kpi   { height: 84px; width: 100%; border-radius: var(--r-3, 10px); }
 .sk-row   { height: 38px; width: 100%; margin-bottom: 1px; }
 .sk-pill  { height: 18px; width: 70px; border-radius: 999px; }
+
+/* ============ F-046 · Markdown prose para Centro de Ayuda ============ */
+
+.ayuda-prose {
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--ink);
+  max-width: 760px;
+}
+.ayuda-prose h1, .ayuda-prose h2, .ayuda-prose h3, .ayuda-prose h4 {
+  color: var(--ink);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 1.6em 0 0.5em;
+  line-height: 1.3;
+}
+.ayuda-prose h1 { font-size: 22px; margin-top: 0; }
+.ayuda-prose h2 { font-size: 18px; }
+.ayuda-prose h3 { font-size: 15.5px; }
+.ayuda-prose h4 { font-size: 14px; color: var(--ink-2); }
+.ayuda-prose p { margin: 0.8em 0; }
+.ayuda-prose strong { color: var(--ink); font-weight: 600; }
+.ayuda-prose em { font-style: italic; color: var(--ink-2); }
+.ayuda-prose ul, .ayuda-prose ol { padding-left: 1.6em; margin: 0.8em 0; }
+.ayuda-prose li { margin: 0.3em 0; }
+.ayuda-prose li > p { margin: 0.2em 0; }
+.ayuda-prose blockquote {
+  border-left: 3px solid var(--amber);
+  margin: 1em 0;
+  padding: 0.2em 1em;
+  background: var(--amber-bg);
+  color: var(--ink-2);
+  border-radius: 0 4px 4px 0;
+}
+.ayuda-prose code {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12.5px;
+  padding: 1px 5px;
+  background: var(--paper-2);
+  border: 1px solid var(--line-3);
+  border-radius: 3px;
+  color: var(--ink);
+}
+.ayuda-prose pre {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12.5px;
+  padding: 12px 14px;
+  background: var(--paper-2);
+  border: 1px solid var(--line-3);
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 1em 0;
+}
+.ayuda-prose pre code {
+  padding: 0; background: none; border: none;
+}
+.ayuda-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 13px;
+}
+.ayuda-prose th, .ayuda-prose td {
+  text-align: left;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-3);
+}
+.ayuda-prose th { font-weight: 500; color: var(--ink-2); background: var(--paper-2); }
+.ayuda-prose hr {
+  border: none;
+  border-top: 1px solid var(--line-3);
+  margin: 2em 0;
+}
+.ayuda-prose input[type="checkbox"] { margin-right: 6px; }
