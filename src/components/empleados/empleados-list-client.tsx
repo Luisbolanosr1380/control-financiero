@@ -22,7 +22,12 @@ interface Props {
 }
 
 // F-042 paleta para barras CC — alineada con tokens del sistema.
-const CC_COLORS = ['var(--olive)', 'var(--wine)', 'var(--warn)', 'var(--ink-2)', 'var(--ink-3)', 'var(--ink-4)'];
+// F-042.1: usaba 'var(--warn)' pero ese token no existe globalmente — un
+// var() sin resolver dentro de conic-gradient invalida el gradiente entero
+// y el donut quedaba transparente. Se reemplaza por 'var(--amber)' (que sí
+// existe en globals.css con el mismo intent visual) y se agregan dos
+// tokens de línea de negocio para diversificar la paleta cuando hay >4 CCs.
+const CC_COLORS = ['var(--olive)', 'var(--wine)', 'var(--amber)', 'var(--indigo)', 'var(--ink-2)', 'var(--ink-4)'];
 
 type DonutModo = 'departamento' | 'centro_costo';
 const DONUT_KEY = 'fc.empleados.donut-modo';
@@ -320,7 +325,7 @@ function SalariosPendientesSection({ resumen }: { resumen: ResumenSalariosPendie
               {hayAlertas && (
                 <div style={{ fontSize: 10, color: 'var(--ink-4)', marginBottom: 4 }}>
                   {alertaCounts.amarillas > 0 && <span style={{ marginRight: 8 }}>⚠ {alertaCounts.amarillas} amarilla{alertaCounts.amarillas === 1 ? '' : 's'}</span>}
-                  {alertaCounts.naranjas > 0 && <span style={{ marginRight: 8, color: 'var(--warn)' }}>🟠 {alertaCounts.naranjas} naranja{alertaCounts.naranjas === 1 ? '' : 's'}</span>}
+                  {alertaCounts.naranjas > 0 && <span style={{ marginRight: 8, color: 'var(--amber)' }}>🟠 {alertaCounts.naranjas} naranja{alertaCounts.naranjas === 1 ? '' : 's'}</span>}
                   {alertaCounts.rojas > 0 && <span style={{ color: 'var(--wine)' }}>🔴 {alertaCounts.rojas} roja{alertaCounts.rojas === 1 ? '' : 's'}</span>}
                 </div>
               )}
