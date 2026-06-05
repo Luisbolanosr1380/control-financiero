@@ -27,9 +27,10 @@ import { getPeriodoPorId } from '@/lib/db/planillas';
 
 const FL_NOTAS = 'NOTAS';
 
-function revalidar(periodoId?: string) {
+function revalidar(periodoId?: string, empleadoId?: string) {
   revalidatePath('/planillas');
-  if (periodoId) revalidatePath(`/planillas/${periodoId}`);
+  if (periodoId)  revalidatePath(`/planillas/${periodoId}`);
+  if (empleadoId) revalidatePath(`/empleados/${empleadoId}`);
   revalidatePath('/empleados', 'layout');
 }
 
@@ -62,12 +63,19 @@ export async function generarBoletaAction(
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
 
-  // ¿Ya existe boleta? Si sí, exigir motivo para no perder histórico silencioso.
+  // F-047.1: una sola lectura del record para obtener (a) si ya existe boleta,
+  // (b) periodoId + empleadoId para revalidar los paths específicos al final.
+  // El brief original solo revalidaba /planillas raíz — la página dinámica
+  // /planillas/[id] quedaba cacheada y el UI no refrescaba el "📄✓".
   let yaExistia = false;
+  let periodoId: string | undefined;
+  let empleadoId: string | undefined;
   try {
     const rec = await airtable(TABLES.PLANILLA).find(lineaId);
     const att = rec.fields['Adjunto'] as Array<{ url?: string }> | undefined;
-    yaExistia = (att?.length ?? 0) > 0;
+    yaExistia  = (att?.length ?? 0) > 0;
+    periodoId  = (rec.fields['PERIODO']  as string[] | undefined)?.[0];
+    empleadoId = (rec.fields['EMPLEADO '] as string[] | undefined)?.[0];   // OJO espacio (igual que FL.EMPLEADO)
   } catch {
     /* la generación abajo va a fallar igual si no se encuentra */
   }
@@ -77,6 +85,19 @@ export async function generarBoletaAction(
 
   const gen = await generarBoletaPago(lineaId, email);
   if (!gen.ok || !gen.pdf) return { ok: false, lineaId, error: gen.error ?? 'Falló la generación del PDF.' };
+
+  // F-047.1: la Content API de Airtable hace APPEND, no REPLACE. Sin esta
+  // limpieza previa, cada regeneración deja N adjuntos acumulados — el
+  // listado de Stark confirmó 1 línea con 2 PDFs duplicados. Limpiamos
+  // explícitamente el campo antes del upload nuevo. Histórico de
+  // regeneraciones ya queda en NOTAS, no perdemos auditoría.
+  if (yaExistia) {
+    try {
+      await airtable(TABLES.PLANILLA).update([{ id: lineaId, fields: { 'Adjunto': [] } }]);
+    } catch (err) {
+      return { ok: false, lineaId, error: `No se pudo limpiar la boleta anterior: ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
 
   const filename = nombreArchivoBoleta(gen.empleadoNombre ?? 'empleado', gen.periodoNombre ?? 'periodo');
   try {
@@ -92,10 +113,10 @@ export async function generarBoletaAction(
     await appendNota(lineaId, `[${ts}] Boleta generada por ${email}.`);
   }
 
-  // Disparar revalidate. Para saber el periodoId hay que leer otra vez,
-  // pero como el cliente refresca con router.refresh() y el sidebar tag-
-  // search no lo necesita, basta con revalidar /planillas raíz.
-  revalidar();
+  // F-047.1: revalidate específico al periodo + empleado, para que el server
+  // component re-fetch con boletaUrl poblado y el UI muestre "📄✓"
+  // inmediatamente tras router.refresh() en el cliente.
+  revalidar(periodoId, empleadoId);
   return { ok: true, lineaId, empleadoNombre: gen.empleadoNombre, filename, yaExistia };
 }
 
