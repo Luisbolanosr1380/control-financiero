@@ -19,6 +19,7 @@ import {
   getKPIsNotasCredito,
 } from '@/lib/db/notas-credito';
 import { getArticulos } from '@/lib/db/ayuda';
+import { getFacturasIn, getKPIsFacturasIn } from '@/lib/db/facturas-in';
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
 import { getTopDeudores } from '@/lib/db/kpis';
@@ -1417,6 +1418,90 @@ export const aiTools = {
         query: input.query,
         encontrados: top.length,
         articulos: top,
+      };
+    },
+  }),
+
+  facturasInPendientes: tool({
+    description:
+      'F-049: facturas subidas que aún están en estatus "Pendiente" (esperando revisión humana). ' +
+      'Devuelve el conteo + lista breve (top 20 más recientes) con proveedor, NIT, total, fecha y quién las subió. ' +
+      'NO incluye las que ya están Validadas ni Anuladas. ' +
+      'USAR cuando el usuario pregunte: "¿cuántas facturas tengo pendientes de revisar?", "¿qué facturas subí ayer?", ' +
+      '"¿tengo bandeja de gastos por procesar?".',
+    parameters: z.object({}),
+    execute: async () => {
+      const pendientes = await getFacturasIn({ estatus: 'Pendiente' });
+      return {
+        cantidad: pendientes.length,
+        montoTotal: pendientes.reduce((s, f) => s + f.total, 0),
+        recientes: pendientes.slice(0, 20).map(f => ({
+          proveedor: f.proveedorNombre || f.proveedorNit || '—',
+          nit: f.proveedorNit,
+          numero: f.numero,
+          fechaEmision: f.fechaEmision,
+          total: f.total,
+          moneda: f.moneda,
+          subidoPor: f.subidoPor,
+        })),
+      };
+    },
+  }),
+
+  facturasInPorProveedor: tool({
+    description:
+      'F-049: busca facturas en bandeja por NIT del proveedor. Útil cuando el usuario menciona un proveedor específico. ' +
+      'La búsqueda es exacta sobre el NIT normalizado (sin espacios). ' +
+      'USAR: "¿qué facturas tengo de Delivery Hero?", "¿le subí algo a [proveedor X]?", ' +
+      '"¿cuánto le facturé al NIT 12345?".',
+    parameters: z.object({
+      nit: z.string().min(2).describe('NIT del proveedor (con o sin guión). Ejemplo: "12345-6" o "12345".'),
+    }),
+    execute: async (input) => {
+      const target = input.nit.replace(/\s+/g, '').toUpperCase();
+      const todas = await getFacturasIn();
+      const match = todas.filter(f => f.proveedorNit.replace(/\s+/g, '').toUpperCase() === target);
+      return {
+        nit: input.nit,
+        cantidad: match.length,
+        montoTotal: match.reduce((s, f) => s + f.total, 0),
+        facturas: match.map(f => ({
+          proveedor: f.proveedorNombre,
+          numero: f.numero,
+          fechaEmision: f.fechaEmision,
+          total: f.total,
+          estatus: f.estatus,
+        })),
+      };
+    },
+  }),
+
+  estadisticasUploadMes: tool({
+    description:
+      'F-049: resumen de captura de facturas del mes (subidas, pendientes, errores frecuentes). ' +
+      'Si no se pasa año/mes, usa el mes actual en hora Guatemala. ' +
+      'USAR: "¿cómo viene la captura este mes?", "¿cuántas facturas subí en mayo?", ' +
+      '"¿qué tan llena está la bandeja?".',
+    parameters: z.object({
+      anio: z.number().int().optional(),
+      mes: z.number().int().min(1).max(12).optional(),
+    }),
+    execute: async (input) => {
+      const kpis = await getKPIsFacturasIn();
+      const todas = await getFacturasIn();
+      const ahoraISO = new Date().toISOString();
+      const anio = input.anio ?? Number(ahoraISO.slice(0, 4));
+      const mes = input.mes ?? Number(ahoraISO.slice(5, 7));
+      const prefijo = `${anio}-${String(mes).padStart(2, '0')}`;
+      const delMes = todas.filter(f => (f.fechaSubida || '').slice(0, 7) === prefijo);
+
+      return {
+        anio, mes,
+        subidasMes: delMes.length,
+        montoTotalMes: delMes.reduce((s, f) => s + f.total, 0),
+        pendientesGlobal: kpis.totalPendientes,
+        montoPendienteGlobal: kpis.montoTotalPendientes,
+        subidores: kpis.porSubidor,
       };
     },
   }),
