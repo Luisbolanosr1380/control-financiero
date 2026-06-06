@@ -1,24 +1,30 @@
 'use server';
 
 /**
- * F-049 — Server action que procesa N PDFs de factura en serie.
+ * F-049.2 — Server action que procesa N PDFs de factura en serie.
  *
  * Flujo por PDF:
  *   1. Validar mimetype + magic bytes ("%PDF-").
- *   2. SHA-256 → dedupe por file_hash → si existe, marcar duplicada y skip.
- *   3. Upload PDF a Airtable (campo archivo_adjunto). Fail-soft: si la
- *      subida falla, el record se crea igual con archivo_adjunto vacío y
- *      el motivo se loguea para diagnóstico. F-049.1 lo mejora si recurre.
- *   4. OCR con Gemini → texto plano.
- *   5. parseFactura(texto) → meta (DTE o genérico, decidido por el módulo
- *      parsers).
- *   6. Validar mínimos: total > 0 && fecha_emision !== ''. Si no, error.
- *   7. buildDocKey(meta) → dedupe lógico → si existe, marcar duplicada.
- *   8. Crear record en FACTURAS_IN con typecast=true (auto-crea Sistema /
- *      Factura GT / USD si aparecen por primera vez).
+ *   2. SHA-256 → dedupe por file_hash.
+ *   3. Gemini structured (gemini-extractor): texto OCR + datos estructurados
+ *      + confianza + notas. Reemplaza el flujo previo OCR-plain → regex.
+ *   4. Sanity checks (sanity.ts): 6 reglas duras. Si falla, NO crear record.
+ *   5. Validación cruzada con parser regex (validacion-cruzada.ts):
+ *      compara 5 campos críticos. NO bloquea — alimenta
+ *      datos_normalizados_ok para que F-050 sepa qué auto-aprobar.
+ *   6. buildDocKey(meta) → dedupe lógico por doc_key.
+ *   7. Crear record en FACTURAS_IN con typecast=true (auto-crea opciones
+ *      singleSelect nuevas).
+ *   8. Upload PDF (fail-soft).
+ *
+ * Cambios vs F-049 PARTE E:
+ *   - El parser regex YA NO es la fuente primaria; ahora valida solamente.
+ *   - El paso 5 (validación de mínimos) lo absorbió `validarSanidad`, que
+ *     da motivos legibles en lugar de un genérico.
+ *   - Se persisten confianza_extraccion + datos_normalizados (JSON con
+ *     metadata de extracción) + datos_normalizados_ok (boolean).
  *
  * Serial, no paralelo: Gemini tiene rate limits suaves y queremos respeto.
- * Volumen esperado típico: 5-15 PDFs por sesión de Stark.
  */
 
 import { revalidatePath } from 'next/cache';
@@ -35,11 +41,20 @@ import {
   checkDuplicateByHash,
   checkDuplicateByDocKey,
 } from '@/lib/facturas/dedupe';
-import { extraerTextoDeFactura } from '@/lib/facturas/ocr-gemini';
-import { parseFactura, buildDocKey } from '@/lib/facturas/parsers';
+import { extraerFacturaConGemini } from '@/lib/facturas/gemini-extractor';
+import { validarSanidad } from '@/lib/facturas/sanity';
+import { validarConRegex, todosLosMatches } from '@/lib/facturas/validacion-cruzada';
+import { buildDocKey } from '@/lib/facturas/parsers';
 
 export interface ResultadoProcesamiento {
-  creadas: Array<{ nombreArchivo: string; facturaInId: string; total: number; proveedor: string }>;
+  creadas: Array<{
+    nombreArchivo: string;
+    facturaInId: string;
+    total: number;
+    proveedor: string;
+    confianza: number;
+    normalizado_ok: boolean;
+  }>;
   duplicadas: Array<{ nombreArchivo: string; motivo: 'hash' | 'doc_key'; existingId?: string }>;
   errores: Array<{ nombreArchivo: string; motivo: string }>;
 }
@@ -76,7 +91,7 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
     if (!(f instanceof File)) continue;
     const nombreArchivo = f.name || 'sin-nombre.pdf';
 
-    // 1. Validación mimetype + magic bytes.
+    // 1. mimetype + magic bytes.
     if (f.type !== 'application/pdf') {
       resultado.errores.push({ nombreArchivo, motivo: `Tipo no soportado (${f.type || 'desconocido'}). Solo PDF.` });
       continue;
@@ -95,70 +110,78 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
       continue;
     }
 
-    // 3. OCR con Gemini.
-    const ocr = await extraerTextoDeFactura(buf);
-    if (!ocr.ok || !ocr.texto) {
-      resultado.errores.push({ nombreArchivo, motivo: `OCR falló: ${ocr.error ?? 'sin texto'}` });
+    // 3. Extracción con Gemini structured.
+    const extraccion = await extraerFacturaConGemini(buf);
+    if (!extraccion.ok || !extraccion.extraida) {
+      resultado.errores.push({ nombreArchivo, motivo: `Extracción Gemini falló: ${extraccion.error ?? 'sin datos'}` });
+      continue;
+    }
+    const extraida = extraccion.extraida;
+
+    // 4. Sanity checks — bloqueantes.
+    const sanity = validarSanidad(extraida);
+    if (!sanity.ok) {
+      resultado.errores.push({ nombreArchivo, motivo: `Sanity check falló: ${sanity.motivo}` });
       continue;
     }
 
-    // 4. Parse (DTE o genérico). El parser puede throw — capturamos.
-    let meta;
-    try {
-      meta = parseFactura(ocr.texto);
-    } catch (err) {
-      resultado.errores.push({ nombreArchivo, motivo: err instanceof Error ? err.message : String(err) });
-      continue;
-    }
+    // 5. Validación cruzada con parser regex — no bloqueante.
+    const validacion = validarConRegex(extraida);
+    const normalizado_ok = extraida.confianza >= 0.8 && todosLosMatches(validacion);
 
-    // 5. Validar campos mínimos.
-    if (!(meta.total > 0) || !meta.fecha_emision) {
-      resultado.errores.push({
-        nombreArchivo,
-        motivo: 'Campos mínimos no detectados (total/fecha). Revisar manualmente o subir mejor calidad de PDF.',
-      });
-      continue;
-    }
-
-    // 6. Dedupe por doc_key.
-    const docKey = buildDocKey(meta);
+    // 6. dedupe lógico por doc_key.
+    const docKey = buildDocKey({
+      proveedor_nit: extraida.datos.proveedor_nit,
+      serie: extraida.datos.serie,
+      numero: extraida.datos.numero,
+      fecha_emision: extraida.datos.fecha_emision,
+      total: extraida.datos.total,
+      proveedor_nombre: extraida.datos.proveedor_nombre,
+    });
     const dupKey = await checkDuplicateByDocKey(docKey);
     if (dupKey.existe) {
       resultado.duplicadas.push({ nombreArchivo, motivo: 'doc_key', existingId: dupKey.recordId });
       continue;
     }
 
-    // 7. Crear record en FACTURAS_IN. Primero sin adjunto; el upload va
-    // después para que un fallo de Content API no impida persistir lo que
-    // ya teníamos extraído (texto OCR + campos parseados).
+    // 7. Crear record en FACTURAS_IN.
+    const datosNormalizadosBlob = JSON.stringify({
+      confianza: extraida.confianza,
+      notas: extraida.notas ?? '',
+      validacion_cruzada: validacion,
+      extraido_con: 'gemini-2.5-flash-structured',
+      tokens_input: extraccion.tokensInput,
+      tokens_output: extraccion.tokensOutput,
+    });
+
     type AField = string | number | boolean | null | undefined;
     const fields: Record<string, AField> = {
-      [FACTURAS_IN_FIELDS.file_hash]:        hash,
-      [FACTURAS_IN_FIELDS.doc_key]:          docKey,
-      [FACTURAS_IN_FIELDS.proveedor_nombre]: meta.proveedor_nombre,
-      [FACTURAS_IN_FIELDS.proveedor_nit]:    meta.proveedor_nit,
-      [FACTURAS_IN_FIELDS.serie]:            meta.serie,
-      [FACTURAS_IN_FIELDS.numero]:           meta.numero,
-      [FACTURAS_IN_FIELDS.fecha_emision]:    meta.fecha_emision,
-      [FACTURAS_IN_FIELDS.moneda]:           meta.moneda,
-      [FACTURAS_IN_FIELDS.subtotal]:         meta.subtotal,
-      [FACTURAS_IN_FIELDS.iva]:              meta.iva,
-      [FACTURAS_IN_FIELDS.total]:            meta.total,
-      [FACTURAS_IN_FIELDS.pais]:             meta.pais,
-      [FACTURAS_IN_FIELDS.tipo_doc]:         meta.tipo_doc,
-      [FACTURAS_IN_FIELDS.estatus]:          'Pendiente',
-      [FACTURAS_IN_FIELDS.fuente]:           'Sistema',
-      [FACTURAS_IN_FIELDS.texto_ocr]:        ocr.texto.slice(0, MAX_OCR_CHARS_GUARDAR),
-      [FACTURAS_IN_FIELDS.subido_por]:       email,
-      [FACTURAS_IN_FIELDS.fecha_subida]:     obtenerDateTimeHoyGuatemala(),
+      [FACTURAS_IN_FIELDS.file_hash]:             hash,
+      [FACTURAS_IN_FIELDS.doc_key]:               docKey,
+      [FACTURAS_IN_FIELDS.proveedor_nombre]:      extraida.datos.proveedor_nombre,
+      [FACTURAS_IN_FIELDS.proveedor_nit]:         extraida.datos.proveedor_nit,
+      [FACTURAS_IN_FIELDS.serie]:                 extraida.datos.serie,
+      [FACTURAS_IN_FIELDS.numero]:                extraida.datos.numero,
+      [FACTURAS_IN_FIELDS.fecha_emision]:         extraida.datos.fecha_emision,
+      [FACTURAS_IN_FIELDS.moneda]:                extraida.datos.moneda,
+      [FACTURAS_IN_FIELDS.subtotal]:              extraida.datos.subtotal,
+      [FACTURAS_IN_FIELDS.iva]:                   extraida.datos.iva,
+      [FACTURAS_IN_FIELDS.total]:                 extraida.datos.total,
+      [FACTURAS_IN_FIELDS.pais]:                  'GT',
+      [FACTURAS_IN_FIELDS.tipo_doc]:              extraida.datos.tipo_doc,
+      [FACTURAS_IN_FIELDS.estatus]:               'Pendiente',
+      [FACTURAS_IN_FIELDS.fuente]:                'Sistema',
+      [FACTURAS_IN_FIELDS.texto_ocr]:             extraida.texto_ocr_completo.slice(0, MAX_OCR_CHARS_GUARDAR),
+      [FACTURAS_IN_FIELDS.subido_por]:            email,
+      [FACTURAS_IN_FIELDS.fecha_subida]:          obtenerDateTimeHoyGuatemala(),
+      [FACTURAS_IN_FIELDS.confianza_extraccion]:  extraida.confianza,
+      [FACTURAS_IN_FIELDS.datos_normalizados]:    datosNormalizadosBlob,
+      [FACTURAS_IN_FIELDS.datos_normalizados_ok]: normalizado_ok,
     };
 
     let recordId: string;
     try {
-      // airtable@0.12.2 typing es laxo con la sobrecarga array+opts; el
-      // runtime acepta el segundo arg { typecast: true } perfectamente.
-      // Esto auto-crea opciones de singleSelect que aún no existen
-      // (Sistema, Factura GT, USD, etc.).
+      // airtable@0.12.2 typing es laxo con la sobrecarga array+opts.
       const created = (await (airtable(FACTURAS_IN_TABLE_ID).create as unknown as (
         records: Array<{ fields: Record<string, AField> }>,
         opts: { typecast: boolean },
@@ -176,15 +199,16 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
     try {
       await uploadAttachment(recordId, FACTURAS_IN_FIELDS.archivo_adjunto, nombreArchivo, ATTACHMENT_MIME_PDF, buf);
     } catch (err) {
-      // Record ya existe — solo perdemos el adjunto. Log y seguimos.
-      console.warn(`F-049: adjunto no persistido para ${nombreArchivo}:`, err instanceof Error ? err.message : err);
+      console.warn(`F-049.2: adjunto no persistido para ${nombreArchivo}:`, err instanceof Error ? err.message : err);
     }
 
     resultado.creadas.push({
       nombreArchivo,
       facturaInId: recordId,
-      total: meta.total,
-      proveedor: meta.proveedor_nombre || meta.proveedor_nit || '—',
+      total: extraida.datos.total,
+      proveedor: extraida.datos.proveedor_nombre || extraida.datos.proveedor_nit || '—',
+      confianza: extraida.confianza,
+      normalizado_ok,
     });
   }
 
