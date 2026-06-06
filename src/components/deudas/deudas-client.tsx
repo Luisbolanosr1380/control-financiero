@@ -201,7 +201,7 @@ export function DeudasClient({ deudas, kpis, acreedores, centros, initialCategor
             <table className="table">
               <thead>
                 <tr>
-                  <th>Acreedor</th>
+                  <th>Deuda</th>
                   <th>Tipo</th>
                   <th className="num">Saldo</th>
                   <th className="num">Días en mora</th>
@@ -211,14 +211,17 @@ export function DeudasClient({ deudas, kpis, acreedores, centros, initialCategor
               <tbody>
                 {(verTodasVencidas ? vencidas : vencidas.slice(0, 5)).map(d => (
                   <tr key={d.id} className="clickable" onClick={() => router.push(`/deudas/${d.id}`)}>
-                    <td className="cell-strong" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {d.esParteRelacionada && <span title="Parte relacionada (socio)">🤝</span>}
-                      <span
+                    <td className="cell-strong">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {d.esParteRelacionada && <span title="Parte relacionada (socio)">🤝</span>}
+                        <span>{d.nombreDeuda || d.claveDeuda || d.acreedorNombre}</span>
+                      </div>
+                      <div
                         onClick={(e) => { e.stopPropagation(); router.push(`/acreedores/${d.acreedorId}`); }}
-                        style={{ cursor: 'pointer', textDecoration: 'underline dotted' }}
+                        style={{ fontSize: 11, color: 'var(--ink-4)', cursor: 'pointer', textDecoration: 'underline dotted', marginTop: 2 }}
                       >
-                        {d.acreedorNombre}
-                      </span>
+                        {d.acreedorCorto || d.acreedorNombre}
+                      </div>
                     </td>
                     <td><span className="badge badge-outline">{d.tipoDocumento}</span></td>
                     <td className="num cell-strong">{Q(d.saldoPendiente)}</td>
@@ -352,7 +355,7 @@ export function DeudasClient({ deudas, kpis, acreedores, centros, initialCategor
           <table className="table" style={{ tableLayout: 'fixed' }}>
             <thead>
               <tr>
-                <th>Acreedor</th>
+                <th>Deuda</th>
                 <th style={{ width: 130 }}>Tipo</th>
                 <th className="num" style={{ width: 120 }}>Saldo</th>
                 <th className="num" style={{ width: 120 }}>Monto original</th>
@@ -379,14 +382,17 @@ export function DeudasClient({ deudas, kpis, acreedores, centros, initialCategor
                 const morColor = d.diasEnMora > 0 ? 'var(--wine)' : d.diasAVencer <= 7 ? 'var(--burnt)' : 'var(--ink-3)';
                 return (
                   <tr key={d.id} className="clickable" onClick={() => router.push(`/deudas/${d.id}`)}>
-                    <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={d.acreedorNombre}>
-                      {d.esParteRelacionada && <span style={{ marginRight: 4 }} title="Parte relacionada (socio)">🤝</span>}
-                      <span
+                    <td className="cell-strong" style={{ overflow: 'hidden' }} title={`${d.nombreDeuda || d.claveDeuda} · ${d.acreedorNombre}`}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {d.esParteRelacionada && <span style={{ flexShrink: 0 }} title="Parte relacionada (socio)">🤝</span>}
+                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{d.nombreDeuda || d.claveDeuda || d.acreedorNombre}</span>
+                      </div>
+                      <div
                         onClick={(e) => { e.stopPropagation(); router.push(`/acreedores/${d.acreedorId}`); }}
-                        style={{ cursor: 'pointer', textDecoration: 'underline dotted' }}
+                        style={{ fontSize: 11, color: 'var(--ink-4)', cursor: 'pointer', textDecoration: 'underline dotted', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                       >
-                        {d.acreedorNombre}
-                      </span>
+                        {d.acreedorCorto || d.acreedorNombre}
+                      </div>
                     </td>
                     <td><span className="badge badge-outline" style={{ fontSize: 10.5 }}>{d.tipoDocumento || '—'}</span></td>
                     <td className="num cell-strong">{Q(d.saldoPendiente)}</td>

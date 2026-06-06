@@ -61,6 +61,9 @@ const FD = {
   NUM_PAGOS:          'Num_Pagos',                 // rollup
   NOTAS:              'Notas',
   NO_INCLUIR:         'No Incluir',                // checkbox
+  // F-BF-001: lookup multipleLookupValues con el alias corto del acreedor
+  // (field ID fldGD0nqcu1STO815). Viene como array de strings.
+  ACREEDOR_CORTO:     'Acreedor_Corto',
 } as const;
 
 // ============================================================
@@ -110,6 +113,11 @@ export interface Deuda {
   nombreDeuda: string;
   acreedorId: string;
   acreedorNombre: string;
+  /** F-BF-001: alias corto del acreedor (lookup `Acreedor_Corto`). Se usa
+   * como segunda línea en el listado de /deudas para distinguir entre N
+   * deudas del mismo acreedor. Cae a `acreedorNombre` si el lookup viene
+   * vacío. */
+  acreedorCorto: string;
   tipoAcreedor: string;
   esParteRelacionada: boolean;
   categoriaPasivo: CategoriaPasivo;
@@ -239,6 +247,7 @@ function deudaFromRecord(
     nombreDeuda:         str(f[FD.NOMBRE_DEUDA]),
     acreedorId,
     acreedorNombre:      ac?.nombre ?? arrFirstName(f[FD.ACREEDOR]),
+    acreedorCorto:       arrFirstName(f[FD.ACREEDOR_CORTO]) || (ac?.nombre ?? arrFirstName(f[FD.ACREEDOR])),
     tipoAcreedor,
     esParteRelacionada,
     categoriaPasivo:     clasificarPasivo(tipoAcreedor, esParteRelacionada),
