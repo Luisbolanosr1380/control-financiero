@@ -42,6 +42,10 @@ export const FACTURAS_IN_FIELDS = {
   archivo_adjunto:       'fldGDBdjCtYRf9Dga',
   subido_por:            'fldhYFRFIdSacyOMe',
   fecha_subida:          'fldR7tWYAaza7VCoq',
+  // F-049.2 (creado vía MCP el 6 jun 2026). Precision 2, rango 0.00–1.00.
+  // 0 = extracción falló; 1 = alta confianza; <0.8 = bandera revisión manual;
+  // <0.5 = posible error de OCR grave.
+  confianza_extraccion:  'fldKqLHd7l235W32R',
 } as const;
 
 export type FacturaInFieldKey = keyof typeof FACTURAS_IN_FIELDS;
