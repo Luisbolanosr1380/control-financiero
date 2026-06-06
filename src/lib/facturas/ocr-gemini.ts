@@ -12,6 +12,7 @@
 
 import { generateText } from 'ai';
 import { google } from '@ai-sdk/google';
+import { normalizeGreekToLatin } from './parsers/utils';
 
 const MODELO_OCR = 'gemini-2.5-flash';
 
@@ -63,10 +64,17 @@ export async function extraerTextoDeFactura(pdfBuffer: Buffer): Promise<Resultad
       ],
     });
 
-    const texto = (result.text ?? '').trim();
-    if (!texto) {
+    const textoCrudo = (result.text ?? '').trim();
+    if (!textoCrudo) {
       return { ok: false, error: 'Gemini devolvió respuesta vacía.' };
     }
+
+    // F-049.1: Gemini ocasionalmente extrae letras griegas (Α, Ν, Ο, Μ…)
+    // en lugar de latinas (A, N, O, M…) cuando los glifos son visualmente
+    // ambiguos. Normalizamos ANTES del return para que (a) el parser
+    // matchee bien las regexes y (b) el texto guardado en Airtable ya
+    // esté limpio para auditoría posterior.
+    const texto = normalizeGreekToLatin(textoCrudo);
 
     return {
       ok: true,

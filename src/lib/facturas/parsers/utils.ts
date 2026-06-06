@@ -256,6 +256,30 @@ export function removeDiacritics(s: unknown): string {
   return String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
+/**
+ * F-049.1: mapa de letras griegas que Gemini confunde visualmente con
+ * latinas. Solo se incluyen las que son visualmente AMBIGUAS — las
+ * unívocamente griegas (Γ, Δ, Θ, Λ, Ξ, Π, Σ, Φ, Ψ, Ω) se respetan por si
+ * el documento original sí las contiene.
+ *
+ * Caso confirmado el 5 jun 2026 (KATAR/Petróleo): el OCR devolvió
+ * "SOCIEDAD ΑΝΟΝΙΜΑ" en lugar de "SOCIEDAD ANONIMA" y la regex de
+ * proveedor_nombre no matcheaba. Aplicamos esto sobre el texto OCR antes
+ * de parsearlo Y antes de persistirlo en Airtable, para que la auditoría
+ * vea el texto ya limpio.
+ */
+const GREEK_TO_LATIN: Record<string, string> = {
+  Α: 'A', Β: 'B', Ε: 'E', Ζ: 'Z', Η: 'H',
+  Ι: 'I', Κ: 'K', Μ: 'M', Ν: 'N', Ο: 'O',
+  Ρ: 'P', Τ: 'T', Υ: 'Y', Χ: 'X',
+  α: 'a', ε: 'e', ι: 'i', κ: 'k', μ: 'm',
+  ν: 'n', ο: 'o', ρ: 'p', τ: 't', υ: 'y', χ: 'x',
+};
+
+export function normalizeGreekToLatin(text: string): string {
+  return String(text ?? '').replace(/[Α-Ωα-ω]/g, c => GREEK_TO_LATIN[c] ?? c);
+}
+
 /** "CF" se preserva; cualquier otro se uppercasea y deja solo [0-9A-Z]. */
 export function normalizeNitGT(s: unknown): string {
   if (!s) return '';
