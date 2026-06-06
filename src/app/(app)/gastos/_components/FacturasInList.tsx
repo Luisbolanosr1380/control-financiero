@@ -28,6 +28,7 @@ const ESTATUS_BADGE: Record<string, { cls: string; text: string }> = {
 export function FacturasInList({ facturas }: Props) {
   const [estatus, setEstatus] = useState<string>('');
   const [subidoPor, setSubidoPor] = useState<string>('');
+  const [soloBajaConfianza, setSoloBajaConfianza] = useState(false);
   const [search, setSearch] = useState('');
   const [seleccionada, setSeleccionada] = useState<FacturaIn | null>(null);
 
@@ -40,6 +41,9 @@ export function FacturasInList({ facturas }: Props) {
     let r = facturas;
     if (estatus)   r = r.filter(f => f.estatus === estatus);
     if (subidoPor) r = r.filter(f => f.subidoPor === subidoPor);
+    if (soloBajaConfianza) {
+      r = r.filter(f => typeof f.confianzaExtraccion === 'number' && f.confianzaExtraccion < 0.8);
+    }
     if (search.trim()) {
       const q = search.toLowerCase();
       r = r.filter(f =>
@@ -49,7 +53,7 @@ export function FacturasInList({ facturas }: Props) {
       );
     }
     return r;
-  }, [facturas, estatus, subidoPor, search]);
+  }, [facturas, estatus, subidoPor, soloBajaConfianza, search]);
 
   return (
     <div className="card">
@@ -77,6 +81,14 @@ export function FacturasInList({ facturas }: Props) {
           <option value="">Subido por (todos)</option>
           {subidores.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11.5, color: 'var(--ink-3)' }}>
+          <input
+            type="checkbox"
+            checked={soloBajaConfianza}
+            onChange={(e) => setSoloBajaConfianza(e.target.checked)}
+          />
+          Solo baja confianza (&lt;0.8)
+        </label>
         <div className="toolbar-search" style={{ marginLeft: 'auto' }}>
           <I.Search size={13} style={{ color: 'var(--ink-4)' }} />
           <input
@@ -109,6 +121,7 @@ export function FacturasInList({ facturas }: Props) {
               <th>Fecha emisión</th>
               <th className="num">Total</th>
               <th>Estatus</th>
+              <th>Confianza</th>
               <th>Archivo</th>
               <th>Subido por</th>
               <th>Subido el</th>
@@ -124,6 +137,7 @@ export function FacturasInList({ facturas }: Props) {
                   <td className="cell-mute" style={{ whiteSpace: 'nowrap' }}>{f.fechaEmision ? formatearFecha(f.fechaEmision) : '—'}</td>
                   <td className="num cell-strong">{Q(f.total)}</td>
                   <td><span className={'badge ' + badge.cls} style={{ fontSize: 10 }}>{badge.text}</span></td>
+                  <td><ConfianzaBadge confianza={f.confianzaExtraccion} normalizadoOk={f.datosNormalizadosOk} /></td>
                   <td onClick={(e) => e.stopPropagation()}>
                     {f.archivoUrl ? (
                       <a href={f.archivoUrl} target="_blank" rel="noreferrer" style={{ color: 'var(--accent)', fontSize: 11, textDecoration: 'none' }}>
@@ -199,6 +213,8 @@ function FacturaInDetalle({ factura, onClose }: { factura: FacturaIn; onClose: (
             <Campo label="Subido por" valor={factura.subidoPor} />
           </div>
 
+          <MetadataExtraccion factura={factura} />
+
           {factura.archivoUrl && (
             <div style={{ marginBottom: 14 }}>
               <a href={factura.archivoUrl} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ fontSize: 12 }}>
@@ -224,6 +240,109 @@ function FacturaInDetalle({ factura, onClose }: { factura: FacturaIn; onClose: (
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * F-049.2: badge de confianza autorreportada por Gemini. Verde >= 0.9,
+ * amber 0.7-0.9, wine <0.7. Muestra "—" si no hay (records previos a F-049.2).
+ */
+function ConfianzaBadge({ confianza, normalizadoOk }: { confianza?: number; normalizadoOk?: boolean }) {
+  if (typeof confianza !== 'number') {
+    return <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>—</span>;
+  }
+  const cls = confianza >= 0.9 ? 'badge-olive' : confianza >= 0.7 ? 'badge-warn' : 'badge-wine';
+  const text = confianza >= 0.9 ? 'Alta' : confianza >= 0.7 ? 'Media' : 'Baja';
+  return (
+    <span
+      className={'badge ' + cls}
+      style={{ fontSize: 10 }}
+      title={`Confianza ${confianza.toFixed(2)} · cross-check ${normalizadoOk ? 'OK ✓' : 'con discrepancias'}`}
+    >
+      {text} {(confianza * 100).toFixed(0)}%
+    </span>
+  );
+}
+
+interface ValidacionCruzadaSerializada {
+  total_match?: boolean;
+  nit_match?: boolean;
+  fecha_match?: boolean;
+  serie_match?: boolean;
+  numero_match?: boolean;
+  notas?: string[];
+}
+
+interface DatosNormalizadosBlob {
+  confianza?: number;
+  notas?: string;
+  validacion_cruzada?: ValidacionCruzadaSerializada;
+  extraido_con?: string;
+  tokens_input?: number;
+  tokens_output?: number;
+}
+
+/** Sección de metadata en el modal de detalle. F-049.2. */
+function MetadataExtraccion({ factura }: { factura: FacturaIn }) {
+  let blob: DatosNormalizadosBlob | null = null;
+  if (factura.datosNormalizados) {
+    try { blob = JSON.parse(factura.datosNormalizados); }
+    catch { blob = null; }
+  }
+
+  if (!blob && typeof factura.confianzaExtraccion !== 'number') return null;
+
+  const v = blob?.validacion_cruzada;
+  const matchKey = (label: string, ok: boolean | undefined) => (
+    <span style={{ fontSize: 11, color: ok ? 'var(--olive)' : 'var(--wine)', marginRight: 8 }}>
+      {ok ? '✓' : '✗'} {label}
+    </span>
+  );
+
+  return (
+    <div style={{
+      padding: 12, marginBottom: 14,
+      background: 'var(--paper-2)', border: '1px solid var(--line-3)', borderRadius: 4,
+    }}>
+      <div style={{ fontSize: 11, color: 'var(--ink-4)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 8 }}>
+        Metadata de extracción
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 8 }}>
+        <ConfianzaBadge confianza={factura.confianzaExtraccion} normalizadoOk={factura.datosNormalizadosOk} />
+        {blob?.extraido_con && (
+          <span style={{ fontSize: 10, color: 'var(--ink-4)' }}>
+            modelo: <code>{blob.extraido_con}</code>
+          </span>
+        )}
+        {blob?.tokens_input != null && blob?.tokens_output != null && (
+          <span style={{ fontSize: 10, color: 'var(--ink-4)' }}>
+            tokens: {blob.tokens_input} in / {blob.tokens_output} out
+          </span>
+        )}
+      </div>
+      {v && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: 'var(--ink-4)', marginBottom: 4 }}>Cross-check con parser regex:</div>
+          <div>
+            {matchKey('Total', v.total_match)}
+            {matchKey('NIT', v.nit_match)}
+            {matchKey('Fecha', v.fecha_match)}
+            {matchKey('Serie', v.serie_match)}
+            {matchKey('Número', v.numero_match)}
+          </div>
+        </div>
+      )}
+      {v?.notas && v.notas.length > 0 && (
+        <div style={{ fontSize: 11.5, color: 'var(--wine)', lineHeight: 1.5 }}>
+          {v.notas.map((n, i) => <div key={i}>⚠ {n}</div>)}
+        </div>
+      )}
+      {blob?.notas && (
+        <div style={{ fontSize: 11.5, color: 'var(--ink-3)', fontStyle: 'italic', marginTop: 6, lineHeight: 1.5 }}>
+          Nota Gemini: {blob.notas}
+        </div>
+      )}
     </div>
   );
 }

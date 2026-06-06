@@ -33,6 +33,10 @@ export interface FacturaIn {
   archivoNombre?: string;
   docKey?: string;
   fileHash?: string;
+  // F-049.2
+  confianzaExtraccion?: number;
+  datosNormalizados?: string;            // JSON blob crudo (parsea opcional en UI)
+  datosNormalizadosOk: boolean;
 }
 
 interface AttachmentLike {
@@ -74,6 +78,11 @@ function mapRecord(rec: { id: string; fields: Record<string, unknown> }): Factur
     archivoNombre:   principalAdjunto?.filename,
     docKey:          String(get('doc_key') ?? '') || undefined,
     fileHash:        String(get('file_hash') ?? '') || undefined,
+    confianzaExtraccion: typeof get('confianza_extraccion') === 'number'
+      ? (get('confianza_extraccion') as number)
+      : undefined,
+    datosNormalizados:   String(get('datos_normalizados') ?? '') || undefined,
+    datosNormalizadosOk: Boolean(get('datos_normalizados_ok')),
   };
 }
 
