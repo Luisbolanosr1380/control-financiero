@@ -13,6 +13,7 @@ import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { formatearFecha, formatearFechaConHora } from '@/lib/utils/fechas';
 import { HelpButton } from '@/components/ayuda/help-button';
+import { ModalRevisionFactura } from './ModalRevisionFactura';
 import type { FacturaIn } from '@/lib/db/facturas-in';
 
 interface Props {
@@ -21,16 +22,32 @@ interface Props {
 
 const ESTATUS_BADGE: Record<string, { cls: string; text: string }> = {
   Pendiente: { cls: 'badge-warn',    text: 'Pendiente' },
-  Validada:  { cls: 'badge-olive',   text: 'Validada' },
+  Aprobada:  { cls: 'badge-olive',   text: 'Aprobada' },
+  Validada:  { cls: 'badge-olive',   text: 'Validada' },   // legacy F-049
   Anulada:   { cls: 'badge-wine',    text: 'Anulada' },
 };
 
 export function FacturasInList({ facturas }: Props) {
-  const [estatus, setEstatus] = useState<string>('');
+  // F-050: tab default Pendiente (lo que requiere acción).
+  const [estatus, setEstatus] = useState<string>('Pendiente');
   const [subidoPor, setSubidoPor] = useState<string>('');
   const [soloBajaConfianza, setSoloBajaConfianza] = useState(false);
   const [search, setSearch] = useState('');
   const [seleccionada, setSeleccionada] = useState<FacturaIn | null>(null);
+  const [revisando, setRevisando] = useState<FacturaIn | null>(null);
+
+  // F-050: contador para el header.
+  const contadores = useMemo(() => {
+    const ahora = new Date();
+    const inicioMes = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}`;
+    return {
+      pendientes: facturas.filter(f => f.estatus === 'Pendiente').length,
+      aprobadasMes: facturas.filter(f =>
+        (f.estatus === 'Aprobada' || f.estatus === 'Validada') &&
+        (f.fechaSubida || '').slice(0, 7) === inicioMes,
+      ).length,
+    };
+  }, [facturas]);
 
   const subidores = useMemo(
     () => [...new Set(facturas.map(f => f.subidoPor).filter(Boolean))].sort(),
@@ -64,7 +81,13 @@ export function FacturasInList({ facturas }: Props) {
         </div>
         <div className="card-actions">
           <span style={{ fontSize: 11, color: 'var(--ink-4)' }}>
-            {filtradas.length} de {facturas.length}
+            <strong style={{ color: contadores.pendientes > 0 ? 'var(--wine)' : 'var(--olive)' }}>
+              {contadores.pendientes}
+            </strong> pendiente{contadores.pendientes === 1 ? '' : 's'} de revisión
+            {' · '}
+            <strong>{contadores.aprobadasMes}</strong> aprobada{contadores.aprobadasMes === 1 ? '' : 's'} este mes
+            {' · '}
+            {filtradas.length} de {facturas.length} bajo filtros
           </span>
         </div>
       </div>
@@ -74,7 +97,7 @@ export function FacturasInList({ facturas }: Props) {
         <select value={estatus} onChange={(e) => setEstatus(e.target.value)} style={selectStyle}>
           <option value="">Estatus (todos)</option>
           <option value="Pendiente">Pendiente</option>
-          <option value="Validada">Validada</option>
+          <option value="Aprobada">Aprobada</option>
           <option value="Anulada">Anulada</option>
         </select>
         <select value={subidoPor} onChange={(e) => setSubidoPor(e.target.value)} style={selectStyle}>
@@ -148,14 +171,7 @@ export function FacturasInList({ facturas }: Props) {
                   <td className="cell-mute" style={{ fontSize: 11 }}>{f.subidoPor || '—'}</td>
                   <td className="cell-mute" style={{ fontSize: 11 }}>{f.fechaSubida ? formatearFechaConHora(f.fechaSubida) : '—'}</td>
                   <td onClick={(e) => e.stopPropagation()}>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      style={{ fontSize: 11, padding: '2px 8px' }}
-                      onClick={() => setSeleccionada(f)}
-                    >
-                      Ver
-                    </button>
+                    <AccionPorFila factura={f} onRevisar={() => setRevisando(f)} onVerDetalle={() => setSeleccionada(f)} />
                   </td>
                 </tr>
               );
@@ -167,7 +183,60 @@ export function FacturasInList({ facturas }: Props) {
       {seleccionada && (
         <FacturaInDetalle factura={seleccionada} onClose={() => setSeleccionada(null)} />
       )}
+      {revisando && (
+        <ModalRevisionFactura factura={revisando} onClose={() => setRevisando(null)} />
+      )}
     </div>
+  );
+}
+
+/**
+ * F-050: el botón por fila depende del estatus.
+ *  - Pendiente → "Revisar" abre ModalRevisionFactura (decisiones + crea GASTO).
+ *  - Aprobada  → ofrece "Ver detalle" del FACTURA_IN (el gasto vinculado vive
+ *                en /gastos/[gastoId] cuando esa vista exista — F-051 lo cubre).
+ *  - Anulada   → muestra motivo (tooltip) y "Ver detalle".
+ */
+function AccionPorFila({ factura, onRevisar, onVerDetalle }: { factura: FacturaIn; onRevisar: () => void; onVerDetalle: () => void }) {
+  if (factura.estatus === 'Pendiente') {
+    return (
+      <button
+        type="button"
+        className="btn btn-primary"
+        style={{ fontSize: 11, padding: '3px 10px' }}
+        onClick={onRevisar}
+      >
+        Revisar
+      </button>
+    );
+  }
+  if (factura.estatus === 'Anulada') {
+    let motivo = '';
+    if (factura.datosNormalizados) {
+      try {
+        const blob = JSON.parse(factura.datosNormalizados) as { anulado?: { motivo?: string; por?: string; fecha?: string } };
+        motivo = blob.anulado?.motivo ?? '';
+      } catch { /* no-op */ }
+    }
+    return (
+      <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center' }}>
+        <span title={motivo || 'Sin motivo registrado'} style={{ fontSize: 11, color: 'var(--wine)', fontStyle: 'italic' }}>
+          {motivo ? `Anulada · ${motivo.slice(0, 40)}${motivo.length > 40 ? '…' : ''}` : 'Anulada'}
+        </span>
+        <button type="button" className="btn btn-ghost" style={{ fontSize: 10, padding: '2px 6px' }} onClick={onVerDetalle}>Ver</button>
+      </span>
+    );
+  }
+  // Aprobada / Validada
+  return (
+    <button
+      type="button"
+      className="btn btn-ghost"
+      style={{ fontSize: 11, padding: '2px 8px' }}
+      onClick={onVerDetalle}
+    >
+      Ver detalle
+    </button>
   );
 }
 
