@@ -228,6 +228,21 @@ BOLETAS DE PAGO (F-047):
   boletas?"), usá boletasDelPeriodo(periodoId) y reportá
   boletasFaltantes + total Pagadas.
 
+GASTOS Y CUENTAS POR PAGAR (F-050):
+- Una FACTURA_IN aprobada genera un GASTO formal + ASIENTO contable
+  balanceado. Trazabilidad bidireccional FACTURA_IN ↔ GASTO ↔ ASIENTO.
+- Tools:
+  · gastosDelMes(anio?, mes?, centroCostoId?): totales del período.
+  · gastosPorProveedor(nit): busca proveedor por NIT y devuelve sus gastos.
+  · gastosPorCC(centroCostoId, anio?, mes?): total por centro de costo.
+  · cxpPendientes(): TODOS los GASTOS estado "Por pagar" ordenados por
+    proximidad de vencimiento (vencidos primero).
+  · cxpVencidas(): SUBSET con fecha_vencimiento < hoy (URGENTE).
+  · facturasPendientesRevision(): bandeja sin procesar (FACTURAS_IN).
+- Si el usuario pregunta "¿cuánto debo este mes?" o "¿qué tengo que pagar
+  pronto?" → usar cxpPendientes ordenando por fecha_vencimiento.
+- TODAS las tools son READ-ONLY. Auros NO aprueba, anula ni modifica gastos.
+
 FACTURAS IN — bandeja de gastos por procesar (F-049):
 - /gastos tiene una bandeja de FACTURAS_IN con estatus Pendiente, Validada,
   Anulada. "Pendiente" = subida con OCR aplicado pero esperando revisión

@@ -20,6 +20,14 @@ import {
 } from '@/lib/db/notas-credito';
 import { getArticulos } from '@/lib/db/ayuda';
 import { getFacturasIn, getKPIsFacturasIn } from '@/lib/db/facturas-in';
+import {
+  getGastosDelMes,
+  getCxpPendientes,
+  getCxpVencidas,
+  getGastosPorProveedor,
+  getGastosPorCC,
+} from '@/lib/db/gastos';
+import { buscarProveedorPorNit } from '@/lib/gastos/services/buscar-o-crear-proveedor';
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
 import { getTopDeudores } from '@/lib/db/kpis';
@@ -1502,6 +1510,84 @@ export const aiTools = {
         pendientesGlobal: kpis.totalPendientes,
         montoPendienteGlobal: kpis.montoTotalPendientes,
         subidores: kpis.porSubidor,
+      };
+    },
+  }),
+
+  gastosDelMes: tool({
+    description:
+      'F-050: gastos creados (FACTURA_IN ya aprobada) en un mes específico. Sin args, usa mes actual GT. ' +
+      'Devuelve cantidad + totalQ + lista breve. Opcionalmente filtra por centro de costo.',
+    parameters: z.object({
+      anio: z.number().int().optional().describe('Año YYYY. Default mes actual.'),
+      mes:  z.number().int().min(1).max(12).optional().describe('Mes 1-12. Default mes actual.'),
+      centroCostoId: z.string().optional().describe('Record ID de centro de costo opcional para filtrar.'),
+    }),
+    execute: async (input) => getGastosDelMes(input.anio, input.mes, input.centroCostoId),
+  }),
+
+  gastosPorProveedor: tool({
+    description:
+      'F-050: cuenta + total acumulado de gastos asociados a un proveedor (NIT exacto, normalizado). ' +
+      'USAR cuando el usuario diga "cuánto le he gastado a X" o "qué gastos tengo de [proveedor]".',
+    parameters: z.object({
+      nit: z.string().min(2).describe('NIT del proveedor con o sin guión.'),
+    }),
+    execute: async (input) => {
+      const prov = await buscarProveedorPorNit(input.nit);
+      if (!prov.existe || !prov.recordId) {
+        return { encontrado: false, motivo: 'Proveedor no registrado en PROVEEDORES.' };
+      }
+      const res = await getGastosPorProveedor(prov.recordId);
+      return {
+        encontrado: true,
+        proveedor: { id: prov.recordId, nombre: prov.nombre, nit: input.nit },
+        cantidad: res.cantidad,
+        totalQ: res.totalQ,
+        gastos: res.gastos.slice(0, 30),
+      };
+    },
+  }),
+
+  gastosPorCC: tool({
+    description:
+      'F-050: total de gasto por centro de costo en un mes (o mes actual si no se pasa). ' +
+      'USAR para "cuánto gastó Polígrafo este mes" o reportes de margen por línea.',
+    parameters: z.object({
+      centroCostoId: z.string().describe('Record ID del centro de costo (rec...).'),
+      anio: z.number().int().optional(),
+      mes:  z.number().int().min(1).max(12).optional(),
+    }),
+    execute: async (input) => getGastosPorCC(input.centroCostoId, input.anio, input.mes),
+  }),
+
+  cxpPendientes: tool({
+    description:
+      'F-050: TODOS los gastos con estado "Por pagar" (cuentas por pagar pendientes). ' +
+      'Cantidad + totalQ + lista ordenada por proximidad de vencimiento (vencidas primero). ' +
+      'USAR cuando el usuario pregunte "cuánto debo pagar pronto" o "estado de CxP".',
+    parameters: z.object({}),
+    execute: async () => getCxpPendientes(),
+  }),
+
+  cxpVencidas: tool({
+    description:
+      'F-050: SUBSET de cxpPendientes con fecha_vencimiento ya pasada. URGENTE. ' +
+      'USAR cuando el usuario pregunte "qué tengo vencido" o "cuánto estoy en mora".',
+    parameters: z.object({}),
+    execute: async () => getCxpVencidas(),
+  }),
+
+  facturasPendientesRevision: tool({
+    description:
+      'F-050: conteo de FACTURAS_IN con estatus "Pendiente" (bandeja sin procesar). ' +
+      'USAR cuando el usuario pregunte "cuántas facturas debo revisar" o "qué hay en mi bandeja".',
+    parameters: z.object({}),
+    execute: async () => {
+      const pendientes = await getFacturasIn({ estatus: 'Pendiente' });
+      return {
+        cantidad: pendientes.length,
+        montoTotal: pendientes.reduce((s, f) => s + f.total, 0),
       };
     },
   }),
