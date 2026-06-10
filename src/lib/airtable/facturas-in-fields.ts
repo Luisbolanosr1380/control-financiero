@@ -46,6 +46,10 @@ export const FACTURAS_IN_FIELDS = {
   // 0 = extracción falló; 1 = alta confianza; <0.8 = bandera revisión manual;
   // <0.5 = posible error de OCR grave.
   confianza_extraccion:  'fldKqLHd7l235W32R',
+  // F-050 (creado vía MCP el 6 jun 2026). Link reverso a GASTOS. Cuando se
+  // aprueba la factura desde el modal, este campo se pobla con el record
+  // del GASTO creado para que el detalle pueda navegar bidireccionalmente.
+  gasto_creado:          'fld55cywFgFvmany3',
 } as const;
 
 export type FacturaInFieldKey = keyof typeof FACTURAS_IN_FIELDS;
