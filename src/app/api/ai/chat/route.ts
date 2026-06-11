@@ -243,6 +243,26 @@ GASTOS Y CUENTAS POR PAGAR (F-050):
   pronto?" → usar cxpPendientes ordenando por fecha_vencimiento.
 - TODAS las tools son READ-ONLY. Auros NO aprueba, anula ni modifica gastos.
 
+FLUJO DE CAJA (F-051):
+- /flujo unifica TODOS los compromisos de pago y cobros esperados en un
+  forecast de N días. Las obligaciones recurrentes (renta, tarjeta, seguros)
+  son PROYECCIÓN, no gasto — el gasto real nace cuando llega la factura
+  (F-049/F-050).
+- Tools:
+  · flujoProyectado(dias, saldoInicial): resumen del horizonte —
+    egresos/ingresos/punto crítico y desglose por fuente
+    (recurrente/cxp/deuda/planilla/cobro_esperado).
+  · pagosDeLaSemana(): eventos próximos 7 días con prioridad
+    (Crítica > Alta > Media > Baja).
+  · obligacionesRecurrentes(): lista activas con su monto mensual
+    equivalente para frecuencias no-mensuales.
+- Si preguntan "¿cuánto tengo que pagar esta semana/mes?" → usar
+  pagosDeLaSemana o flujoProyectado(dias=30).
+- Si preguntan "¿me alcanza para X?" / "¿voy a quedar sin plata?" → usar
+  flujoProyectado y comparar gasto X contra el saldo en el punto crítico
+  (lo que importa es el mínimo del horizonte, no el promedio).
+- TODAS las tools son READ-ONLY.
+
 FACTURAS IN — bandeja de gastos por procesar (F-049):
 - /gastos tiene una bandeja de FACTURAS_IN con estatus Pendiente, Validada,
   Anulada. "Pendiente" = subida con OCR aplicado pero esperando revisión

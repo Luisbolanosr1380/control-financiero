@@ -45,6 +45,8 @@ import {
   getResumenSalariosPendientesConsolidado,
 } from '@/lib/db/empleados';
 import { getPeriodos, getPeriodoPorId, getLineasPlanilla, getPagosPendientes, getKPIsPagosPendientes, getBoletasDelEmpleado } from '@/lib/db/planillas';
+import { construirFlujo } from '@/lib/flujo/construir-flujo';
+import { getObligacionesRecurrentes } from '@/lib/flujo/obligaciones';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 
@@ -1588,6 +1590,121 @@ export const aiTools = {
       return {
         cantidad: pendientes.length,
         montoTotal: pendientes.reduce((s, f) => s + f.total, 0),
+      };
+    },
+  }),
+
+  // ===========================================================================
+  // F-051 — Centro de Pagos & Cash-Flow Planner (READ-ONLY)
+  // ===========================================================================
+
+  flujoProyectado: tool({
+    description:
+      'F-051: resumen del flujo de caja proyectado en N días (default 60). Devuelve egresos/ingresos del horizonte, punto crítico (día con saldo mínimo y si será negativo) y conteo de eventos por fuente. ' +
+      'USAR cuando el usuario pregunte "¿me alcanza para X?", "¿cómo viene el mes?" en términos de caja, "¿voy a quedar sin plata?", "¿cuánto necesito en los próximos N días?".',
+    parameters: z.object({
+      dias: z.number().int().positive().max(180).default(60).describe('Horizonte en días desde hoy. 30/60/90 son los valores estándar.'),
+      saldoInicial: z.number().default(0).describe('Saldo de caja inicial en GTQ. 0 si no se conoce.'),
+    }),
+    execute: async ({ dias, saldoInicial }) => {
+      const proy = await construirFlujo({ horizonteDias: dias, saldoInicial });
+      const porFuente = new Map<string, { eventos: number; montoQ: number }>();
+      for (const d of proy.dias) {
+        for (const ev of d.eventos) {
+          const key = ev.fuente;
+          const bucket = porFuente.get(key) ?? { eventos: 0, montoQ: 0 };
+          bucket.eventos += 1;
+          bucket.montoQ += ev.monto;
+          porFuente.set(key, bucket);
+        }
+      }
+      return {
+        horizonte_dias: dias,
+        fecha_desde: proy.fechaDesde,
+        fecha_hasta: proy.fechaHasta,
+        saldo_inicial_Q: saldoInicial,
+        egresos_totales_Q: Math.round(proy.totalEgresos),
+        ingresos_totales_Q: Math.round(proy.totalIngresos),
+        neto_proyectado_Q: Math.round(proy.totalIngresos - proy.totalEgresos),
+        punto_critico: proy.puntoCritico ? {
+          fecha: proy.puntoCritico.fecha,
+          saldo_proyectado_Q: Math.round(proy.puntoCritico.saldoProyectado),
+          sera_negativo: proy.puntoCritico.seraNegativo,
+        } : null,
+        dias_con_eventos: proy.dias.length,
+        por_fuente: Object.fromEntries(
+          [...porFuente.entries()].map(([k, v]) => [k, { eventos: v.eventos, monto_Q: Math.round(v.montoQ) }]),
+        ),
+      };
+    },
+  }),
+
+  pagosDeLaSemana: tool({
+    description:
+      'F-051: eventos del cash-flow planner en los próximos 7 días, ordenados por fecha y prioridad. Incluye egresos (CxP, deudas, obligaciones recurrentes, planilla) e ingresos esperados (cobros). ' +
+      'USAR cuando el usuario pregunte "qué tengo que pagar esta semana", "qué se viene en los próximos días", "cobros próximos".',
+    parameters: z.object({}),
+    execute: async () => {
+      const proy = await construirFlujo({ horizonteDias: 7, saldoInicial: 0 });
+      const eventos: Array<Record<string, unknown>> = [];
+      for (const d of proy.dias) {
+        for (const ev of d.eventos) {
+          eventos.push({
+            fecha: ev.fecha,
+            tipo: ev.tipo,
+            fuente: ev.fuente,
+            descripcion: ev.descripcion,
+            monto_Q: Math.round(ev.monto),
+            prioridad: ev.prioridad,
+            es_estimado: ev.esEstimado,
+            fecha_ajustada: ev.fechaAjustada ?? false,
+          });
+        }
+      }
+      const egresos = eventos.filter(e => e.tipo === 'egreso');
+      const ingresos = eventos.filter(e => e.tipo === 'ingreso');
+      return {
+        horizonte_dias: 7,
+        fecha_desde: proy.fechaDesde,
+        fecha_hasta: proy.fechaHasta,
+        total_eventos: eventos.length,
+        egresos_Q: Math.round(egresos.reduce((s, e) => s + (e.monto_Q as number), 0)),
+        ingresos_Q: Math.round(ingresos.reduce((s, e) => s + (e.monto_Q as number), 0)),
+        eventos,
+      };
+    },
+  }),
+
+  obligacionesRecurrentes: tool({
+    description:
+      'F-051: lista las OBLIGACIONES_RECURRENTES activas con su monto mensual equivalente. ' +
+      'USAR cuando el usuario pregunte "cuáles son mis gastos fijos", "cuánto pago mensualmente recurrente", "qué tengo configurado como recurrente".',
+    parameters: z.object({}),
+    execute: async () => {
+      const todas = await getObligacionesRecurrentes(false);
+      const activas = todas.filter(o => o.activo);
+      const factorMensual = (f: string): number => {
+        if (f === 'Quincenal')  return 2;
+        if (f === 'Mensual')    return 1;
+        if (f === 'Bimestral')  return 0.5;
+        if (f === 'Trimestral') return 1 / 3;
+        if (f === 'Anual')      return 1 / 12;
+        return 1;
+      };
+      const totalMensual = activas.reduce((s, o) => s + o.montoEstimado * factorMensual(o.frecuencia), 0);
+      return {
+        cantidad_total: todas.length,
+        cantidad_activas: activas.length,
+        total_mensual_Q: Math.round(totalMensual),
+        obligaciones: activas.map(o => ({
+          nombre: o.nombre,
+          tipo: o.tipo,
+          monto_Q: o.montoEstimado,
+          dia_pago: o.diaPago,
+          frecuencia: o.frecuencia,
+          prioridad: o.prioridad,
+          mensual_equivalente_Q: Math.round(o.montoEstimado * factorMensual(o.frecuencia)),
+        })),
       };
     },
   }),
