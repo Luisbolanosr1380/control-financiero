@@ -90,24 +90,67 @@ async function listarPeriodos(): Promise<PeriodoRow[]> {
   });
 }
 
+/**
+ * F-050.4: crea un período abierto para el mes dado. Usa typecast:true
+ * para que la opción "Abierto" del singleSelect se auto-cree si todavía
+ * no existe (la tabla la comparte planilla, que tiene su propio set de
+ * estados — el typecast la deja con todos los valores conviviendo).
+ *
+ * Las fechas se construyen con `new Date(year, monthIdx + 1, 0)` que
+ * devuelve el último día del mes anterior al especificado (día 0 del
+ * mes siguiente = último del actual). Constructor local, sin shift UTC
+ * (lección F-041).
+ */
+async function crearPeriodoAbierto(nombre: string): Promise<PeriodoRow> {
+  if (!airtable) throw new Error('Airtable no está configurado.');
+  const [y, m] = nombre.split('-').map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m)) {
+    throw new Error(`Nombre de período inválido: "${nombre}" (esperado YYYY-MM).`);
+  }
+  const ultimoDia = new Date(y, m, 0).getDate();
+  const fechaInicio = `${nombre}-01`;
+  const fechaFin    = `${nombre}-${String(ultimoDia).padStart(2, '0')}`;
+
+  type AField = string | number | boolean | undefined;
+  const fields: Record<string, AField> = {
+    [PERIODOS_FIELDS.periodo]:      nombre,
+    [PERIODOS_FIELDS.fecha_inicio]: fechaInicio,
+    [PERIODOS_FIELDS.fecha_fin]:    fechaFin,
+    [PERIODOS_FIELDS.estado]:       'Abierto',
+    [PERIODOS_FIELDS.notas]:        'Auto-creado por F-050 al procesar factura del período',
+  };
+
+  const created = (await (airtable(PERIODOS_TABLE_ID).create as unknown as (
+    records: Array<{ fields: Record<string, AField> }>,
+    opts: { typecast: boolean },
+  ) => Promise<Array<{ id: string }>>)([{ fields }], { typecast: true }));
+
+  return { id: created[0].id, nombre, abierto: true };
+}
+
+/** Busca un período por nombre. Si no existe, lo crea abierto. */
+async function obtenerOCrearPeriodo(nombre: string, indice: Map<string, PeriodoRow>): Promise<PeriodoRow> {
+  const existente = indice.get(nombre);
+  if (existente) return existente;
+  return crearPeriodoAbierto(nombre);
+}
+
 export async function resolverPeriodoContable(fechaEmision: string): Promise<PeriodoResolucion> {
   const objetivo = periodoDeFecha(fechaEmision);
   const periodos = await listarPeriodos();
   const byNombre = new Map(periodos.map(p => [p.nombre, p]));
 
-  const original = byNombre.get(objetivo);
-
-  if (original && original.abierto) {
+  // F-050.4: si el período del mes de emisión no existe, lo auto-creamos
+  // abierto. Solo bloqueamos cuando existe y está explícitamente cerrado.
+  const original = await obtenerOCrearPeriodo(objetivo, byNombre);
+  if (original.abierto) {
     return { recordId: original.id, nombrePeriodo: original.nombre, ajustado: false };
   }
 
-  // Período de la fecha está cerrado o no existe en la tabla. Caemos al
-  // actual abierto y documentamos el ajuste.
+  // El período de la fecha está cerrado → fallback al actual con nota de ajuste.
+  // El actual también se auto-crea si no existe (caso típico tras un cierre).
   const actualNombre = periodoActualGT();
-  const actual = byNombre.get(actualNombre);
-  if (!actual) {
-    throw new Error(`No existe período "${actualNombre}" en la tabla PERIODOS. Stark debe crearlo antes de aprobar facturas.`);
-  }
+  const actual = actualNombre === objetivo ? original : await obtenerOCrearPeriodo(actualNombre, byNombre);
   if (!actual.abierto) {
     throw new Error(`El período actual "${actualNombre}" está cerrado. No hay dónde devengar la factura.`);
   }
