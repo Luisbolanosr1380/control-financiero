@@ -78,15 +78,35 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
 
   // Sección 2 — corrección de datos. Default cerrada salvo confianza baja.
   const confianzaBaja = (factura.confianzaExtraccion ?? 1) < 0.8;
-  const [corrigiendo, setCorrigiendo] = useState(confianzaBaja);
+  // F-050.3: si los montos del OCR no cuadran, abrimos la sección de
+  // corrección por default para que el usuario revise la auto-corrección
+  // antes de aprobar.
   const [proveedorNombre, setProveedorNombre] = useState(factura.proveedorNombre);
   const [proveedorNit, setProveedorNit] = useState(factura.proveedorNit);
   const [serie, setSerie] = useState(factura.serie);
   const [numero, setNumero] = useState(factura.numero);
   const [fechaEmision, setFechaEmision] = useState(factura.fechaEmision);
-  const [base, setBase] = useState(String(factura.subtotal ?? 0));
-  const [iva, setIva] = useState(String(factura.iva ?? 0));
-  const [total, setTotal] = useState(String(factura.total ?? 0));
+
+  // F-050.3: facturas históricas (fuente=Drive, parser viejo) pueden tener
+  // base+iva ≠ total. Auto-corregir al montar: confiamos en el TOTAL (lo
+  // que efectivamente se pagó/se va a pagar) y recalculamos la base como
+  // total - iva. El usuario puede sobrescribir en la Sección 2 si el IVA
+  // es el que está mal. Tolerancia 0.02 por redondeo.
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const baseOriginal  = factura.subtotal ?? 0;
+  const ivaOriginal   = factura.iva ?? 0;
+  const totalOriginal = factura.total ?? 0;
+  const baseInconsistente = Math.abs(baseOriginal + ivaOriginal - totalOriginal) > 0.02;
+  const baseInicialCorregida = baseInconsistente
+    ? round2(totalOriginal - ivaOriginal)
+    : baseOriginal;
+
+  const [base, setBase] = useState(String(baseInicialCorregida));
+  const [iva, setIva] = useState(String(ivaOriginal));
+  const [total, setTotal] = useState(String(totalOriginal));
+  const [montosFueronCorregidos, setMontosFueronCorregidos] = useState(baseInconsistente);
+  // Default abierta si confianza baja o montos inconsistentes (auto-corregidos).
+  const [corrigiendo, setCorrigiendo] = useState(confianzaBaja || baseInconsistente);
 
   const baseNum  = Number(base);
   const ivaNum   = Number(iva);
@@ -98,9 +118,10 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
     setSerie(factura.serie);
     setNumero(factura.numero);
     setFechaEmision(factura.fechaEmision);
-    setBase(String(factura.subtotal ?? 0));
-    setIva(String(factura.iva ?? 0));
-    setTotal(String(factura.total ?? 0));
+    setBase(String(baseOriginal));
+    setIva(String(ivaOriginal));
+    setTotal(String(totalOriginal));
+    setMontosFueronCorregidos(false);
   };
 
   // Sección 3 — proveedor (existente vs nuevo).
@@ -363,15 +384,21 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
             </button>
             {corrigiendo && (
               <div style={{ marginTop: 10, padding: 12, background: 'var(--paper-2)', border: '1px solid var(--line-3)', borderRadius: 4 }}>
+                {/* F-050.3: alerta cuando los montos del OCR no cuadran y se auto-corrigió la base. */}
+                {montosFueronCorregidos && (
+                  <div style={{ marginBottom: 10, padding: '8px 10px', background: '#FBF1DC', border: '1px solid var(--amber)', borderRadius: 4, fontSize: 11.5, color: 'var(--ink-2)', lineHeight: 1.45 }}>
+                    ⚠️ Los montos extraídos no cuadran (base + IVA ≠ total). Se recalculó la base como total − IVA = <strong>{baseInicialCorregida.toFixed(2)}</strong>. Si el IVA es el incorrecto, corregilo abajo y la base se queda como vino del OCR.
+                  </div>
+                )}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
                   <CampoEdit label="Proveedor" value={proveedorNombre} onChange={setProveedorNombre} />
                   <CampoEdit label="NIT" value={proveedorNit} onChange={setProveedorNit} />
                   <CampoEdit label="Serie" value={serie} onChange={setSerie} />
                   <CampoEdit label="Número" value={numero} onChange={setNumero} />
                   <CampoEdit label="Fecha emisión (YYYY-MM-DD)" value={fechaEmision} onChange={setFechaEmision} />
-                  <CampoEdit label="Subtotal" value={base} onChange={setBase} type="number" />
-                  <CampoEdit label="IVA" value={iva} onChange={setIva} type="number" />
-                  <CampoEdit label="Total" value={total} onChange={setTotal} type="number" />
+                  <CampoEdit label="Subtotal" value={base} onChange={(v) => { setBase(v); setMontosFueronCorregidos(false); }} type="number" />
+                  <CampoEdit label="IVA" value={iva} onChange={(v) => { setIva(v); setMontosFueronCorregidos(false); }} type="number" />
+                  <CampoEdit label="Total" value={total} onChange={(v) => { setTotal(v); setMontosFueronCorregidos(false); }} type="number" />
                 </div>
                 <button type="button" onClick={restaurarOriginales} style={{ fontSize: 11, marginTop: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)' }}>
                   Restaurar valores originales

@@ -41,6 +41,7 @@ import {
 } from '@/lib/airtable/movimientos-bancarios-fields';
 import { buscarOCrearProveedor } from '@/lib/gastos/services/buscar-o-crear-proveedor';
 import { PROVEEDORES_TABLE_ID, PROVEEDORES_FIELDS } from '@/lib/airtable/proveedores-fields';
+import { findRecordById, selectValue } from '@/lib/airtable/find-by-id';
 import { resolverPeriodoContable } from '@/lib/gastos/services/resolver-periodo-contable';
 import { generarAsientoFacturaCompra } from '@/lib/gastos/services/generar-asiento-factura-compra';
 import { composerDescripcion } from '@/lib/gastos/services/composer-descripcion';
@@ -127,11 +128,15 @@ interface FacturaInData {
 
 async function leerFacturaIn(facturaInId: string): Promise<FacturaInData> {
   if (!airtable) throw new Error('Airtable no está configurado.');
-  const r = await airtable(FACTURAS_IN_TABLE_ID).find(facturaInId);
-  const f = r.fields as Record<string, unknown>;
+  // F-050.3: `.find()` NO acepta returnFieldsByFieldId — lee por nombre.
+  // Acceder por field ID devolvía undefined → estatus="" silencioso.
+  // findRecordById usa select+RECORD_ID() para leer por field ID.
+  const r = await findRecordById(FACTURAS_IN_TABLE_ID, facturaInId);
+  if (!r) throw new Error(`FACTURA_IN ${facturaInId} no encontrada.`);
+  const f = r.fields;
   return {
     recordId: r.id,
-    estatus:           String(f[FACTURAS_IN_FIELDS.estatus]          ?? ''),
+    estatus:           selectValue(f[FACTURAS_IN_FIELDS.estatus]),
     proveedorNombre:   String(f[FACTURAS_IN_FIELDS.proveedor_nombre] ?? '').trim(),
     proveedorNit:      String(f[FACTURAS_IN_FIELDS.proveedor_nit]    ?? '').trim(),
     serie:             String(f[FACTURAS_IN_FIELDS.serie]            ?? '').trim(),
@@ -140,7 +145,7 @@ async function leerFacturaIn(facturaInId: string): Promise<FacturaInData> {
     base:              Number(f[FACTURAS_IN_FIELDS.subtotal]         ?? 0),
     iva:               Number(f[FACTURAS_IN_FIELDS.iva]              ?? 0),
     total:             Number(f[FACTURAS_IN_FIELDS.total]            ?? 0),
-    moneda:            (String(f[FACTURAS_IN_FIELDS.moneda] ?? 'Q')) as 'Q' | 'USD',
+    moneda:            (selectValue(f[FACTURAS_IN_FIELDS.moneda]) || 'Q') as 'Q' | 'USD',
   };
 }
 
@@ -187,14 +192,24 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
   if (!(datos.total > 0)) {
     return { ok: false, error: 'Total debe ser mayor a 0.' };
   }
+  // F-050.3: defensa server-side de consistencia aritmética. El modal
+  // debería auto-corregir y advertir, pero acá garantizamos que NUNCA se
+  // crea un GASTO + ASIENTO con montos que no cuadran. Tolerancia 0.02
+  // por redondeo.
+  if (Math.abs(datos.base + datos.iva - datos.total) > 0.02) {
+    return {
+      ok: false,
+      error: `Montos inconsistentes: base (${datos.base.toFixed(2)}) + IVA (${datos.iva.toFixed(2)}) ≠ total (${datos.total.toFixed(2)}). Corregir en el modal antes de aprobar.`,
+    };
+  }
 
   // 3) Resolver proveedor.
   let proveedor;
   try {
     if (input.proveedorId) {
-      // Confirmamos que existe — leyendo nombre para la descripción del asiento.
-      const r = await airtable(PROVEEDORES_TABLE_ID).find(input.proveedorId).catch(() => null);
-      const nombreFromRec = r ? String((r.fields as Record<string, unknown>)[PROVEEDORES_FIELDS.nombre] ?? '') : '';
+      // F-050.3: leer por field ID requiere findRecordById (no .find()).
+      const r = await findRecordById(PROVEEDORES_TABLE_ID, input.proveedorId);
+      const nombreFromRec = r ? String(r.fields[PROVEEDORES_FIELDS.nombre] ?? '') : '';
       proveedor = {
         recordId: input.proveedorId,
         nombre: nombreFromRec || datos.proveedorNombre,
