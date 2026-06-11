@@ -131,7 +131,13 @@ interface PartidaInput {
   haber: number;
   moneda: 'Q' | 'USD';
   tipoCambio: number;
-  periodoId: string;
+  /**
+   * F-050.5: PARTIDAS.periodo es singleLineText (no link). Recibe el
+   * NOMBRE del período (ej "2026-06"), NO el recordId. El link al
+   * período vive en ASIENTOS.PERIODO (multipleRecordLinks); en
+   * PARTIDAS es un campo de texto plano para reporting rápido.
+   */
+  periodoNombre: string;
   proveedor?: string;
   banco?: string;
 }
@@ -147,7 +153,7 @@ function fieldsPartida(asientoId: string, p: PartidaInput): Record<string, unkno
     [PARTIDAS_FIELDS.haber]:             p.haber,
     [PARTIDAS_FIELDS.moneda]:            p.moneda,
     [PARTIDAS_FIELDS.tc]:                p.tipoCambio,
-    [PARTIDAS_FIELDS.periodo]:           [p.periodoId],
+    [PARTIDAS_FIELDS.periodo]:           p.periodoNombre,
   };
   if (p.proveedor) f[PARTIDAS_FIELDS.proveedor] = [p.proveedor];
   if (p.banco)     f[PARTIDAS_FIELDS.banco]     = [p.banco];
@@ -201,7 +207,7 @@ export async function generarAsientoFacturaCompra(input: GenerarAsientoInput): P
       haber: 0,
       moneda: input.moneda,
       tipoCambio: input.tipoCambio,
-      periodoId: input.periodo.recordId,
+      periodoNombre: input.periodo.nombrePeriodo,
       proveedor: input.proveedorId,
     });
 
@@ -215,7 +221,7 @@ export async function generarAsientoFacturaCompra(input: GenerarAsientoInput): P
         haber: 0,
         moneda: input.moneda,
         tipoCambio: input.tipoCambio,
-        periodoId: input.periodo.recordId,
+        periodoNombre: input.periodo.nombrePeriodo,
         proveedor: input.proveedorId,
       });
     }
@@ -232,7 +238,7 @@ export async function generarAsientoFacturaCompra(input: GenerarAsientoInput): P
         haber: total,
         moneda: input.moneda,
         tipoCambio: input.tipoCambio,
-        periodoId: input.periodo.recordId,
+        periodoNombre: input.periodo.nombrePeriodo,
         proveedor: input.proveedorId,
         banco: input.bancoId,
       });
@@ -248,7 +254,7 @@ export async function generarAsientoFacturaCompra(input: GenerarAsientoInput): P
         haber: total,
         moneda: input.moneda,
         tipoCambio: input.tipoCambio,
-        periodoId: input.periodo.recordId,
+        periodoNombre: input.periodo.nombrePeriodo,
         proveedor: input.proveedorId,
       });
     }
