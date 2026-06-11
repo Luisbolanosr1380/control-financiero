@@ -71,11 +71,11 @@ export function FlujoClient({ proyeccion, obligaciones, saldoSugerido, saldoSuge
   };
 
   return (
-    <div className="page-wrap">
-      <header className="page-header" style={{ marginBottom: 16 }}>
+    <div className="page">
+      <header className="page-header">
         <div>
-          <h1 style={{ margin: 0 }}>Centro de Pagos</h1>
-          <p className="page-sub" style={{ marginTop: 4 }}>
+          <h1 className="page-title">Centro de <em>Pagos</em></h1>
+          <p className="page-subtitle">
             Compromisos próximos vs efectivo proyectado · horizonte {proyeccion.horizonteDias} días
           </p>
         </div>
@@ -94,7 +94,7 @@ export function FlujoClient({ proyeccion, obligaciones, saldoSugerido, saldoSuge
         onHorizonte={aplicarHorizonte}
       />
 
-      <div className="tabs" style={{ marginTop: 24, display: 'flex', gap: 8, borderBottom: '1px solid var(--ink-1)' }}>
+      <div className="tabs" style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--line)' }}>
         <TabButton activo={tab === 'timeline'} onClick={() => setTab('timeline')}>
           Timeline ({proyeccion.dias.length} días con eventos)
         </TabButton>
@@ -153,11 +153,11 @@ function HeaderKpis({
   const neto = proyeccion.totalIngresos - proyeccion.totalEgresos;
   const punto = proyeccion.puntoCritico;
   return (
-    <div className="kpi-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
-      <div className="card">
-        <div className="kpi-label">Saldo actual</div>
-        {editando ? (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 6 }}>
+    <>
+      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 16 }}>
+        <div className="kpi">
+          <div className="kpi-label">Saldo actual</div>
+          {editando ? (
             <input
               type="number"
               value={saldoInput}
@@ -169,51 +169,51 @@ function HeaderKpis({
               style={{ width: '100%' }}
               placeholder="Q saldo manual"
             />
+          ) : (
+            <button onClick={() => setEditando(true)} className="kpi-value" style={{ all: 'unset', cursor: 'pointer', display: 'block', fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 500, letterSpacing: '-0.02em', color: 'var(--ink)' }}>
+              {Q(proyeccion.saldoInicial)}
+            </button>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>
+            {saldoSugeridoCuentas > 0
+              ? <>Sugerido: <button onClick={onUsarSugerido} style={{ all: 'unset', cursor: 'pointer', color: 'var(--indigo)', textDecoration: 'underline' }}>{Q(saldoSugerido)}</button> ({saldoSugeridoCuentas} cuentas Q)</>
+              : 'Sin saldo sugerido disponible'}
           </div>
-        ) : (
-          <button className="kpi-value" onClick={() => setEditando(true)} style={{ all: 'unset', cursor: 'pointer', fontSize: 22, fontWeight: 600, marginTop: 4, display: 'block' }}>
-            {Q(proyeccion.saldoInicial)}
-          </button>
-        )}
-        <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>
-          {saldoSugeridoCuentas > 0
-            ? <>Sugerido: <button onClick={onUsarSugerido} style={{ all: 'unset', cursor: 'pointer', color: 'var(--indigo)', textDecoration: 'underline' }}>{Q(saldoSugerido)}</button> ({saldoSugeridoCuentas} cuentas Q)</>
-            : 'Sin saldo sugerido disponible'}
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">Egresos próximos</div>
+          <div className="kpi-value" style={{ color: 'var(--wine)' }}>−{Q(proyeccion.totalEgresos)}</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>{proyeccion.horizonteDias} días</div>
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">Ingresos esperados</div>
+          <div className="kpi-value" style={{ color: 'var(--olive)' }}>+{Q(proyeccion.totalIngresos)}</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>Neto: {neto >= 0 ? '+' : '−'}{Q(Math.abs(neto))}</div>
+        </div>
+
+        <div className="kpi">
+          <div className="kpi-label">Punto crítico</div>
+          {punto ? (
+            <>
+              <div className="kpi-value" style={{ color: punto.seraNegativo ? 'var(--wine)' : 'var(--ink)' }}>
+                {Q(punto.saldoProyectado)}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>{formatearFecha(punto.fecha, "EEE d 'de' MMM")}</div>
+              {punto.seraNegativo && (
+                <div style={{ fontSize: 11, color: 'var(--wine)', fontWeight: 600, marginTop: 4 }}>
+                  ⚠ Te faltarían {Q(Math.abs(punto.saldoProyectado))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="kpi-value" style={{ color: 'var(--ink-3)' }}>—</div>
+          )}
         </div>
       </div>
 
-      <div className="card">
-        <div className="kpi-label">Egresos próximos</div>
-        <div className="kpi-value" style={{ color: 'var(--wine)' }}>−{Q(proyeccion.totalEgresos)}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{proyeccion.horizonteDias} días</div>
-      </div>
-
-      <div className="card">
-        <div className="kpi-label">Ingresos esperados</div>
-        <div className="kpi-value" style={{ color: 'var(--olive)' }}>+{Q(proyeccion.totalIngresos)}</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>Neto: {neto >= 0 ? '+' : '−'}{Q(Math.abs(neto))}</div>
-      </div>
-
-      <div className="card">
-        <div className="kpi-label">Punto crítico</div>
-        {punto ? (
-          <>
-            <div className="kpi-value" style={{ color: punto.seraNegativo ? 'var(--wine)' : 'var(--ink)' }}>
-              {Q(punto.saldoProyectado)}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--ink-3)' }}>{formatearFecha(punto.fecha, "EEE d 'de' MMM")}</div>
-            {punto.seraNegativo && (
-              <div style={{ fontSize: 11, color: 'var(--wine)', fontWeight: 600, marginTop: 4 }}>
-                ⚠ Te faltarían {Q(Math.abs(punto.saldoProyectado))}
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="kpi-value" style={{ color: 'var(--ink-3)' }}>—</div>
-        )}
-      </div>
-
-      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 20 }}>
         <span style={{ fontSize: 12, color: 'var(--ink-3)' }}>Horizonte:</span>
         {[30, 60, 90].map(d => (
           <button
@@ -223,7 +223,7 @@ function HeaderKpis({
             style={{
               padding: '4px 12px',
               fontSize: 12,
-              border: '1px solid var(--ink-1)',
+              border: '1px solid var(--line)',
               borderRadius: 6,
               cursor: 'pointer',
               background: proyeccion.horizonteDias === d ? 'var(--ink)' : 'transparent',
@@ -234,7 +234,7 @@ function HeaderKpis({
           </button>
         ))}
       </div>
-    </div>
+    </>
   );
 }
 
@@ -245,7 +245,7 @@ function HeaderKpis({
 function TimelineSection({ proyeccion }: { proyeccion: ProyeccionFlujo }) {
   if (proyeccion.dias.length === 0) {
     return (
-      <div className="card" style={{ textAlign: 'center', padding: 32, color: 'var(--ink-3)' }}>
+      <div className="card card-pad" style={{ textAlign: 'center', color: 'var(--ink-3)' }}>
         Sin eventos en el horizonte. Si nada parece estar registrado, revisá obligaciones recurrentes, CxP de gastos y deudas activas.
       </div>
     );
@@ -261,7 +261,7 @@ function DiaCard({ dia }: { dia: DiaFlujo }) {
   const saldoNeg = dia.saldoProyectado < 0;
   return (
     <div
-      className="card"
+      className="card card-pad"
       style={{
         background: saldoNeg ? 'rgba(180, 60, 60, 0.06)' : undefined,
         borderColor: saldoNeg ? 'var(--wine)' : undefined,
@@ -276,7 +276,7 @@ function DiaCard({ dia }: { dia: DiaFlujo }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
         {dia.eventos.map((ev, i) => <EventoRow key={i} ev={ev} />)}
       </div>
-      <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px dashed var(--ink-1)', fontSize: 12, color: 'var(--ink-3)' }}>
+      <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px dashed var(--line)', fontSize: 12, color: 'var(--ink-3)' }}>
         neto del día:{' '}
         <span style={{
           fontWeight: 600,
@@ -382,7 +382,7 @@ function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: 
         <div className="card" style={{ padding: 0 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid var(--ink-1)', background: 'var(--paper-2, #fafafa)' }}>
+              <tr style={{ borderBottom: '1px solid var(--line)', background: 'var(--paper-2, #fafafa)' }}>
                 <Th>Nombre</Th>
                 <Th>Tipo</Th>
                 <Th align="right">Monto</Th>
@@ -396,7 +396,7 @@ function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: 
             </thead>
             <tbody>
               {obligaciones.map(o => (
-                <tr key={o.id} style={{ borderBottom: '1px solid var(--ink-1)' }}>
+                <tr key={o.id} style={{ borderBottom: '1px solid var(--line)' }}>
                   <Td><span style={{ fontWeight: 500 }}>{o.nombre}</span></Td>
                   <Td>{o.tipo}</Td>
                   <Td align="right" style={{ fontVariantNumeric: 'tabular-nums' }}>{Q(o.montoEstimado)}</Td>
