@@ -12,11 +12,14 @@
  *   6. Generar ASIENTO + PARTIDAS (balanceado).
  *   7. Crear GASTO con todas las referencias.
  *   8. Actualizar FACTURA_IN.estatus → "Aprobada" + gasto_creado.
- *   9. (STUB) MOVIMIENTO_BANCARIO postponed: field IDs pendientes de
- *      confirmar via MCP. Documentado abajo.
+ *   9. (F-050.1) Si metodoPago = Contado: crear MOVIMIENTO_BANCARIO
+ *      fail-soft (si falla, NO rollback — el GASTO es la fuente de verdad
+ *      contable; el movimiento es solo conciliación).
  *
  * ROLLBACK: si falla GASTO o el update de FACTURA_IN, eliminamos ASIENTO
  * + PARTIDAS para no dejar contabilidad colgando sin documento fuente.
+ * Tras crear el GASTO y actualizar FACTURA_IN, NO hacemos rollback de
+ * fallos en MOVIMIENTOS_BANCARIOS (paso 9): logueamos warning y seguimos.
  */
 
 import { revalidatePath } from 'next/cache';
@@ -32,6 +35,10 @@ import {
   ASIENTOS_TABLE_ID,
   PARTIDAS_TABLE_ID,
 } from '@/lib/airtable/asientos-fields';
+import {
+  MOVIMIENTOS_BANCARIOS_TABLE_ID,
+  MOVIMIENTOS_BANCARIOS_FIELDS,
+} from '@/lib/airtable/movimientos-bancarios-fields';
 import { buscarOCrearProveedor } from '@/lib/gastos/services/buscar-o-crear-proveedor';
 import { PROVEEDORES_TABLE_ID, PROVEEDORES_FIELDS } from '@/lib/airtable/proveedores-fields';
 import { resolverPeriodoContable } from '@/lib/gastos/services/resolver-periodo-contable';
@@ -253,7 +260,7 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
   }
 
   // 7) Crear GASTO.
-  type AField = string | number | string[] | undefined;
+  type AField = string | number | boolean | string[] | undefined;
   const estadoGasto = input.metodoPago === 'Contado' ? 'Pagado' : 'Por pagar';
   const fieldsGasto: Record<string, AField> = {
     [GASTOS_FIELDS.fecha]:             datos.fechaEmision,
@@ -322,13 +329,35 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
     };
   }
 
-  // 9) STUB — MOVIMIENTO_BANCARIO.
-  // Pendiente de confirmar field IDs de la tabla MOVIMIENTOS_BANCARIOS via
-  // MCP. Cuando estén disponibles, agregar acá un create con:
-  //   banco, fecha=fechaPago, tipo='Egreso', concepto=descripcionAsiento,
-  //   referencia=referenciaPago, monto=total, periodo=periodo.recordId,
-  //   asiento=asientoId, conciliado=false.
-  // Por ahora la conciliación bancaria queda manual hasta F-050.x.
+  // 9) F-050.1 — MOVIMIENTO_BANCARIO (solo si Contado). Fail-soft.
+  if (input.metodoPago === 'Contado' && input.bancoId && input.fechaPago) {
+    const concepto = `Pago factura ${datos.serie}-${datos.numero} a ${proveedor.nombre}`;
+    try {
+      await (airtable(MOVIMIENTOS_BANCARIOS_TABLE_ID).create as unknown as (
+        records: Array<{ fields: Record<string, AField> }>,
+        opts: { typecast: boolean },
+      ) => Promise<Array<{ id: string }>>)([{
+        fields: {
+          [MOVIMIENTOS_BANCARIOS_FIELDS.banco]:      [input.bancoId],
+          [MOVIMIENTOS_BANCARIOS_FIELDS.fecha]:      input.fechaPago,
+          [MOVIMIENTOS_BANCARIOS_FIELDS.tipo]:       'Egreso',  // typecast auto-crea
+          [MOVIMIENTOS_BANCARIOS_FIELDS.concepto]:   concepto,
+          ...(input.referenciaPago ? { [MOVIMIENTOS_BANCARIOS_FIELDS.referencia]: input.referenciaPago } : {}),
+          [MOVIMIENTOS_BANCARIOS_FIELDS.monto]:      datos.total,                 // SIEMPRE POSITIVO
+          [MOVIMIENTOS_BANCARIOS_FIELDS.periodo]:    periodo.nombrePeriodo,       // string, no link
+          [MOVIMIENTOS_BANCARIOS_FIELDS.conciliado]: false,
+          [MOVIMIENTOS_BANCARIOS_FIELDS.asiento]:    [asiento.asientoId],
+        },
+      }], { typecast: true });
+    } catch (err) {
+      // F-050.1: si MOVIMIENTOS_BANCARIOS falla DESPUÉS de que GASTO y
+      // ASIENTO ya existen, NO hacer rollback del GASTO. El GASTO es la
+      // fuente de verdad contable; el movimiento bancario es solo
+      // conciliación. Logueamos para diagnóstico.
+      console.warn(`F-050.1: MOVIMIENTO_BANCARIO no creado para gasto ${gastoId}:`,
+        err instanceof Error ? err.message : err);
+    }
+  }
 
   revalidatePath('/gastos');
   return {

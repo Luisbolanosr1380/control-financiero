@@ -1,19 +1,15 @@
 /**
  * F-050 — Lectura de la tabla CUENTAS para el selector del modal.
  *
- * STUB de coordinación: el brief reservó field IDs `TIPO_ESTADO` y
- * `NATURALEZA_ER` para filtrar cuentas de gasto, pero los IDs reales
- * están pendientes de confirmar via MCP. Mientras tanto cargamos TODAS
- * las cuentas con su código + nombre, y el modal permite que el usuario
- * filtre por código (search). Si Stark usa la convención GT estándar
- * (gastos suelen empezar con 5 o 6), el filtro será natural.
- *
- * Cuando los field IDs estén disponibles, ajustar `getCuentasGasto()`
- * para filtrar server-side por TIPO_ESTADO ⊃ "ER" y NATURALEZA_ER =
- * "Deudora".
+ * Field IDs reales confirmados via MCP. Usamos returnFieldsByFieldId:true
+ * para ser inmunes a renames en Airtable. El filtro de cuentas de gasto
+ * se hace server-side con filterByFormula por prefijo de codigo_path
+ * (5- o 6-) y activo=TRUE(). El TRIM es crítico porque algunos
+ * codigo_path tienen "\n" al inicio/fin.
  */
 
-import { airtable, TABLES, USE_MOCK } from './airtable';
+import { airtable, USE_MOCK } from './airtable';
+import { CUENTAS_TABLE_ID, CUENTAS_FIELDS } from '@/lib/contabilidad/cuentas-sistema';
 
 export interface Cuenta {
   id: string;
@@ -21,31 +17,22 @@ export interface Cuenta {
   nombre: string;
 }
 
-// Nombres legacy de los campos de CUENTAS. Si Stark renombró alguno, hay
-// que ajustar acá. Cuando los field IDs estén disponibles, migrar a
-// returnFieldsByFieldId.
-const FC = {
-  CODIGO: 'Codigo',
-  NOMBRE: 'Nombre',
-} as const;
-
 const arrFirst = (v: unknown): string => Array.isArray(v) ? String(v[0] ?? '') : String(v ?? '');
 
 export async function getCuentas(): Promise<Cuenta[]> {
   if (USE_MOCK || !airtable) return [];
   try {
-    const records = await airtable(TABLES.CUENTAS).select().all();
+    const records = await airtable(CUENTAS_TABLE_ID)
+      .select({ returnFieldsByFieldId: true })
+      .all();
     const lista: Cuenta[] = records.map(r => {
       const f = r.fields as Record<string, unknown>;
       return {
         id: r.id,
-        codigo: arrFirst(f[FC.CODIGO]).trim(),
-        nombre: arrFirst(f[FC.NOMBRE]).trim(),
+        codigo: arrFirst(f[CUENTAS_FIELDS.codigo_path]).trim(),
+        nombre: arrFirst(f[CUENTAS_FIELDS.nombre]).trim(),
       };
     });
-    // Ordenamos por código (lexicográfico) para que el selector tenga
-    // estructura predecible. La codificación tipo "5-1-1" se ordena bien
-    // como string.
     lista.sort((a, b) => a.codigo.localeCompare(b.codigo));
     return lista;
   } catch (err) {
@@ -54,8 +41,36 @@ export async function getCuentas(): Promise<Cuenta[]> {
   }
 }
 
-/** STUB: hasta tener field IDs para TIPO_ESTADO/NATURALEZA_ER, devuelve
- * todas las cuentas. El modal hace el filtro client-side por search. */
+/**
+ * Cuentas de gasto: filtrado server-side por prefijo de codigo_path
+ * ("5-" o "6-") y activo=TRUE(). El TRIM es crítico porque algunos
+ * codigo_path tienen "\n" al inicio y fin.
+ */
 export async function getCuentasGasto(): Promise<Cuenta[]> {
-  return getCuentas();
+  if (USE_MOCK || !airtable) return [];
+  try {
+    const records = await airtable(CUENTAS_TABLE_ID)
+      .select({
+        returnFieldsByFieldId: true,
+        filterByFormula: `AND(
+    OR(LEFT(TRIM({${CUENTAS_FIELDS.codigo_path}}), 2)="5-",
+       LEFT(TRIM({${CUENTAS_FIELDS.codigo_path}}), 2)="6-"),
+    {${CUENTAS_FIELDS.activo}}=TRUE()
+  )`,
+      })
+      .all();
+    const lista: Cuenta[] = records.map(r => {
+      const f = r.fields as Record<string, unknown>;
+      return {
+        id: r.id,
+        codigo: arrFirst(f[CUENTAS_FIELDS.codigo_path]).trim(),
+        nombre: arrFirst(f[CUENTAS_FIELDS.nombre]).trim(),
+      };
+    });
+    lista.sort((a, b) => a.codigo.localeCompare(b.codigo));
+    return lista;
+  } catch (err) {
+    console.warn('F-050 cuentas gasto: lectura falló:', err instanceof Error ? err.message : err);
+    return [];
+  }
 }

@@ -2,45 +2,41 @@
  * F-050 — Resuelve el período contable de una fecha respetando devengo.
  *
  * Convención CFO: el asiento va al período de FECHA_EMISION (no al de
- * aprobación). Si ese período está cerrado, se ajusta al período actual
- * abierto y se documenta la nota en la descripción del asiento.
+ * aprobación). Si ese período está EXPLÍCITAMENTE cerrado, se ajusta al
+ * período actual y se documenta la nota en la descripción del asiento.
  *
  * Nomenclatura: `resolverPeriodoContable` para no colisionar con
  * `resolverPeriodo` (src/lib/db/periodos.ts) que calcula rangos para AI
  * tools. Semánticas distintas.
  *
- * Sobre los valores del singleSelect ESTADO en PERIODOS: el brief da los
- * field IDs (fldf4hhgArYRTpBmB período / fld3yjofU7JcJbl3Q estado) pero no
- * los valores literales. La función trata como "abierto" cualquier valor
- * que case-insensitive empiece con "abie", "activ" o "open"; todo lo demás
- * lo considera cerrado. Si Stark usa otros literales, basta con extender
- * el `esEstadoAbierto`.
+ * Semántica RESTRICTIVA del estado: la tabla PERIODOS es la misma que usa
+ * planilla; sus estados ("En pago", "Pagado", etc.) son workflow operacional
+ * de planilla, NO estado contable. Por eso solo bloqueamos cuando el estado
+ * es literalmente "cerrado"/"closed". Cualquier otro valor (vacío, "abierto",
+ * "activo", "en pago", "pagado", etc.) permite registrar asientos contables.
  */
 
-import { airtable, TABLES } from '@/lib/db/airtable';
+import { airtable } from '@/lib/db/airtable';
 import { notaAjustePeriodo } from './composer-descripcion';
 
 /**
- * F-050 STUB de coordinación: el codebase ya tiene `TABLES.PERIODOS` para
- * períodos de PLANILLA (quincenas). El brief F-050 habla de períodos
- * CONTABLES (cierre mensual). Posibles escenarios:
- *  a) Stark usa la MISMA tabla — entonces este const queda igual y la
- *     función filtra por nombre "YYYY-MM".
- *  b) Stark tiene tabla separada — entonces hay que pasar el tableId real
- *     acá. Editar 1 línea cuando se confirme.
- * Por defecto apuntamos al `TABLES.PERIODOS` actual; si la lectura no
- * devuelve registros con el nombre esperado, el caller verá el error
- * "No existe período YYYY-MM en la tabla PERIODOS".
+ * F-050 — la tabla PERIODOS es COMPARTIDA con planilla (no hay separación
+ * contable vs. operacional). Hardcodeamos el ID literal para no depender de
+ * `TABLES.PERIODOS` y dejar explícito que es la misma tabla.
  */
-const PERIODOS_TABLE_ID = TABLES.PERIODOS;
+const PERIODOS_TABLE_ID = 'tblag6GLysk6erzlU';
 const PERIODOS_FIELDS = {
-  periodo: 'fldf4hhgArYRTpBmB',                 // singleLineText o singleSelect "YYYY-MM"
-  estado:  'fld3yjofU7JcJbl3Q',                 // singleSelect Abierto/Cerrado (literales por confirmar)
+  periodo:      'fldf4hhgArYRTpBmB',  // primary, ej "Q1-junio-2026"
+  fecha_inicio: 'fldOhtnrlZayciWDx',
+  fecha_fin:    'fldVzilClkgkJmQng',
+  estado:       'fld3yjofU7JcJbl3Q',
+  notas:        'fldzdvleOjjByTEmt',
+  asientos:     'fld0fsS2TPAJ5Dwu8',
 } as const;
 
-function esEstadoAbierto(valor: string): boolean {
+function esEstadoCerrado(valor: string): boolean {
   const s = valor.toLowerCase().trim();
-  return s.startsWith('abie') || s.startsWith('activ') || s.startsWith('open');
+  return s === 'cerrado' || s === 'closed';
 }
 
 export interface PeriodoResolucion {
@@ -90,7 +86,7 @@ async function listarPeriodos(): Promise<PeriodoRow[]> {
     const estadoRaw = fields[PERIODOS_FIELDS.estado];
     const nombre = String(Array.isArray(nombreRaw) ? nombreRaw[0] : (nombreRaw ?? '')).trim();
     const estado = String(Array.isArray(estadoRaw) ? estadoRaw[0] : (estadoRaw ?? '')).trim();
-    return { id: r.id, nombre, abierto: esEstadoAbierto(estado) };
+    return { id: r.id, nombre, abierto: !esEstadoCerrado(estado) };
   });
 }
 
