@@ -8,10 +8,10 @@
  *     caso de tener el mismo DTE descargado dos veces (mismo contenido
  *     factual aunque el PDF sea byte-distinto, p.ej. firma temporal).
  *
- * filterByFormula es soportado por Airtable sobre singleLineText pero la
- * codificación de comillas escapadas a veces falla. Fallback: traer todos
- * los hashes/doc_keys del año actual y filtrar en JS. El volumen esperado
- * (cientos por año, no miles) lo aguanta sin estrategia más sofisticada.
+ * F-050.2: traemos toda la tabla y filtramos en JS porque filterByFormula
+ * NO acepta field IDs (solo nombres) y devuelve 0 records SILENCIOSAMENTE
+ * cuando se le pasa un `{fldXXX}`. El volumen (cientos por año, no miles)
+ * aguanta sin estrategia más sofisticada.
  */
 
 import { createHash } from 'node:crypto';
@@ -32,31 +32,21 @@ async function buscarPorCampo(fieldId: string, valor: string): Promise<Duplicate
   if (!airtable) return { existe: false };
   if (!valor) return { existe: false };
 
+  // F-050.2: el path previo con filterByFormula `{fldXXX} = "..."` era un
+  // bug latente. Airtable NO resuelve field IDs en fórmulas (solo nombres)
+  // y devuelve 0 records SILENCIOSAMENTE — sin lanzar error. El try/catch
+  // nunca disparaba, así que dedupe siempre retornaba `{ existe: false }`
+  // y permitía crear duplicados. Ahora traemos todos y filtramos en JS:
+  // el volumen de FACTURAS_IN es bajo (cientos por año) y solo leemos un
+  // campo, así que la latencia es despreciable.
   try {
-    // Intento con filterByFormula primero (mucho más rápido cuando funciona).
-    const esc = valor.replace(/"/g, '\\"');
-    const records = await airtable(FACTURAS_IN_TABLE_ID)
-      .select({
-        filterByFormula: `{${fieldId}} = "${esc}"`,
-        maxRecords: 1,
-        returnFieldsByFieldId: true,
-      })
+    const all = await airtable(FACTURAS_IN_TABLE_ID)
+      .select({ returnFieldsByFieldId: true, fields: [fieldId] })
       .all();
-    if (records.length > 0) return { existe: true, recordId: records[0].id };
-    return { existe: false };
+    const hit = all.find(r => String(r.fields[fieldId] ?? '') === valor);
+    return hit ? { existe: true, recordId: hit.id } : { existe: false };
   } catch {
-    // Fallback: traer y filtrar en JS. La filterByFormula puede fallar si
-    // hay caracteres especiales en `valor` o si Airtable no acepta el field
-    // ID dentro de la fórmula. El listado completo de hashes pesa poco.
-    try {
-      const all = await airtable(FACTURAS_IN_TABLE_ID)
-        .select({ returnFieldsByFieldId: true, fields: [fieldId] })
-        .all();
-      const hit = all.find(r => String(r.fields[fieldId] ?? '') === valor);
-      return hit ? { existe: true, recordId: hit.id } : { existe: false };
-    } catch {
-      return { existe: false };
-    }
+    return { existe: false };
   }
 }
 

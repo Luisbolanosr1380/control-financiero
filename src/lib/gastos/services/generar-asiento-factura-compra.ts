@@ -85,16 +85,42 @@ async function siguienteAsientoRef(periodoNombre: string): Promise<string> {
   return `${prefijo}${String(max + 1).padStart(3, '0')}`;
 }
 
-/** Lee BANCOS.cuenta_contable (link a CUENTAS) y devuelve el primer recordId. */
+/**
+ * Lee BANCOS.cuenta_contable (link a CUENTAS) y devuelve el primer recordId.
+ *
+ * F-050.2: `airtable(...).find()` NO acepta `returnFieldsByFieldId` y lee
+ * por nombre de campo — entonces `fields[fldXXX]` siempre devuelve undefined.
+ * Para leer por field ID usamos `.select()` + filterByFormula con `RECORD_ID()`
+ * (esa función SÍ existe en la sintaxis de fórmulas, y el operando no es un
+ * field reference, así que no aplica la limitación de field IDs en fórmulas).
+ * También normalizamos el shape del link (string[] vs `{id}[]`).
+ */
 async function cuentaContableDelBanco(bancoId: string): Promise<string> {
   if (!airtable) throw new Error('Airtable no está configurado.');
-  const r = await airtable(BANCOS_TABLE_ID).find(bancoId);
-  const fields = r.fields as Record<string, unknown>;
-  const link = fields[BANCOS_FIELDS.cuenta_contable] as string[] | undefined;
-  if (!link || link.length === 0) {
+  const records = await airtable(BANCOS_TABLE_ID)
+    .select({
+      returnFieldsByFieldId: true,
+      filterByFormula: `RECORD_ID() = '${bancoId}'`,
+      maxRecords: 1,
+    })
+    .all();
+  if (records.length === 0) {
+    throw new Error(`Banco ${bancoId} no encontrado.`);
+  }
+  const link = (records[0].fields as Record<string, unknown>)[BANCOS_FIELDS.cuenta_contable];
+  let cuentaId: string | undefined;
+  if (Array.isArray(link) && link.length > 0) {
+    const first = link[0];
+    cuentaId = typeof first === 'string'
+      ? first
+      : (first && typeof first === 'object' && 'id' in (first as object)
+          ? String((first as { id?: unknown }).id ?? '')
+          : undefined);
+  }
+  if (!cuentaId) {
     throw new Error(`Banco sin cuenta contable configurada. Stark debe setear CUENTA_CONTABLE en este banco antes de aprobar la factura.`);
   }
-  return link[0];
+  return cuentaId;
 }
 
 interface PartidaInput {

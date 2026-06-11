@@ -8,6 +8,12 @@
  *
  * Se invoca una vez al abrir el modal y el resultado se mantiene en estado
  * local del componente. No revalida.
+ *
+ * F-050.2: el check de "banco tiene cuenta_contable" se hace con UNA sola
+ * query usando returnFieldsByFieldId:true. Antes hacíamos N `.find()` (uno
+ * por banco) y `.find()` NO acepta returnFieldsByFieldId, así que leía por
+ * nombre de campo — devolvía undefined silenciosamente y todos los bancos
+ * caían a `bancosSinCuenta` aunque CUENTA_CONTABLE estuviera poblado.
  */
 
 import { airtable } from '@/lib/db/airtable';
@@ -25,36 +31,55 @@ export interface OpcionSelector {
 export interface OpcionesModal {
   centrosCosto: OpcionSelector[];
   cuentasGasto: OpcionSelector[];
-  bancos: OpcionSelector[];        // solo los que tienen cuenta_contable configurada
-  bancosSinCuenta: OpcionSelector[]; // para mostrar warning informativo
+  bancos: OpcionSelector[];        // con cuenta_contable configurada
+  bancosSinCuenta: OpcionSelector[]; // para warning informativo
 }
 
-/** Lee el field cuenta_contable de cada banco; devuelve true si tiene al menos uno. */
-async function tieneCuentaContable(bancoId: string): Promise<boolean> {
-  if (!airtable) return false;
+/**
+ * F-050.2: lee el link cuenta_contable de todos los bancos en una sola
+ * query con returnFieldsByFieldId. Normaliza el shape del campo
+ * multipleRecordLinks (puede llegar como `string[]` o `{id}[]` según
+ * versión del SDK).
+ */
+async function mapaCuentaContablePorBanco(): Promise<Map<string, string | undefined>> {
+  const m = new Map<string, string | undefined>();
+  if (!airtable) return m;
   try {
-    const r = await airtable(BANCOS_TABLE_ID).find(bancoId);
-    const link = (r.fields as Record<string, unknown>)[BANCOS_FIELDS.cuenta_contable] as string[] | undefined;
-    return !!(link && link.length > 0);
-  } catch {
-    return false;
+    const records = await airtable(BANCOS_TABLE_ID)
+      .select({ returnFieldsByFieldId: true })
+      .all();
+    for (const r of records) {
+      const link = (r.fields as Record<string, unknown>)[BANCOS_FIELDS.cuenta_contable];
+      let cuentaId: string | undefined;
+      if (Array.isArray(link) && link.length > 0) {
+        const first = link[0];
+        cuentaId = typeof first === 'string'
+          ? first
+          : (first && typeof first === 'object' && 'id' in (first as object)
+              ? String((first as { id?: unknown }).id ?? '')
+              : undefined);
+      }
+      m.set(r.id, cuentaId || undefined);
+    }
+  } catch (err) {
+    console.warn('F-050.2: mapaCuentaContablePorBanco falló:', err instanceof Error ? err.message : err);
   }
+  return m;
 }
 
 export async function cargarOpcionesModalAction(): Promise<OpcionesModal> {
-  const [centros, cuentas, bancos] = await Promise.all([
+  const [centros, cuentas, bancos, mapaCuentaPorBanco] = await Promise.all([
     getCentrosCostoActivos(),
     getCuentasGasto(),
     getBancosActivos(),
+    mapaCuentaContablePorBanco(),
   ]);
 
-  // Centros de costo
   const centrosCosto: OpcionSelector[] = centros.map(c => ({
     id: c.id,
     label: c.nombre,
   }));
 
-  // Cuentas de gasto
   const cuentasGasto: OpcionSelector[] = cuentas
     .filter(c => c.codigo || c.nombre)
     .map(c => ({
@@ -63,18 +88,16 @@ export async function cargarOpcionesModalAction(): Promise<OpcionesModal> {
       hint: c.codigo,
     }));
 
-  // Bancos: separamos los con/sin cuenta contable.
   const bancosConCuenta: OpcionSelector[] = [];
   const bancosSinCuenta: OpcionSelector[] = [];
-  const checks = await Promise.all(bancos.map(b => tieneCuentaContable(b.id)));
-  bancos.forEach((b, i) => {
+  for (const b of bancos) {
     const label = b.nombreCuenta || b.banco || b.id;
-    if (checks[i]) {
+    if (mapaCuentaPorBanco.get(b.id)) {
       bancosConCuenta.push({ id: b.id, label });
     } else {
       bancosSinCuenta.push({ id: b.id, label });
     }
-  });
+  }
 
   return {
     centrosCosto,
