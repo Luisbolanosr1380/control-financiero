@@ -15,3 +15,5 @@ tsconfig.tsbuildinfo
 *.bak
 *.zip
 cf/
+
+.claude/
