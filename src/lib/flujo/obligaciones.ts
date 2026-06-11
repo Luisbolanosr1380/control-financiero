@@ -31,6 +31,10 @@ export interface ObligacionRecurrente {
   mesReferencia?: string;
   activo: boolean;
   notas?: string;
+  /** F-051.2: si existe, la obligación no genera eventos antes de esta fecha. */
+  fechaInicio?: string;
+  /** F-051.2: si existe, la obligación no genera eventos después de esta fecha. */
+  fechaFin?: string;
 }
 
 const arrFirst = (v: unknown): string | undefined => {
@@ -87,6 +91,8 @@ function mapObligacion(rec: { id: string; fields: Record<string, unknown> }): Ob
     mesReferencia:    String(f[FO.mes_referencia] ?? '').trim() || undefined,
     activo:           Boolean(f[FO.activo]),
     notas:            String(f[FO.notas] ?? '').trim() || undefined,
+    fechaInicio:      String(f[FO.fecha_inicio] ?? '').slice(0, 10) || undefined,
+    fechaFin:         String(f[FO.fecha_fin] ?? '').slice(0, 10) || undefined,
   };
 }
 

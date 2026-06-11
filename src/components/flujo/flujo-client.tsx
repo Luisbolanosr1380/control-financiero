@@ -10,6 +10,7 @@ import type { ProyeccionFlujo, EventoFlujo, DiaFlujo } from '@/lib/flujo/types';
 import type { ObligacionRecurrente } from '@/lib/flujo/obligaciones';
 import { ModalObligacionForm } from './modal-obligacion-form';
 import { toggleActivoObligacion } from '@/app/(app)/flujo/_actions/obligaciones';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 
 interface Props {
   proyeccion: ProyeccionFlujo;
@@ -351,11 +352,12 @@ interface RecurrentesProps {
 }
 
 function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: RecurrentesProps) {
+  const hoy = useMemo(() => obtenerFechaHoyGuatemala(), []);
   const totalMensual = useMemo(
     () => obligaciones
-      .filter(o => o.activo)
+      .filter(o => o.activo && !esFinalizada(o, hoy))
       .reduce((s, o) => s + o.montoEstimado * factorMensual(o.frecuencia), 0),
-    [obligaciones],
+    [obligaciones, hoy],
   );
   return (
     <div>
@@ -387,6 +389,7 @@ function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: 
                 <Th align="center">Día</Th>
                 <Th>Frecuencia</Th>
                 <Th>Prioridad</Th>
+                <Th>Vigencia</Th>
                 <Th align="center">Activo</Th>
                 <Th align="right">Acciones</Th>
               </tr>
@@ -410,6 +413,9 @@ function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: 
                     }}>
                       {o.prioridad}
                     </span>
+                  </Td>
+                  <Td>
+                    <VigenciaBadge o={o} hoy={hoy} />
                   </Td>
                   <Td align="center">
                     <button
@@ -502,4 +508,64 @@ function Td({ children, align, style }: { children: React.ReactNode; align?: 'le
       {children}
     </td>
   );
+}
+
+/* =========================================================================
+ * F-051.2 — Vigencia helpers
+ * Comparamos strings YYYY-MM-DD (lección F-041) para evitar shift UTC.
+ * ========================================================================= */
+
+function esFinalizada(o: ObligacionRecurrente, hoy: string): boolean {
+  return !!o.fechaFin && o.fechaFin < hoy;
+}
+
+function diasEntreISO(desde: string, hasta: string): number {
+  const [y1, m1, d1] = desde.split('-').map(Number);
+  const [y2, m2, d2] = hasta.split('-').map(Number);
+  const a = new Date(y1, m1 - 1, d1).getTime();
+  const b = new Date(y2, m2 - 1, d2).getTime();
+  return Math.round((b - a) / 86_400_000);
+}
+
+function VigenciaBadge({ o, hoy }: { o: ObligacionRecurrente; hoy: string }) {
+  // Finalizada: fechaFin ya pasó.
+  if (o.fechaFin && o.fechaFin < hoy) {
+    return (
+      <span style={badgeBase('var(--ink-2)', 'var(--paper)')}>
+        Finalizada
+      </span>
+    );
+  }
+  // No inicia aún: fechaInicio en el futuro.
+  if (o.fechaInicio && o.fechaInicio > hoy) {
+    return (
+      <span style={badgeBase('var(--ink-2)', 'var(--paper)')} title={`Inicia ${formatearFecha(o.fechaInicio, 'dd/MM/yyyy')}`}>
+        Inicia {formatearFecha(o.fechaInicio, 'dd/MM')}
+      </span>
+    );
+  }
+  // Vence pronto: fechaFin a < 60 días.
+  if (o.fechaFin) {
+    const dias = diasEntreISO(hoy, o.fechaFin);
+    if (dias >= 0 && dias < 60) {
+      return (
+        <span style={badgeBase('var(--amber)', 'var(--ink)')} title={`En ${dias} día${dias === 1 ? '' : 's'}`}>
+          Termina {formatearFecha(o.fechaFin, 'dd/MM')}
+        </span>
+      );
+    }
+  }
+  return <span style={{ color: 'var(--ink-3)' }}>—</span>;
+}
+
+function badgeBase(bg: string, color: string): React.CSSProperties {
+  return {
+    display: 'inline-block',
+    padding: '2px 6px',
+    borderRadius: 4,
+    fontSize: 11,
+    background: bg,
+    color,
+    whiteSpace: 'nowrap',
+  };
 }

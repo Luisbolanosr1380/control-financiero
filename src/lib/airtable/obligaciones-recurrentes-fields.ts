@@ -26,6 +26,11 @@ export const OBLIGACIONES_RECURRENTES_FIELDS = {
   mes_referencia:  'fldNckZOZs4bEL1gV',  // date — ancla para ciclos >mensual
   activo:          'fldlKRRLjPvclokQe',  // checkbox
   notas:           'fldSgV1hYC0lsRGXX',  // long text
+  // F-051.2: vigencia opcional. Si fecha_inicio existe, la obligación no
+  // genera eventos antes de esa fecha. Si fecha_fin existe, no genera
+  // después. Ambos vacíos = sin límite.
+  fecha_inicio:    'fldQ3NnQ3HL4tp3U2',  // date opcional
+  fecha_fin:       'fldzXwVWjr1CgDqdU',  // date opcional
 } as const;
 
 export type TipoObligacion = 'Renta' | 'Servicio' | 'Tarjeta' | 'Seguro' | 'Suscripción' | 'Impuesto' | 'Otro';

@@ -50,6 +50,9 @@ export interface ObligacionInput {
   mesReferencia?: string;     // YYYY-MM-01 (date) — solo para bimestral+
   activo?: boolean;
   notas?: string;
+  /** F-051.2: vigencia opcional. YYYY-MM-DD. */
+  fechaInicio?: string;
+  fechaFin?: string;
 }
 
 export type ObligacionResult =
@@ -67,6 +70,15 @@ function validarInput(input: ObligacionInput): string | null {
   if (!PRIORIDADES_OBLIGACION.includes(input.prioridad))  return `Prioridad inválida (${input.prioridad}).`;
   if (input.mesReferencia && !/^\d{4}-\d{2}-\d{2}$/.test(input.mesReferencia)) {
     return 'mesReferencia debe ser YYYY-MM-DD.';
+  }
+  if (input.fechaInicio && !/^\d{4}-\d{2}-\d{2}$/.test(input.fechaInicio)) {
+    return 'fechaInicio debe ser YYYY-MM-DD.';
+  }
+  if (input.fechaFin && !/^\d{4}-\d{2}-\d{2}$/.test(input.fechaFin)) {
+    return 'fechaFin debe ser YYYY-MM-DD.';
+  }
+  if (input.fechaInicio && input.fechaFin && input.fechaFin < input.fechaInicio) {
+    return 'La fecha fin no puede ser anterior a la fecha inicio.';
   }
   return null;
 }
@@ -89,6 +101,10 @@ function fieldsDeInput(input: ObligacionInput): Record<string, unknown> {
   if (input.bancoPagoId)      f[FO.banco_pago]      = [input.bancoPagoId];
   if (input.mesReferencia)    f[FO.mes_referencia]  = input.mesReferencia;
   if (input.notas?.trim())    f[FO.notas]           = input.notas.trim();
+  // F-051.2: vigencia opcional. Si la queremos limpiar en un edit, pasamos
+  // el string vacío; Airtable acepta "" para vaciar campos date.
+  if (input.fechaInicio !== undefined) f[FO.fecha_inicio] = input.fechaInicio || undefined;
+  if (input.fechaFin    !== undefined) f[FO.fecha_fin]    = input.fechaFin    || undefined;
   return f as Record<string, unknown>;
 }
 

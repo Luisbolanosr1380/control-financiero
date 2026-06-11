@@ -138,6 +138,21 @@ function proyectarConAncla(o: ObligacionRecurrente, desde: string, hasta: string
 }
 
 /**
+ * F-051.2: comparación de fechas YYYY-MM-DD como strings — Date introduce
+ * shift UTC que rompería los límites de mes (lección F-041).
+ */
+function filtrarPorVigencia(eventos: EventoFlujo[], o: ObligacionRecurrente): EventoFlujo[] {
+  const inicio = o.fechaInicio?.slice(0, 10);
+  const fin    = o.fechaFin?.slice(0, 10);
+  if (!inicio && !fin) return eventos;
+  return eventos.filter(ev => {
+    if (inicio && ev.fecha < inicio) return false;
+    if (fin    && ev.fecha > fin)    return false;
+    return true;
+  });
+}
+
+/**
  * Genera todos los EventoFlujo de una obligación dentro del horizonte
  * [fechaDesde, fechaHasta] inclusive. Si la obligación NO está activa,
  * devuelve [].
@@ -147,14 +162,16 @@ export function proyectarObligacion(o: ObligacionRecurrente, fechaDesde: string,
   if (!(o.montoEstimado > 0)) return [];
   if (!(o.diaPago >= 1 && o.diaPago <= 31)) return [];
 
+  let eventos: EventoFlujo[];
   switch (o.frecuencia) {
-    case 'Mensual':    return proyectarMensual(o, fechaDesde, fechaHasta);
-    case 'Quincenal':  return proyectarQuincenal(o, fechaDesde, fechaHasta);
-    case 'Bimestral':  return proyectarConAncla(o, fechaDesde, fechaHasta, 2);
-    case 'Trimestral': return proyectarConAncla(o, fechaDesde, fechaHasta, 3);
-    case 'Anual':      return proyectarConAncla(o, fechaDesde, fechaHasta, 12);
+    case 'Mensual':    eventos = proyectarMensual(o, fechaDesde, fechaHasta); break;
+    case 'Quincenal':  eventos = proyectarQuincenal(o, fechaDesde, fechaHasta); break;
+    case 'Bimestral':  eventos = proyectarConAncla(o, fechaDesde, fechaHasta, 2); break;
+    case 'Trimestral': eventos = proyectarConAncla(o, fechaDesde, fechaHasta, 3); break;
+    case 'Anual':      eventos = proyectarConAncla(o, fechaDesde, fechaHasta, 12); break;
     default:           return [];
   }
+  return filtrarPorVigencia(eventos, o);
 }
 
 export function proyectarObligaciones(obligaciones: ObligacionRecurrente[], fechaDesde: string, fechaHasta: string): EventoFlujo[] {

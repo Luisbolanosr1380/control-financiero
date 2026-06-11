@@ -32,6 +32,8 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
   const [frecuencia, setFrecuencia]       = useState<FrecuenciaObligacion>(obligacion?.frecuencia ?? 'Mensual');
   const [prioridad, setPrioridad]         = useState<PrioridadObligacion>(obligacion?.prioridad ?? 'Media');
   const [mesReferencia, setMesReferencia] = useState(obligacion?.mesReferencia ?? '');
+  const [fechaInicio, setFechaInicio]     = useState(obligacion?.fechaInicio ?? '');
+  const [fechaFin, setFechaFin]           = useState(obligacion?.fechaFin ?? '');
   const [notas, setNotas]                 = useState(obligacion?.notas ?? '');
   const [guardando, setGuardando]         = useState(false);
   const [error, setError]                 = useState('');
@@ -45,10 +47,16 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
       setError('Mes de referencia es requerido para frecuencias bimestral, trimestral y anual.');
       return;
     }
+    if (fechaInicio && fechaFin && fechaFin < fechaInicio) {
+      setError('La fecha "Vigente hasta" no puede ser anterior a "Vigente desde".');
+      return;
+    }
     const input: ObligacionInput = {
       nombre, tipo, montoEstimado: Number(monto), diaPago: Number(diaPago),
       frecuencia, prioridad,
       mesReferencia: necesitaAncla && mesReferencia ? mesReferencia : undefined,
+      fechaInicio: fechaInicio || '',  // string vacío = limpiar en Airtable
+      fechaFin:    fechaFin    || '',
       notas: notas.trim() || undefined,
       activo: obligacion?.activo ?? true,
     };
@@ -164,6 +172,27 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
             </small>
           </Field>
         )}
+
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <Field label="Vigente desde (opcional)">
+            <input
+              type="date"
+              value={fechaInicio}
+              onChange={(e) => setFechaInicio(e.target.value)}
+              style={inputStyle}
+            />
+            <small style={{ color: 'var(--ink-3)', fontSize: 11 }}>Dejar vacío = sin límite inferior.</small>
+          </Field>
+          <Field label="Vigente hasta (opcional)">
+            <input
+              type="date"
+              value={fechaFin}
+              onChange={(e) => setFechaFin(e.target.value)}
+              style={inputStyle}
+            />
+            <small style={{ color: 'var(--ink-3)', fontSize: 11 }}>Dejar vacío = sin límite superior.</small>
+          </Field>
+        </div>
 
         <Field label="Notas (opcional)">
           <textarea
