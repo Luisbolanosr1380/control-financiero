@@ -11,6 +11,7 @@ import type { ObligacionRecurrente } from '@/lib/flujo/obligaciones';
 import { ModalObligacionForm } from './modal-obligacion-form';
 import { toggleActivoObligacion } from '@/app/(app)/flujo/_actions/obligaciones';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
+import { MontoInput } from '@/components/ui/monto-input';
 
 interface Props {
   proyeccion: ProyeccionFlujo;
@@ -27,7 +28,7 @@ export function FlujoClient({ proyeccion, obligaciones, saldoSugerido, saldoSuge
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [tab, setTab] = useState<Tab>('timeline');
-  const [saldoInput, setSaldoInput] = useState<string>('');
+  const [saldoInput, setSaldoInput] = useState<number | null>(null);
   const [editandoSaldo, setEditandoSaldo] = useState(false);
   const [modalAbierto, setModalAbierto] = useState(false);
   const [editandoObligacion, setEditandoObligacion] = useState<ObligacionRecurrente | null>(null);
@@ -36,8 +37,8 @@ export function FlujoClient({ proyeccion, obligaciones, saldoSugerido, saldoSuge
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const stored = window.localStorage.getItem(SALDO_KEY);
-    if (stored && Number.isFinite(Number(stored))) {
-      setSaldoInput(stored);
+    if (stored !== null && Number.isFinite(Number(stored))) {
+      setSaldoInput(Number(stored));
     }
   }, []);
 
@@ -47,18 +48,17 @@ export function FlujoClient({ proyeccion, obligaciones, saldoSugerido, saldoSuge
     startTransition(() => router.push(url.pathname + '?' + url.searchParams.toString()));
   };
 
-  const aplicarSaldo = (valor: string) => {
-    const n = Number(valor);
-    if (!Number.isFinite(n)) return;
-    window.localStorage.setItem(SALDO_KEY, String(n));
+  const aplicarSaldo = (valor: number | null) => {
+    if (valor == null || !Number.isFinite(valor)) return;
+    window.localStorage.setItem(SALDO_KEY, String(valor));
     const url = new URL(window.location.href);
-    url.searchParams.set('saldo', String(n));
+    url.searchParams.set('saldo', String(valor));
     startTransition(() => router.push(url.pathname + '?' + url.searchParams.toString()));
   };
 
   const usarSugerido = () => {
     window.localStorage.removeItem(SALDO_KEY);
-    setSaldoInput('');
+    setSaldoInput(null);
     const url = new URL(window.location.href);
     url.searchParams.delete('saldo');
     startTransition(() => router.push(url.pathname + (url.searchParams.toString() ? '?' + url.searchParams.toString() : '')));
@@ -135,11 +135,11 @@ export function FlujoClient({ proyeccion, obligaciones, saldoSugerido, saldoSuge
 
 interface HeaderKpisProps {
   proyeccion: ProyeccionFlujo;
-  saldoInput: string;
+  saldoInput: number | null;
   editando: boolean;
-  setSaldoInput: (s: string) => void;
+  setSaldoInput: (n: number | null) => void;
   setEditando: (b: boolean) => void;
-  onSaldoCambiado: (s: string) => void;
+  onSaldoCambiado: (n: number | null) => void;
   onUsarSugerido: () => void;
   saldoSugerido: number;
   saldoSugeridoCuentas: number;
@@ -158,16 +158,16 @@ function HeaderKpis({
         <div className="kpi">
           <div className="kpi-label">Saldo actual</div>
           {editando ? (
-            <input
-              type="number"
+            <MontoInput
               value={saldoInput}
-              onChange={(e) => setSaldoInput(e.target.value)}
-              onBlur={() => { onSaldoCambiado(saldoInput); setEditando(false); }}
-              onKeyDown={(e) => { if (e.key === 'Enter') { onSaldoCambiado(saldoInput); setEditando(false); } }}
+              onChange={setSaldoInput}
               autoFocus
-              className="input"
-              style={{ width: '100%' }}
-              placeholder="Q saldo manual"
+              placeholder="Saldo manual"
+              prefix="Q"
+              ariaLabel="Saldo manual"
+              style={{ marginTop: 2 }}
+              onBlur={() => { onSaldoCambiado(saldoInput); setEditando(false); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.blur(); } }}
             />
           ) : (
             <button onClick={() => setEditando(true)} className="kpi-value" style={{ all: 'unset', cursor: 'pointer', display: 'block', fontFamily: 'var(--mono)', fontSize: 22, fontWeight: 500, letterSpacing: '-0.02em', color: 'var(--ink)' }}>

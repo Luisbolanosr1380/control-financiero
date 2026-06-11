@@ -11,6 +11,7 @@ import {
   type PrioridadObligacion,
 } from '@/lib/airtable/obligaciones-recurrentes-fields';
 import type { ObligacionRecurrente } from '@/lib/flujo/obligaciones';
+import { MontoInput, EnteroInput } from '@/components/ui/monto-input';
 import {
   crearObligacion,
   actualizarObligacion,
@@ -27,8 +28,8 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
   const editando = !!obligacion;
   const [nombre, setNombre]               = useState(obligacion?.nombre ?? '');
   const [tipo, setTipo]                   = useState<TipoObligacion>(obligacion?.tipo ?? 'Renta');
-  const [monto, setMonto]                 = useState(obligacion?.montoEstimado ?? 0);
-  const [diaPago, setDiaPago]             = useState(obligacion?.diaPago ?? 1);
+  const [monto, setMonto]                 = useState<number | null>(obligacion?.montoEstimado ?? null);
+  const [diaPago, setDiaPago]             = useState<number | null>(obligacion?.diaPago ?? null);
   const [frecuencia, setFrecuencia]       = useState<FrecuenciaObligacion>(obligacion?.frecuencia ?? 'Mensual');
   const [prioridad, setPrioridad]         = useState<PrioridadObligacion>(obligacion?.prioridad ?? 'Media');
   const [mesReferencia, setMesReferencia] = useState(obligacion?.mesReferencia ?? '');
@@ -51,8 +52,10 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
       setError('La fecha "Vigente hasta" no puede ser anterior a "Vigente desde".');
       return;
     }
+    if (monto == null || !(monto > 0))                   { setError('El monto estimado debe ser mayor a 0.'); return; }
+    if (diaPago == null || diaPago < 1 || diaPago > 31)  { setError('El día de pago debe estar entre 1 y 31.'); return; }
     const input: ObligacionInput = {
-      nombre, tipo, montoEstimado: Number(monto), diaPago: Number(diaPago),
+      nombre, tipo, montoEstimado: monto, diaPago,
       frecuencia, prioridad,
       mesReferencia: necesitaAncla && mesReferencia ? mesReferencia : undefined,
       fechaInicio: fechaInicio || '',  // string vacío = limpiar en Airtable
@@ -130,23 +133,22 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Monto estimado (Q)">
-            <input
-              type="number"
-              min="0"
-              step="0.01"
+            <MontoInput
               value={monto}
-              onChange={(e) => setMonto(Number(e.target.value))}
+              onChange={setMonto}
+              prefix="Q"
+              placeholder="0.00"
               required
               style={inputStyle}
             />
           </Field>
           <Field label="Día de pago (1-31)">
-            <input
-              type="number"
-              min="1"
-              max="31"
+            <EnteroInput
               value={diaPago}
-              onChange={(e) => setDiaPago(Number(e.target.value))}
+              onChange={setDiaPago}
+              min={1}
+              max={31}
+              placeholder="1"
               required
               style={inputStyle}
             />

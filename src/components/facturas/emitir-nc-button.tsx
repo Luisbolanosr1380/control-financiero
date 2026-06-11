@@ -21,6 +21,7 @@ import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { emitirNotaCreditoAction } from '@/app/(app)/facturacion/[id]/actions';
 import type { MotivoNC } from '@/lib/db/notas-credito';
 import { MOTIVOS_NC, UMBRAL_APROBACION_NC } from '@/lib/db/notas-credito';
+import { MontoInput } from '@/components/ui/monto-input';
 import type { InvoiceEstadoBruto } from '@/lib/types';
 
 interface Props {
@@ -193,17 +194,12 @@ function Modal({ facturaId, facturaNumero, clienteNombre, total, saldoPendiente,
                 </div>
                 <div className="field">
                   <label className="label" htmlFor="nc-monto">Monto (Q)</label>
-                  <input
+                  <MontoInput
                     id="nc-monto"
-                    type="number"
-                    inputMode="decimal"
-                    step="0.01"
-                    min={0}
-                    max={saldoPendiente}
-                    className="input num"
-                    value={montoStr}
-                    onChange={(e) => setMontoStr(e.target.value)}
+                    value={montoStr === '' ? null : (Number.isFinite(Number(montoStr)) ? Number(montoStr) : null)}
+                    onChange={(v) => setMontoStr(v == null ? '' : String(v))}
                     placeholder="0.00"
+                    prefix="Q"
                     disabled={loading}
                   />
                 </div>

@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { crearPeriodoAction, generarPlanillaAction } from '@/app/(app)/planillas/actions';
+import { EnteroInput } from '@/components/ui/monto-input';
 
 interface EmpleadoPreview {
   id: string;
@@ -142,10 +143,11 @@ export function ModalGenerarPlanilla({ empleadosActivos, periodosExistentes, def
             </div>
             <div className="field">
               <label className="label">Año</label>
-              <input
-                type="number" className="input num"
-                value={anio} min={2024} max={2099}
-                onChange={(e) => setAnio(Number(e.target.value))}
+              <EnteroInput
+                value={anio}
+                onChange={(v) => setAnio(v ?? inicial.anio)}
+                min={2024}
+                max={2099}
                 disabled={loading}
               />
             </div>

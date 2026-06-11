@@ -36,6 +36,7 @@ import { buscarProveedorPorNitAction } from '@/app/(app)/gastos/_actions/buscar-
 import { cargarOpcionesModalAction, type OpcionesModal, type OpcionSelector } from '@/app/(app)/gastos/_actions/cargar-opciones-modal';
 import { CUENTAS_SISTEMA } from '@/lib/contabilidad/cuentas-sistema';
 import type { FacturaIn } from '@/lib/db/facturas-in';
+import { MontoInput } from '@/components/ui/monto-input';
 
 interface Props {
   factura: FacturaIn;
@@ -396,9 +397,9 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
                   <CampoEdit label="Serie" value={serie} onChange={setSerie} />
                   <CampoEdit label="Número" value={numero} onChange={setNumero} />
                   <CampoEdit label="Fecha emisión (YYYY-MM-DD)" value={fechaEmision} onChange={setFechaEmision} />
-                  <CampoEdit label="Subtotal" value={base} onChange={(v) => { setBase(v); setMontosFueronCorregidos(false); }} type="number" />
-                  <CampoEdit label="IVA" value={iva} onChange={(v) => { setIva(v); setMontosFueronCorregidos(false); }} type="number" />
-                  <CampoEdit label="Total" value={total} onChange={(v) => { setTotal(v); setMontosFueronCorregidos(false); }} type="number" />
+                  <CampoEditMonto label="Subtotal" value={base} onChange={(v) => { setBase(v); setMontosFueronCorregidos(false); }} />
+                  <CampoEditMonto label="IVA"      value={iva}  onChange={(v) => { setIva(v);  setMontosFueronCorregidos(false); }} />
+                  <CampoEditMonto label="Total"    value={total} onChange={(v) => { setTotal(v); setMontosFueronCorregidos(false); }} />
                 </div>
                 <button type="button" onClick={restaurarOriginales} style={{ fontSize: 11, marginTop: 8, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-3)' }}>
                   Restaurar valores originales
@@ -641,6 +642,22 @@ function CampoEdit({ label, value, onChange, type = 'text' }: { label: string; v
     <div>
       <Label>{label}</Label>
       <input type={type} className="input" value={value} onChange={(e) => onChange(e.target.value)} />
+    </div>
+  );
+}
+
+/** F-051.4: adapter para campos monetarios que viven como string en el estado del modal. */
+function CampoEditMonto({ label, value, onChange }: { label: string; value: string; onChange: (v: string) => void }) {
+  const parsed = value === '' ? null : Number(value);
+  const num = Number.isFinite(parsed) ? (parsed as number) : null;
+  return (
+    <div>
+      <Label>{label}</Label>
+      <MontoInput
+        value={num}
+        onChange={(v) => onChange(v == null ? '' : String(v))}
+        prefix="Q"
+      />
     </div>
   );
 }

@@ -21,6 +21,7 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
+import { EnteroInput } from '@/components/ui/monto-input';
 import {
   crearArticuloAction,
   editarArticuloAction,
@@ -192,12 +193,10 @@ export function ArticuloFormModal(props: Props) {
             </div>
             <div className="field">
               <label className="label" htmlFor="af-orden">Orden</label>
-              <input
+              <EnteroInput
                 id="af-orden"
-                type="number"
-                className="input num"
-                value={orden}
-                onChange={(e) => setOrden(e.target.value)}
+                value={orden === '' ? null : (Number.isFinite(Number(orden)) ? Number(orden) : null)}
+                onChange={(v) => setOrden(v == null ? '' : String(v))}
                 disabled={loading}
               />
               <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>

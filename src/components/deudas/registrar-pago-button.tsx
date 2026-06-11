@@ -8,6 +8,19 @@ import { Q } from '@/lib/utils';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { registrarPagoDeudaAction } from '@/app/(app)/deudas/[id]/actions';
 import type { MetodoPagoDeuda } from '@/lib/db/pagos-deudas';
+import { MontoInput } from '@/components/ui/monto-input';
+
+/** F-051.4: adapter para campos monetarios con state string. */
+function MontoStr({ value, onChange, prefix }: { value: string; onChange: (s: string) => void; prefix?: string }) {
+  const n = value === '' ? null : Number(value);
+  return (
+    <MontoInput
+      value={Number.isFinite(n as number) ? (n as number) : null}
+      onChange={(v) => onChange(v == null ? '' : String(v))}
+      prefix={prefix}
+    />
+  );
+}
 
 interface Props {
   deudaId: string;
@@ -161,13 +174,7 @@ function RegistrarPagoModal({ deudaId, deudaNombre, acreedorNombre, saldoPendien
           </Field>
 
           <Field label={`Monto total del pago (${desglosar ? 'capital + interés + mora + comisión' : 'se asume 100% capital'})`}>
-            <input
-              type="number" step="0.01" min="0.01"
-              placeholder="0.00"
-              value={montoTotal}
-              onChange={(e) => setMontoTotal(e.target.value)}
-              style={inputStyle}
-            />
+            <MontoStr value={montoTotal} onChange={setMontoTotal} prefix="Q" />
           </Field>
 
           <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-2)', cursor: 'pointer' }}>
@@ -178,16 +185,16 @@ function RegistrarPagoModal({ deudaId, deudaNombre, acreedorNombre, saldoPendien
           {desglosar && (
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, padding: 12, background: 'var(--paper)', borderRadius: 6, border: '1px solid var(--line-3)' }}>
               <Field label="Capital (reduce saldo)">
-                <input type="number" step="0.01" min="0" value={capital} onChange={(e) => setCapital(e.target.value)} style={inputStyle} />
+                <MontoStr value={capital} onChange={setCapital} prefix="Q" />
               </Field>
               <Field label="Interés">
-                <input type="number" step="0.01" min="0" value={interes} onChange={(e) => setInteres(e.target.value)} style={inputStyle} />
+                <MontoStr value={interes} onChange={setInteres} prefix="Q" />
               </Field>
               <Field label="Mora">
-                <input type="number" step="0.01" min="0" value={mora} onChange={(e) => setMora(e.target.value)} style={inputStyle} />
+                <MontoStr value={mora} onChange={setMora} prefix="Q" />
               </Field>
               <Field label="Comisión">
-                <input type="number" step="0.01" min="0" value={comision} onChange={(e) => setComision(e.target.value)} style={inputStyle} />
+                <MontoStr value={comision} onChange={setComision} prefix="Q" />
               </Field>
               <div style={{ gridColumn: '1 / -1', fontSize: 11.5, color: Math.abs(restante) < 0.01 ? 'var(--olive)' : 'var(--wine)', textAlign: 'right' }}>
                 Suma del desglose: <strong className="num">{Q(sumaDesglose)}</strong> {Math.abs(restante) < 0.01 ? '✓ cuadra' : `· ${restante > 0 ? `falta ${Q(restante)}` : `sobra ${Q(-restante)}`}`}

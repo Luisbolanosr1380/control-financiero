@@ -19,6 +19,33 @@ import {
 } from '@/lib/db/acreedores';
 import { TIPOS_DOCUMENTO, type TipoDocumento, type Deuda } from '@/lib/db/deudas';
 import type { Acreedor } from '@/lib/db/deudas';
+import { MontoInput, EnteroInput } from '@/components/ui/monto-input';
+
+/* F-051.4: adapters string-state ↔ MontoInput/EnteroInput.
+   Mantienen el contrato actual del form (state string) usando los nuevos
+   inputs sin spinners/scroll/zeros-pegajosos. */
+function MontoStr({ value, onChange, prefix }: { value: string; onChange: (s: string) => void; prefix?: string }) {
+  const n = value === '' ? null : Number(value);
+  return (
+    <MontoInput
+      value={Number.isFinite(n as number) ? (n as number) : null}
+      onChange={(v) => onChange(v == null ? '' : String(v))}
+      prefix={prefix}
+    />
+  );
+}
+function EnteroStr({ value, onChange, min, max, placeholder }: { value: string; onChange: (s: string) => void; min?: number; max?: number; placeholder?: string }) {
+  const n = value === '' ? null : Number(value);
+  return (
+    <EnteroInput
+      value={Number.isFinite(n as number) ? (n as number) : null}
+      onChange={(v) => onChange(v == null ? '' : String(v))}
+      min={min}
+      max={max}
+      placeholder={placeholder}
+    />
+  );
+}
 
 interface Props {
   acreedores: Acreedor[];
@@ -298,12 +325,12 @@ export function DeudaFormModal({ acreedores, centros, modo, deudaActual, numPago
 
               {moneda === 'USD' && (
                 <Field label="Tipo de cambio (USD → GTQ)">
-                  <input type="number" step="0.01" min="0.01" value={tipoCambio} onChange={(e) => setTipoCambio(e.target.value)} style={inputStyle} />
+                  <MontoStr value={tipoCambio} onChange={setTipoCambio} />
                 </Field>
               )}
 
               <Field label={`Monto original (${moneda})`}>
-                <input type="number" step="0.01" min="0.01" placeholder="0.00" value={montoOriginal} onChange={(e) => setMontoOriginal(e.target.value)} style={inputStyle} />
+                <MontoStr value={montoOriginal} onChange={setMontoOriginal} prefix={moneda === 'USD' ? '$' : 'Q'} />
               </Field>
 
               <div style={{ gridColumn: '1 / -1' }}>
@@ -321,24 +348,24 @@ export function DeudaFormModal({ acreedores, centros, modo, deudaActual, numPago
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
 
                 {showTarjeta && (<>
-                  <Field label="Límite de tarjeta"><input type="number" step="0.01" value={limite} onChange={(e) => setLimite(e.target.value)} style={inputStyle} /></Field>
+                  <Field label="Límite de tarjeta"><MontoStr value={limite} onChange={setLimite} prefix="Q" /></Field>
                   <Field label="Últimos 4 dígitos"><input type="text" maxLength={4} pattern="\d{4}" value={ultimos4} onChange={(e) => setUltimos4(e.target.value)} style={inputStyle} /></Field>
-                  <Field label="Tasa de interés anual (%)"><input type="number" step="0.01" placeholder="15.00" value={tasaInteresAnual} onChange={(e) => setTasaInteresAnual(e.target.value)} style={inputStyle} /></Field>
-                  <Field label="Día de pago fijo (1–31)"><input type="number" min="1" max="31" value={diaPagoFijo} onChange={(e) => setDiaPagoFijo(e.target.value)} style={inputStyle} /></Field>
+                  <Field label="Tasa de interés anual (%)"><MontoStr value={tasaInteresAnual} onChange={setTasaInteresAnual} /></Field>
+                  <Field label="Día de pago fijo (1–31)"><EnteroStr value={diaPagoFijo} onChange={setDiaPagoFijo} min={1} max={31} /></Field>
                 </>)}
 
                 {showPrestamo && (<>
-                  <Field label="Plazo en meses"><input type="number" min="1" value={plazoMeses} onChange={(e) => setPlazoMeses(e.target.value)} style={inputStyle} /></Field>
+                  <Field label="Plazo en meses"><EnteroStr value={plazoMeses} onChange={setPlazoMeses} min={1} /></Field>
                   <Field label="Fecha primera cuota"><input type="date" value={fechaPrimerCuota} onChange={(e) => setFechaPrimerCuota(e.target.value)} style={inputStyle} /></Field>
-                  <Field label="Tasa de interés anual (%)"><input type="number" step="0.01" placeholder="12.00" value={tasaInteresAnual} onChange={(e) => setTasaInteresAnual(e.target.value)} style={inputStyle} /></Field>
+                  <Field label="Tasa de interés anual (%)"><MontoStr value={tasaInteresAnual} onChange={setTasaInteresAnual} /></Field>
                   <Field label="Fecha de vencimiento (auto-calculada si vacía)"><input type="date" value={fechaVencimiento} onChange={(e) => setFechaVencimiento(e.target.value)} style={inputStyle} /></Field>
                 </>)}
 
                 {showFactoraje && (<>
-                  <Field label="Tasa de comisión (%)"><input type="number" step="0.01" value={tasaComision} onChange={(e) => setTasaComision(e.target.value)} style={inputStyle} /></Field>
-                  <Field label="IVA sobre comisión (%)"><input type="number" step="0.01" placeholder="12" value={ivaComision} onChange={(e) => setIvaComision(e.target.value)} style={inputStyle} /></Field>
-                  <Field label="Reserva (%)"><input type="number" step="0.01" value={reserva} onChange={(e) => setReserva(e.target.value)} style={inputStyle} /></Field>
-                  <Field label="Plazo en días"><input type="number" min="1" value={plazoDias} onChange={(e) => setPlazoDias(e.target.value)} style={inputStyle} /></Field>
+                  <Field label="Tasa de comisión (%)"><MontoStr value={tasaComision} onChange={setTasaComision} /></Field>
+                  <Field label="IVA sobre comisión (%)"><MontoStr value={ivaComision} onChange={setIvaComision} /></Field>
+                  <Field label="Reserva (%)"><MontoStr value={reserva} onChange={setReserva} /></Field>
+                  <Field label="Plazo en días"><EnteroStr value={plazoDias} onChange={setPlazoDias} min={1} /></Field>
                   <div style={{ gridColumn: '1 / -1' }}>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-2)', cursor: 'pointer' }}>
                       <input type="checkbox" checked={conRecurso} onChange={(e) => setConRecurso(e.target.checked)} />
@@ -349,7 +376,7 @@ export function DeudaFormModal({ acreedores, centros, modo, deudaActual, numPago
 
                 {showFactura && (<>
                   <Field label="Número de factura"><input type="text" value={numeroFactura} onChange={(e) => setNumeroFactura(e.target.value)} style={inputStyle} /></Field>
-                  <Field label="Plazo de crédito (días)"><input type="number" min="1" value={plazoCreditoDias} onChange={(e) => setPlazoCreditoDias(e.target.value)} style={inputStyle} /></Field>
+                  <Field label="Plazo de crédito (días)"><EnteroStr value={plazoCreditoDias} onChange={setPlazoCreditoDias} min={1} /></Field>
                   <div style={{ gridColumn: '1 / -1' }}>
                     <Field label="Vencimiento (auto-calculado por plazo, o sobrescribí acá)"><input type="date" value={fechaVencimiento} onChange={(e) => setFechaVencimiento(e.target.value)} style={inputStyle} /></Field>
                   </div>
