@@ -54,6 +54,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
     ]},
     { group: 'Gastos', items: [
       { href: '/gastos',       label: 'Gastos',         icon: 'Expense' },
+      { href: '/flujo',        label: 'Centro de Pagos',icon: 'Calendar' },  // F-051
       { href: '/bancos',       label: 'Bancos',         icon: 'Bank' },
       { href: '/empleados',    label: 'Empleados',      icon: 'Users' },   // F-037
       { href: '/planillas',    label: 'Planillas',      icon: 'Payroll' }, // F-038
