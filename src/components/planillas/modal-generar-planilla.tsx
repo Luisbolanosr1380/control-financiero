@@ -8,12 +8,20 @@ import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { crearPeriodoAction, generarPlanillaAction } from '@/app/(app)/planillas/actions';
 import { EnteroInput } from '@/components/ui/monto-input';
+import {
+  esGolden,
+  EMPRESAS_EMPLEADORAS,
+  EMPRESA_EMPLEADORA_DEFAULT,
+  type EmpresaEmpleadora,
+} from '@/lib/empleados/empresa';
 
 interface EmpleadoPreview {
   id: string;
   nombre: string;
   salarioBase: number;
   netoEstimado: number;
+  /** F-051.7: opcional para retro-compat. Default Golden Talent si falta. */
+  empresaEmpleadora?: EmpresaEmpleadora;
 }
 
 interface Props {
@@ -66,6 +74,23 @@ export function ModalGenerarPlanilla({ empleadosActivos, periodosExistentes, def
   const yaExiste = periodosExistentes.some(p => p.anio === anio && p.mes === mes && p.quincena === quincena);
   const montoTotal = empleadosActivos.reduce((s, e) => s + e.netoEstimado, 0);
   const valido = !yaExiste && empleadosActivos.length > 0;
+
+  // F-051.7: desglose por empresa empleadora para el banner intercompany.
+  const desgloseNoGolden = useMemo(() => {
+    const m = new Map<EmpresaEmpleadora, { cantidad: number; monto: number }>();
+    for (const e of empleadosActivos) {
+      const emp = e.empresaEmpleadora ?? EMPRESA_EMPLEADORA_DEFAULT;
+      if (esGolden(emp)) continue;
+      const b = m.get(emp) ?? { cantidad: 0, monto: 0 };
+      b.cantidad += 1;
+      b.monto += e.netoEstimado;
+      m.set(emp, b);
+    }
+    return EMPRESAS_EMPLEADORAS
+      .filter(emp => !esGolden(emp) && m.has(emp))
+      .map(emp => ({ empresa: emp, cantidad: m.get(emp)!.cantidad, monto: m.get(emp)!.monto }));
+  }, [empleadosActivos]);
+  const totalNoGolden = desgloseNoGolden.reduce((s, x) => s + x.cantidad, 0);
 
   const onConfirm = async () => {
     if (!valido) return;
@@ -156,6 +181,35 @@ export function ModalGenerarPlanilla({ empleadosActivos, periodosExistentes, def
           {yaExiste && (
             <div style={{ fontSize: 11.5, color: 'var(--wine)', marginBottom: 10 }}>
               Ya existe un período para Q{quincena}-{MESES[mes - 1]}-{anio}. Elegí otro.
+            </div>
+          )}
+
+          {totalNoGolden > 0 && (
+            <div style={{
+              marginBottom: 12,
+              border: '1px solid var(--amber)',
+              background: 'var(--amber-bg)',
+              borderRadius: 'var(--r-2)',
+              padding: '10px 12px',
+              fontSize: 12,
+              color: 'var(--ink-2)',
+              lineHeight: 1.5,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--ink)', marginBottom: 4 }}>
+                <I.Alert size={13} style={{ color: 'var(--amber)' }} />
+                Incluye {totalNoGolden} {totalNoGolden === 1 ? 'persona' : 'personas'} de otras empresas
+              </div>
+              <div style={{ fontSize: 11.5 }}>
+                {desgloseNoGolden.map((d, i) => (
+                  <span key={d.empresa}>
+                    {i > 0 && ' · '}
+                    <strong>{d.cantidad}</strong> de {d.empresa} ({Q(d.monto)})
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>
+                Su costo no es nómina de Golden — son intercompany. La separación contable del asiento queda para F-056.
+              </div>
             </div>
           )}
 

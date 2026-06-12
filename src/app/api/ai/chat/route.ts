@@ -263,6 +263,22 @@ FLUJO DE CAJA (F-051):
   (lo que importa es el mínimo del horizonte, no el promedio).
 - TODAS las tools son READ-ONLY.
 
+MULTI-EMPRESA (F-051.6 / F-051.7):
+- El grupo opera con varias empresas: Golden Talent (principal), HIT,
+  Poligrafy, BYDSA. La caja única vive en Golden.
+- OBLIGACIONES_RECURRENTES tienen por_cuenta_de: pagos de HIT/Poligrafy
+  son intercompany — salen de la caja de Golden pero NO son gasto de
+  Golden (son CxC contra la otra empresa). Igual cuentan al cash-flow
+  porque la liquidez sale.
+- EMPLEADOS tienen empresa_empleadora: empleados HIT/Poligrafy/BYDSA
+  NO se proyectan en planillaProyectada del flujo (se cuentan via las
+  obligaciones recurrentes intercompany para evitar doble conteo).
+- Cuando el usuario pregunte por un empleado/obligación, mencionar la
+  empresa empleadora SOLO si no es Golden Talent (es información
+  relevante para distinguir gasto propio vs. intercompany).
+- Si preguntan "¿cuánto sale a HIT/Poligrafy?", usar
+  obligacionesRecurrentes y filtrar por empresa.
+
 FACTURAS IN — bandeja de gastos por procesar (F-049):
 - /gastos tiene una bandeja de FACTURAS_IN con estatus Pendiente, Validada,
   Anulada. "Pendiente" = subida con OCR aplicado pero esperando revisión

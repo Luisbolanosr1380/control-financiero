@@ -22,6 +22,11 @@ import {
   type Antiguedad,
   type ProvisionesAcumuladas,
 } from '../calculos/planilla';
+import {
+  normalizarEmpresa,
+  EMPRESA_EMPLEADORA_FIELD_NAME,
+  type EmpresaEmpleadora,
+} from '../empleados/empresa';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -74,6 +79,12 @@ export interface Empleado {
   provisionesAcumuladas: ProvisionesAcumuladas;
   salariosPendientes: SalariosPendientes;
 
+  /**
+   * F-051.7: empresa que emplea contractualmente al colaborador.
+   * Vacío en Airtable → Golden Talent (legacy).
+   */
+  empresaEmpleadora: EmpresaEmpleadora;
+
   tieneDatosCompletos: boolean;
   alertas: string[];
 }
@@ -84,6 +95,8 @@ export interface EmpleadosFiltros {
   centroCostoId?: string;
   search?: string;
   conSalariosPendientes?: boolean;
+  /** F-051.7: filtra por empresa empleadora. 'todas' = no filtra. */
+  empresa?: EmpresaEmpleadora | 'todas';
 }
 
 /* ============================================================
@@ -117,6 +130,8 @@ const FE = {
   FECHA_SAL:    'Fecha_Salida',
   MOTIVO_SAL:   'Motivo_Salida',
   ACREEDOR_VIN: 'Acreedor_Vinculado',
+  // F-051.7: empresa empleadora (singleSelect). Default Golden Talent.
+  EMPRESA:      EMPRESA_EMPLEADORA_FIELD_NAME,
 } as const;
 
 const arrFirst = (v: unknown): string => Array.isArray(v) ? String(v[0] ?? '') : '';
@@ -233,6 +248,7 @@ export async function getEmpleados(filtros: EmpleadosFiltros = {}): Promise<Empl
         antiguedad,
         provisionesAcumuladas,
         salariosPendientes,
+        empresaEmpleadora: normalizarEmpresa(f[FE.EMPRESA]),
         tieneDatosCompletos,
         alertas,
       };
@@ -244,6 +260,7 @@ export async function getEmpleados(filtros: EmpleadosFiltros = {}): Promise<Empl
     if (filtros.departamento)                          r = r.filter(e => e.departamento === filtros.departamento);
     if (filtros.centroCostoId)                         r = r.filter(e => e.centroCostoId === filtros.centroCostoId);
     if (filtros.conSalariosPendientes)                 r = r.filter(e => e.salariosPendientes.cantidad > 0);
+    if (filtros.empresa && filtros.empresa !== 'todas') r = r.filter(e => e.empresaEmpleadora === filtros.empresa);
     if (filtros.search?.trim()) {
       const q = filtros.search.toLowerCase();
       r = r.filter(e =>

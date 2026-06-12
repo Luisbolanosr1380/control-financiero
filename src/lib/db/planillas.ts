@@ -883,7 +883,7 @@ export async function getKPIsPagosPendientes(): Promise<KPIsPagosPendientes> {
 export interface PreviewGeneracion {
   cantidadEmpleados: number;
   montoEstimado: number;
-  empleados: Array<Pick<Empleado, 'id' | 'nombre' | 'salarioBase'> & { netoEstimado: number }>;
+  empleados: Array<Pick<Empleado, 'id' | 'nombre' | 'salarioBase' | 'empresaEmpleadora'> & { netoEstimado: number }>;
 }
 
 export async function previewGeneracion(): Promise<PreviewGeneracion> {
@@ -892,7 +892,13 @@ export async function previewGeneracion(): Promise<PreviewGeneracion> {
   const detalle = empleados.map(emp => {
     const calc = calcularQuincena({ empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase } });
     monto += calc.netoPagar;
-    return { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase, netoEstimado: calc.netoPagar };
+    return {
+      id: emp.id,
+      nombre: emp.nombre,
+      salarioBase: emp.salarioBase,
+      empresaEmpleadora: emp.empresaEmpleadora,
+      netoEstimado: calc.netoPagar,
+    };
   });
   return {
     cantidadEmpleados: empleados.length,

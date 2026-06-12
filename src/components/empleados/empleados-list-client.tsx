@@ -7,6 +7,12 @@ import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { HelpButton } from '@/components/ayuda/help-button';
 import { ModalEmpleadoForm } from './modal-empleado-form';
+import {
+  EMPRESAS_EMPLEADORAS,
+  EMPRESA_BADGE_COLOR,
+  esGolden,
+  type EmpresaEmpleadora,
+} from '@/lib/empleados/empresa';
 import type {
   Empleado,
   KPIsPlanilla,
@@ -38,6 +44,7 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
   const [statusFiltro, setStatusFiltro]   = useState<'todos' | 'ACTIVO' | 'INACTIVO'>('todos');
   const [departamento, setDepartamento]   = useState('');
   const [centroId, setCentroId]           = useState('');
+  const [empresaFiltro, setEmpresaFiltro] = useState<EmpresaEmpleadora | 'todas'>('todas');
   const [search, setSearch]               = useState('');
   const [soloConPendientes, setSoloPend]  = useState(false);
   const [openCrear, setOpenCrear]         = useState(false);
@@ -80,6 +87,7 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
     }
     if (departamento) r = r.filter(e => e.departamento === departamento);
     if (centroId)     r = r.filter(e => e.centroCostoId === centroId);
+    if (empresaFiltro !== 'todas') r = r.filter(e => e.empresaEmpleadora === empresaFiltro);
     if (soloConPendientes) r = r.filter(e => e.salariosPendientes.cantidad > 0);
     if (search.trim()) {
       const q = search.toLowerCase();
@@ -90,7 +98,16 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
       );
     }
     return r;
-  }, [empleados, statusFiltro, departamento, centroId, soloConPendientes, search]);
+  }, [empleados, statusFiltro, departamento, centroId, empresaFiltro, soloConPendientes, search]);
+
+  // F-051.7: contador por empresa sobre el set BASE (sin filtros aplicados),
+  // para que el header refleje cuántos hay en total por empresa.
+  const conteosPorEmpresa = useMemo(() => {
+    const m = new Map<EmpresaEmpleadora, number>();
+    for (const e of empleados) m.set(e.empresaEmpleadora, (m.get(e.empresaEmpleadora) ?? 0) + 1);
+    return EMPRESAS_EMPLEADORAS.map(emp => ({ empresa: emp, cantidad: m.get(emp) ?? 0 }))
+      .filter(x => x.cantidad > 0);
+  }, [empleados]);
 
   return (
     <div className="page">
@@ -185,6 +202,10 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
             <option value="">Centro (todos)</option>
             {centros.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
           </select>
+          <select value={empresaFiltro} onChange={(e) => setEmpresaFiltro(e.target.value as EmpresaEmpleadora | 'todas')} style={selectStyle}>
+            <option value="todas">Empresa (todas)</option>
+            {EMPRESAS_EMPLEADORAS.map(emp => <option key={emp} value={emp}>{emp}</option>)}
+          </select>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ink-3)' }}>
             <input type="checkbox" checked={soloConPendientes} onChange={(e) => setSoloPend(e.target.checked)} />
             Con salarios pendientes
@@ -198,8 +219,19 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
 
       {/* Tabla */}
       <div className="card">
-        <div className="card-head">
+        <div className="card-head" style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div className="card-title">{filtrados.length} empleado{filtrados.length === 1 ? '' : 's'}</div>
+          {conteosPorEmpresa.length > 1 && (
+            <span style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
+              {conteosPorEmpresa.map(({ empresa, cantidad }, i) => (
+                <span key={empresa}>
+                  {i > 0 && ' · '}
+                  <strong style={{ color: 'var(--ink-2)', fontWeight: 500 }}>{cantidad}</strong>{' '}
+                  {empresa}
+                </span>
+              ))}
+            </span>
+          )}
         </div>
         <table className="table">
           <thead>
@@ -225,7 +257,25 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
               const inactivo    = e.status !== 'ACTIVO';
               return (
                 <tr key={e.id} className="clickable" onClick={() => router.push(`/empleados/${e.id}`)} style={{ opacity: inactivo ? 0.6 : 1 }}>
-                  <td className="cell-strong">{e.nombre}</td>
+                  <td className="cell-strong">
+                    {e.nombre}
+                    {!esGolden(e.empresaEmpleadora) && (
+                      <span style={{
+                        marginLeft: 6,
+                        display: 'inline-block',
+                        padding: '1px 6px',
+                        fontSize: 10,
+                        fontWeight: 500,
+                        letterSpacing: '0.04em',
+                        color: EMPRESA_BADGE_COLOR[e.empresaEmpleadora].fg,
+                        background: EMPRESA_BADGE_COLOR[e.empresaEmpleadora].bg,
+                        borderRadius: 4,
+                        verticalAlign: 'middle',
+                      }} title={`Empresa empleadora: ${e.empresaEmpleadora}`}>
+                        {e.empresaEmpleadora}
+                      </span>
+                    )}
+                  </td>
                   <td className="cell-mute">{e.departamento}</td>
                   <td className="cell-mute" style={{ whiteSpace: 'nowrap' }}>{e.antiguedad.textoLegible}</td>
                   <td className="num cell-strong">{Q(e.salarioMensual)}</td>

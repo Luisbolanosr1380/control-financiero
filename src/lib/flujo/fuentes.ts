@@ -17,6 +17,7 @@
 import { airtable } from '@/lib/db/airtable';
 import { getGastos } from '@/lib/db/gastos';
 import { getDeudas } from '@/lib/db/deudas';
+import { getEmpleados } from '@/lib/db/empleados';
 import { getPeriodos, getLineasPlanilla } from '@/lib/db/planillas';
 import { TABLES } from '@/lib/db/airtable';
 import { F } from '@/lib/db/mappers';
@@ -24,6 +25,7 @@ import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { sumarDias } from './proyectar-recurrentes';
 import type { EventoFlujo } from './types';
 import type { PrioridadObligacion } from '@/lib/airtable/obligaciones-recurrentes-fields';
+import { esGolden, EMPRESA_EMPLEADORA_DEFAULT } from '@/lib/empleados/empresa';
 
 const pad2 = (n: number) => String(n).padStart(2, '0');
 
@@ -121,24 +123,41 @@ export async function pagosDesdeDeudas(fechaDesde: string, fechaHasta: string): 
 /* ============================================================
  * c) Planilla proyectada — quincenas días 15 y último de cada mes
  *
- * V1: monto = NETO_PAGAR total de la última quincena con `estadoPago ∈
- * {Pagado, Diferido}` (o la última con cualquier línea registrada). Si no
- * hay planilla previa, intentamos sumar los `costoTotalMensual` de
- * empleados activos / 2. Si tampoco eso, devolvemos [].
+ * V1: monto = NETO_PAGAR total de la última quincena con líneas, FILTRADO
+ * a empleados Golden Talent. Los empleados HIT/Poligrafy/BYDSA NO entran
+ * acá — su quincena se modela como obligación recurrente intercompany
+ * (F-051.6). Sin filtro, se contarían DOBLE en el horizonte.
+ *
+ * Si la planilla más reciente no tiene líneas Golden con monto, devolvemos
+ * 0 y la proyección de planilla queda vacía. Mejor sub-estimar que doblar.
  * ============================================================ */
 
 async function obtenerMontoQuincenaReferencia(): Promise<number> {
   try {
-    const periodos = await getPeriodos({ estado: 'todos' });
+    const [periodos, empleados] = await Promise.all([
+      getPeriodos({ estado: 'todos' }),
+      getEmpleados({ status: 'todos' }),
+    ]);
     if (periodos.length === 0) return 0;
-    // Más reciente por fecha de inicio, que ya tenga monto > 0.
-    const conMonto = periodos.filter(p => p.montoTotal > 0);
-    conMonto.sort((a, b) => (b.fechaInicio || '').localeCompare(a.fechaInicio || ''));
-    if (conMonto.length > 0) return conMonto[0].montoTotal;
-    // Fallback: tomar el más reciente y sumar netos manualmente.
-    periodos.sort((a, b) => (b.fechaInicio || '').localeCompare(a.fechaInicio || ''));
-    const lineas = await getLineasPlanilla(periodos[0].id);
-    return lineas.reduce((s, l) => s + l.netoPagar, 0);
+
+    // F-051.7: mapa empleadoId → empresa (vacío == Golden por convención).
+    const empresaPorEmpleado = new Map(empleados.map(e => [e.id, e.empresaEmpleadora]));
+    const esLineaGolden = (empleadoId: string) =>
+      esGolden(empresaPorEmpleado.get(empleadoId) ?? EMPRESA_EMPLEADORA_DEFAULT);
+
+    // Recorremos períodos del más reciente al más viejo y devolvemos el
+    // primer NETO_PAGAR total > 0 sumando SOLO líneas Golden.
+    const ordenados = [...periodos].sort(
+      (a, b) => (b.fechaInicio || '').localeCompare(a.fechaInicio || ''),
+    );
+    for (const p of ordenados) {
+      const lineas = await getLineasPlanilla(p.id);
+      const totalGolden = lineas
+        .filter(l => esLineaGolden(l.empleadoId))
+        .reduce((s, l) => s + l.netoPagar, 0);
+      if (totalGolden > 0) return totalGolden;
+    }
+    return 0;
   } catch (err) {
     console.warn('F-051 obtenerMontoQuincenaReferencia falló:', err instanceof Error ? err.message : err);
     return 0;

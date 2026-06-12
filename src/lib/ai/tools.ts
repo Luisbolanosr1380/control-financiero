@@ -930,6 +930,8 @@ export const aiTools = {
           nombre: e.nombre,
           status: e.status,
           departamento: e.departamento,
+          // F-051.7: empresa empleadora — HIT / Poligrafy / BYDSA = intercompany.
+          empresaEmpleadora: e.empresaEmpleadora,
           fechaIngreso: e.fechaIngreso,
           antiguedad: e.antiguedad.textoLegible,
           salarioMensual: e.salarioMensual,
@@ -946,6 +948,7 @@ export const aiTools = {
   getEmpleadosPorDepartamento: tool({
     description:
       'Lista de empleados activos por departamento, con costo individual y antigüedad. ' +
+      'F-051.7: incluye empresa_empleadora — distingue Golden Talent de intercompany (HIT/Poligrafy/BYDSA). ' +
       'USAR cuando el usuario pregunte "¿quiénes están en X departamento?", "lista de operaciones / ventas / etc".',
     parameters: z.object({
       departamento: z.string().describe('Nombre exacto o parcial del departamento.'),
@@ -954,14 +957,20 @@ export const aiTools = {
       const empleados = await getEmpleados();
       const q = input.departamento.toLowerCase();
       const matches = empleados.filter(e => e.status === 'ACTIVO' && e.departamento.toLowerCase().includes(q));
+      // F-051.7: desglose por empresa para responder "de los N de operaciones,
+      // cuántos son Golden vs intercompany".
+      const porEmpresa = new Map<string, number>();
+      for (const e of matches) porEmpresa.set(e.empresaEmpleadora, (porEmpresa.get(e.empresaEmpleadora) ?? 0) + 1);
       return {
         departamentoBuscado: input.departamento,
         cantidad: matches.length,
+        por_empresa: Object.fromEntries(porEmpresa),
         empleados: matches.map(e => ({
           nombre: e.nombre,
           antiguedad: e.antiguedad.textoLegible,
           salarioMensual: e.salarioMensual,
           costoTotalMensual: e.costoTotalMensual,
+          empresaEmpleadora: e.empresaEmpleadora,
         })),
       };
     },
@@ -984,6 +993,7 @@ export const aiTools = {
         empleados: empleados.map(e => ({
           nombre: e.nombre,
           departamento: e.departamento,
+          empresaEmpleadora: e.empresaEmpleadora,
           salariosPendientesQ: Math.round(e.salariosPendientes.total),
           numQuincenas: e.salariosPendientes.cantidad,
           deudaIds: e.salariosPendientes.deudaIds,
