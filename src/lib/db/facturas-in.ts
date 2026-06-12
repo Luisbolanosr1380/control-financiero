@@ -92,6 +92,8 @@ export interface FacturasInFiltros {
   estatus?: EstatusFacturaIn;
   subidoPor?: string;
   limit?: number;
+  /** F-BF-002a: filtro por mes contable de la factura (YYYY-MM sobre FECHA_EMISION). */
+  mes?: string;
 }
 
 export async function getFacturasIn(filtros: FacturasInFiltros = {}): Promise<FacturaIn[]> {
@@ -116,6 +118,12 @@ export async function getFacturasIn(filtros: FacturasInFiltros = {}): Promise<Fa
       const h = filtros.hasta;
       lista = lista.filter(f => (f.fechaSubida || '').slice(0, 10) <= h);
     }
+    // F-BF-002a: filtro por mes contable (FECHA_EMISION YYYY-MM) — alinea
+    // semántica con el selector global y con /facturacion.
+    if (filtros.mes) {
+      const m = filtros.mes;
+      lista = lista.filter(f => (f.fechaEmision || '').slice(0, 7) === m);
+    }
     if (filtros.limit && filtros.limit > 0) lista = lista.slice(0, filtros.limit);
 
     return lista;
@@ -139,8 +147,8 @@ export async function getFacturaInPorId(id: string): Promise<FacturaIn | null> {
 }
 
 /** Top N facturas más recientes (default 50, suficiente para la primera vista). */
-export async function getFacturasInRecientes(limit = 50): Promise<FacturaIn[]> {
-  return getFacturasIn({ limit });
+export async function getFacturasInRecientes(limit = 50, mes?: string): Promise<FacturaIn[]> {
+  return getFacturasIn({ limit, mes });
 }
 
 export interface KPIsFacturasIn {

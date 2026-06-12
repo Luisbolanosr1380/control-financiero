@@ -86,26 +86,32 @@ function brutoFromEstado(estado: unknown): InvoiceEstadoBruto {
  * separados, mismo criterio que consolidateRecords). Pensada para los headers
  * agregados de F-033 — ~890 records → ~300-500ms.
  */
-export async function getFacturasLiviano(): Promise<InvoiceLiviano[]> {
+export async function getFacturasLiviano(args: { mes?: string } = {}): Promise<InvoiceLiviano[]> {
   if (USE_MOCK || !airtable) {
-    return MOCK_INVOICES.map(i => ({
-      id: i.id, noFactura: i.noFactura, custId: i.custId, total: i.total,
-      estadoBruto: i.estadoBruto, vencida: i.vencida,
-      numLineas: i.lineas?.length ?? 1,
-    }));
+    return MOCK_INVOICES
+      .filter(i => !args.mes || (i.fechaEmision ?? '').slice(0, 7) === args.mes)
+      .map(i => ({
+        id: i.id, noFactura: i.noFactura, custId: i.custId, total: i.total,
+        estadoBruto: i.estadoBruto, vencida: i.vencida,
+        numLineas: i.lineas?.length ?? 1,
+      }));
   }
   try {
     // F-034: sin maxRecords — `.all()` agota todas las páginas.
     // F-044 fail-soft: pedimos también los campos de auditoría para mostrar
     // el ✏️ en la lista. Si los campos aún no existen en Airtable, la query
     // falla con INVALID_FIELD_NAME; ahí caemos al set base y seguimos.
-    const FIELDS_BASE = [F.NO_FACTURA, F.TOTAL, F.ESTADO, F.ESTATUS_COBRANZA, F.CLIENTE];
+    // F-BF-002a: filtro server-side por mes (YYYY-MM) si viene.
+    const FIELDS_BASE = [F.NO_FACTURA, F.TOTAL, F.ESTADO, F.ESTATUS_COBRANZA, F.CLIENTE, F.FECHA_EMISION];
     const FIELDS_CON_AUDIT = [...FIELDS_BASE, F.EDITADO_POR, F.FECHA_ULTIMA_EDIT];
+    const filterByFormula = args.mes
+      ? `DATETIME_FORMAT({FECHA_EMISION}, 'YYYY-MM') = "${args.mes.replace(/"/g, '')}"`
+      : undefined;
     let records;
     try {
-      records = await airtable(TABLES.FACTURAS).select({ fields: FIELDS_CON_AUDIT }).all();
+      records = await airtable(TABLES.FACTURAS).select({ fields: FIELDS_CON_AUDIT, ...(filterByFormula ? { filterByFormula } : {}) }).all();
     } catch {
-      records = await airtable(TABLES.FACTURAS).select({ fields: FIELDS_BASE }).all();
+      records = await airtable(TABLES.FACTURAS).select({ fields: FIELDS_BASE, ...(filterByFormula ? { filterByFormula } : {}) }).all();
     }
 
     type Row = { id: string; fields: Record<string, unknown> };
@@ -229,12 +235,14 @@ export function predicadoFiltro(filtro: FiltroTabFactura | undefined) {
  * F-034: acepta `filtro` opcional para filtrar por tab al nivel de Airtable.
  * Una factura puede ser multi-línea: sobre-fetchea records para garantizar `limit` facturas.
  */
-export async function getFacturasPagina(args: { limit?: number; before?: string; filtro?: FiltroTabFactura } = {}): Promise<GetFacturasPaginaResult> {
+export async function getFacturasPagina(args: { limit?: number; before?: string; filtro?: FiltroTabFactura; mes?: string } = {}): Promise<GetFacturasPaginaResult> {
   const limit = args.limit ?? 50;
+  const mes = args.mes; // 'YYYY-MM' opcional (F-BF-002a)
 
   if (USE_MOCK || !airtable) {
     const mock = [...MOCK_INVOICES]
       .filter(predicadoFiltro(args.filtro))
+      .filter(i => !mes || (i.fechaEmision ?? '').slice(0, 7) === mes)
       .sort((a, b) => (b.fechaEmision ?? '').localeCompare(a.fechaEmision ?? ''));
     const filtered = args.before ? mock.filter(i => (i.fechaEmision ?? '') < args.before!) : mock;
     const page = filtered.slice(0, limit);
@@ -250,7 +258,7 @@ export async function getFacturasPagina(args: { limit?: number; before?: string;
     // records y el SDK pagina hasta agotar. Para 'todas'/'cobradas' mantenemos un cap
     // generoso por seguridad (no romper la primera carga si el dataset crece sin tope).
     const filtroFormula = filtroToFormula(args.filtro);
-    const conFiltroEstrecho = !!filtroFormula;
+    const conFiltroEstrecho = !!filtroFormula || !!mes;
     const overFetch = conFiltroEstrecho ? undefined : Math.min(5000, limit * 4 + 100);
     const select: Parameters<ReturnType<typeof airtable>['select']>[0] = {
       sort: [{ field: 'FECHA_EMISION', direction: 'desc' }],
@@ -258,6 +266,12 @@ export async function getFacturasPagina(args: { limit?: number; before?: string;
     if (overFetch) select.maxRecords = overFetch;
     const partes: string[] = [];
     if (filtroFormula) partes.push(filtroFormula);
+    if (mes) {
+      // F-BF-002a: comparación YYYY-MM directa sobre FECHA_EMISION.
+      // DATETIME_FORMAT respeta el valor del campo Date sin convertir TZ.
+      const mesEsc = mes.replace(/"/g, '');
+      partes.push(`DATETIME_FORMAT({FECHA_EMISION}, 'YYYY-MM') = "${mesEsc}"`);
+    }
     if (args.before) {
       const beforeEsc = args.before.replace(/"/g, '');
       partes.push(`IS_BEFORE({FECHA_EMISION}, DATETIME_PARSE("${beforeEsc}"))`);

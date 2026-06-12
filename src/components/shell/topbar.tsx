@@ -3,6 +3,7 @@
 import { I } from '@/components/common/icons';
 import { UserButton } from '@clerk/nextjs';
 import { usePathname } from 'next/navigation';
+import { PeriodPicker } from './period-picker';
 
 interface TopbarProps {
   aiOpen: boolean;
@@ -47,9 +48,7 @@ export function Topbar({ aiOpen, setAiOpen, onSearch }: TopbarProps) {
         ))}
       </div>
 
-      <div className="period-picker">
-        <I.Calendar size={13} /> Mayo 2026 <I.ChevDown size={13} />
-      </div>
+      <PeriodPicker />
 
       <button className="global-search" onClick={onSearch}>
         <I.Search size={14} />

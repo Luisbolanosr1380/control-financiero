@@ -14,9 +14,11 @@ interface Props {
   initialUltimaFecha: string | null;
   cobrosCompletos: CobroListado[];
   clientes: Customer[];
+  /** F-BF-002a: mes activo del selector global (YYYY-MM). */
+  mesActivo?: string;
 }
 
-export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFecha, cobrosCompletos, clientes }: Props) {
+export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFecha, cobrosCompletos, clientes, mesActivo }: Props) {
   const [cobros, setCobros] = useState<CobroListado[]>(initialCobros);
   const [hayMas, setHayMas] = useState(initialHayMas);
   const [ultimaFecha, setUltimaFecha] = useState<string | null>(initialUltimaFecha);
@@ -54,7 +56,7 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
     if (!ultimaFecha || cargandoMas) return;
     setCargandoMas(true);
     try {
-      const res = await cargarMasCobrosAction(ultimaFecha, 50);
+      const res = await cargarMasCobrosAction(ultimaFecha, 50, mesActivo);
       setCobros(prev => {
         const vistos = new Set(prev.map(c => c.key));
         const nuevos = res.cobros.filter(c => !vistos.has(c.key));

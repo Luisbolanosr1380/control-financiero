@@ -126,9 +126,11 @@ interface Props {
   clientes: Customer[];
   initialTab?: FacturasTab;
   ncsActivasAnio?: number;   // F-045
+  /** F-BF-002a: mes activo del selector global (YYYY-MM). */
+  mesActivo?: string;
 }
 
-export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes, initialTab = 'todas', ncsActivasAnio = 0 }: Props) {
+export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes, initialTab = 'todas', ncsActivasAnio = 0, mesActivo }: Props) {
   const router = useRouter();
   // F-034: el tab manda en URL — el componente se re-monta vía key={tab} cuando
   // cambia, así initialInvoices ya viene del server filtrado por el tab activo.
@@ -145,7 +147,12 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
 
   const cambiarTab = (t: FacturasTab) => {
     if (t === tab) return;
-    router.push(t === 'todas' ? '/facturacion' : `/facturacion?tab=${t}`, { scroll: false });
+    // F-BF-002a: preservar `mes` y demás params al cambiar de tab.
+    const params = new URLSearchParams();
+    if (t !== 'todas') params.set('tab', t);
+    if (mesActivo) params.set('mes', mesActivo);
+    const qs = params.toString();
+    router.push(qs ? `/facturacion?${qs}` : '/facturacion', { scroll: false });
   };
 
   // F-033: counts y sumas se computan SIEMPRE sobre el dataset liviano completo
@@ -167,7 +174,7 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
     if (!ultimaFecha || cargandoMas) return;
     setCargandoMas(true);
     try {
-      const res = await cargarMasFacturasAction(ultimaFecha, 50, tab);
+      const res = await cargarMasFacturasAction(ultimaFecha, 50, tab, mesActivo);
       setFacturas(prev => {
         const vistos = new Set(prev.map(i => i.noFactura));
         const nuevos = res.invoices.filter(i => !vistos.has(i.noFactura));

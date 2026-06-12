@@ -197,20 +197,30 @@ function consolidarCobros(raws: RawCobro[], bancoNombreById: Map<string, string>
   return out;
 }
 
-export async function getCobrosPagina(args: { limit?: number; before?: string } = {}): Promise<GetCobrosPaginaResult> {
+export async function getCobrosPagina(args: { limit?: number; before?: string; mes?: string } = {}): Promise<GetCobrosPaginaResult> {
   const limit = args.limit ?? 50;
   if (USE_MOCK || !airtable) return { cobros: [], hayMas: false, ultimaFecha: null };
 
   try {
-    const overFetch = Math.min(2000, limit * 3 + 50);
+    // F-BF-002a: si hay filtro de mes, sacamos el cap de overFetch — el
+    // dataset queda acotado al mes y la página simple lo cubre.
+    const conFiltro = !!args.mes;
+    const overFetch = conFiltro ? undefined : Math.min(2000, limit * 3 + 50);
     const select: Parameters<ReturnType<typeof airtable>['select']>[0] = {
       sort: [{ field: FC_READ.FECHA, direction: 'desc' }],
-      maxRecords: overFetch,
     };
+    if (overFetch) select.maxRecords = overFetch;
+    const partes: string[] = [];
+    if (args.mes) {
+      const mesEsc = args.mes.replace(/"/g, '');
+      partes.push(`DATETIME_FORMAT({${FC_READ.FECHA}}, 'YYYY-MM') = "${mesEsc}"`);
+    }
     if (args.before) {
       const esc = args.before.replace(/"/g, '');
-      select.filterByFormula = `IS_BEFORE({${FC_READ.FECHA}}, DATETIME_PARSE("${esc}"))`;
+      partes.push(`IS_BEFORE({${FC_READ.FECHA}}, DATETIME_PARSE("${esc}"))`);
     }
+    if (partes.length === 1) select.filterByFormula = partes[0];
+    else if (partes.length > 1) select.filterByFormula = `AND(${partes.join(',')})`;
     const [records, bancos] = await Promise.all([
       airtable(TABLES.COBROS).select(select).all(),
       getBancos(),
@@ -235,13 +245,21 @@ export async function getCobrosPagina(args: { limit?: number; before?: string } 
  * NOTA: getCobros() devuelve mock data por compatibilidad histórica; esta
  * función es la que hay que usar para datos reales.
  */
-export async function getCobrosCompletos(): Promise<CobroListado[]> {
+export async function getCobrosCompletos(args: { mes?: string } = {}): Promise<CobroListado[]> {
   if (USE_MOCK || !airtable) return [];
   try {
+    // F-BF-002a: filtro opcional por mes (YYYY-MM) sobre Fecha_Cobro.
+    const select: Parameters<ReturnType<typeof airtable>['select']>[0] = {
+      sort: [{ field: FC_READ.FECHA, direction: 'desc' }],
+    };
+    if (args.mes) {
+      const mesEsc = args.mes.replace(/"/g, '');
+      select.filterByFormula = `DATETIME_FORMAT({${FC_READ.FECHA}}, 'YYYY-MM') = "${mesEsc}"`;
+    } else {
+      select.maxRecords = 5000;
+    }
     const [records, bancos] = await Promise.all([
-      airtable(TABLES.COBROS)
-        .select({ sort: [{ field: FC_READ.FECHA, direction: 'desc' }], maxRecords: 5000 })
-        .all(),
+      airtable(TABLES.COBROS).select(select).all(),
       getBancos(),
     ]);
     const bancoNombreById = new Map(bancos.map(b => [b.id, b.nombreCuenta || b.banco || b.id]));

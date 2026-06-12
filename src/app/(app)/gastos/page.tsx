@@ -6,10 +6,15 @@ import { Q } from '@/lib/utils';
 import { UploadFacturas } from './_components/UploadFacturas';
 import { FacturasInList } from './_components/FacturasInList';
 import { HelpButton } from '@/components/ayuda/help-button';
+import { parseMesParam, etiquetaMes } from '@/lib/utils/mes-activo';
 
 export const revalidate = 30;
 
-export default async function GastosPage() {
+export default async function GastosPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ mes?: string }>;
+}) {
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
   const rol = getRolUsuario(email);
@@ -20,8 +25,12 @@ export default async function GastosPage() {
     redirect('/no-acceso');
   }
 
+  const { mes: mesRaw } = await searchParams;
+  // F-BF-002a: respeta el selector global de mes (filtra por FECHA_EMISION).
+  const mes = parseMesParam(mesRaw);
+
   const [facturas, kpis] = await Promise.all([
-    getFacturasInRecientes(200),
+    getFacturasInRecientes(500, mes),
     getKPIsFacturasIn(),
   ]);
 
@@ -34,7 +43,7 @@ export default async function GastosPage() {
             <HelpButton tag="modulo-gastos" />
           </h1>
           <div className="page-subtitle">
-            Captura, OCR y bandeja de revisión. La validación final vendrá en F-050.
+            Bandeja de {etiquetaMes(mes)} · captura, OCR y revisión.
           </div>
         </div>
       </div>
