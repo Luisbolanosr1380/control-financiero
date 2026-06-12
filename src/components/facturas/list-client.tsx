@@ -8,7 +8,8 @@ import { LINES } from '@/lib/mock-data';
 import { cargarMasFacturasAction } from '@/app/(app)/facturacion/actions';
 import { HelpButton } from '@/components/ayuda/help-button';
 import type { Invoice, Customer } from '@/lib/types';
-import { predicadoFiltro, type InvoiceLiviano, type FiltroTabFactura } from '@/lib/db/facturas';
+import { predicadoFiltro, type InvoiceLiviano, type FiltroTabFactura, type TopClienteMes } from '@/lib/db/facturas';
+import { etiquetaMes } from '@/lib/utils/mes-activo';
 
 // F-034: nueva estructura de tabs. "Por cobrar" es solo EMITIDA (sin PENDIENTE).
 // "Cartera total" agrupa EMITIDA + PENDIENTE (todo lo no cobrado). Stark prefiere
@@ -118,6 +119,105 @@ function CarteraTotalSummary({ facturas }: { facturas: { total: number; estadoBr
   );
 }
 
+/* =========================================================================
+ * F-BF-002b — TOP CLIENTES DEL MES
+ * Card compacta debajo de los tabs. Click en cliente → filtra la tabla
+ * (setea el search a su nombre, que ya filtra por noFactura | cliente).
+ * ========================================================================= */
+
+function TopClientesCard({
+  items, totalMesQ, mesActivo, onPickCliente,
+}: {
+  items: TopClienteMes[];
+  totalMesQ: number;
+  mesActivo: string;
+  onPickCliente: (nombre: string) => void;
+}) {
+  const maxMonto = items[0]?.montoQ ?? 0;
+  return (
+    <div className="card" style={{ marginBottom: 16, padding: '12px 14px' }}>
+      <div style={{
+        display: 'flex', alignItems: 'baseline', justifyContent: 'space-between',
+        marginBottom: 10,
+      }}>
+        <div style={{
+          fontSize: 11, fontWeight: 500,
+          textTransform: 'uppercase', letterSpacing: '0.08em',
+          color: 'var(--ink-4)',
+        }}>
+          Top clientes · {etiquetaMes(mesActivo)}
+        </div>
+        {totalMesQ > 0 && (
+          <div style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
+            Total del mes: <span className="num" style={{ color: 'var(--ink-2)', fontWeight: 500 }}>{Q(totalMesQ)}</span>
+          </div>
+        )}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {items.map((c, i) => {
+          const ancho = maxMonto > 0 ? Math.max(2, (c.montoQ / maxMonto) * 100) : 0;
+          return (
+            <button
+              key={c.custId}
+              type="button"
+              onClick={() => onPickCliente(c.nombre)}
+              title={`${c.numFacturas} factura${c.numFacturas === 1 ? '' : 's'} de ${c.nombre} · click filtra la tabla`}
+              style={{
+                all: 'unset',
+                cursor: 'pointer',
+                display: 'grid',
+                gridTemplateColumns: '22px minmax(0, 1fr) auto 1fr 56px',
+                gap: 10,
+                alignItems: 'center',
+                padding: '4px 6px',
+                borderRadius: 4,
+                fontSize: 12.5,
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--paper-tint)'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <span style={{ color: 'var(--ink-4)', fontVariantNumeric: 'tabular-nums', fontSize: 11.5 }}>
+                {i + 1}.
+              </span>
+              <span style={{
+                color: 'var(--ink)',
+                whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+              }}>
+                {c.nombreCorto}
+              </span>
+              <span className="num" style={{ color: 'var(--ink-2)', fontWeight: 500, minWidth: 86, textAlign: 'right' }}>
+                {Q(c.montoQ)}
+              </span>
+              <span style={{
+                height: 6,
+                background: 'var(--line-3)',
+                borderRadius: 3,
+                position: 'relative',
+                overflow: 'hidden',
+              }}>
+                <span style={{
+                  position: 'absolute', left: 0, top: 0, bottom: 0,
+                  width: `${ancho}%`,
+                  background: 'var(--olive)',
+                  borderRadius: 3,
+                }} />
+              </span>
+              <span style={{ color: 'var(--ink-3)', fontSize: 11.5, textAlign: 'right' }}>
+                {c.porcentaje.toFixed(1)}%
+              </span>
+            </button>
+          );
+        })}
+        {items.length === 0 && (
+          <div style={{ fontSize: 12, color: 'var(--ink-4)', textAlign: 'center', padding: 12 }}>
+            Sin facturas para {etiquetaMes(mesActivo)}.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 interface Props {
   initialInvoices: Invoice[];
   initialHayMas: boolean;
@@ -128,9 +228,17 @@ interface Props {
   ncsActivasAnio?: number;   // F-045
   /** F-BF-002a: mes activo del selector global (YYYY-MM). */
   mesActivo?: string;
+  /** F-BF-002b: top clientes del mes — calculado server-side, sin tocar Airtable. */
+  topClientes?: TopClienteMes[];
+  /** F-BF-002b: facturado total del mes (sin anuladas/refacturadas), denominador del %. */
+  totalMesQ?: number;
 }
 
-export function FacturasListClient({ initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes, initialTab = 'todas', ncsActivasAnio = 0, mesActivo }: Props) {
+export function FacturasListClient({
+  initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes,
+  initialTab = 'todas', ncsActivasAnio = 0, mesActivo,
+  topClientes = [], totalMesQ = 0,
+}: Props) {
   const router = useRouter();
   // F-034: el tab manda en URL — el componente se re-monta vía key={tab} cuando
   // cambia, así initialInvoices ya viene del server filtrado por el tab activo.
@@ -270,6 +378,16 @@ export function FacturasListClient({ initialInvoices, initialHayMas, initialUlti
           </button>
         ))}
       </div>
+
+      {/* F-BF-002b: Top clientes del mes — siempre visible, refleja el mes activo. */}
+      {topClientes.length > 0 && mesActivo && (
+        <TopClientesCard
+          items={topClientes}
+          totalMesQ={totalMesQ}
+          mesActivo={mesActivo}
+          onPickCliente={(nombre) => setSearch(nombre)}
+        />
+      )}
 
       {/* Sub-totales por tab (sobre livianas = universo completo). */}
       {tab === 'por_cobrar'    && <PorCobrarSummary facturas={facturasLivianas} />}

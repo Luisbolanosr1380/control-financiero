@@ -12,7 +12,8 @@
  */
 import { tool } from 'ai';
 import { z } from 'zod';
-import { getFacturas, getHistorialEdicionesFactura } from '@/lib/db/facturas';
+import { getFacturas, getHistorialEdicionesFactura, getFacturasLiviano, computeTopClientesDelMes } from '@/lib/db/facturas';
+import { etiquetaMes } from '@/lib/utils/mes-activo';
 import {
   getNotasCredito,
   getNotasCreditoPendientesAprobacion,
@@ -1737,6 +1738,38 @@ export const aiTools = {
           prioridad: o.prioridad,
           por_cuenta_de: o.porCuentaDe,
           mensual_equivalente_Q: Math.round(o.montoEstimado * factorMensual(o.frecuencia)),
+        })),
+      };
+    },
+  }),
+
+  topClientesDelMes: tool({
+    description:
+      'F-BF-002b: ranking de clientes por facturación de un mes específico. ' +
+      'Excluye facturas ANULADO y REFACTURADO. Devuelve top N con monto Q, ' +
+      '% del total del mes y cantidad de facturas. ' +
+      'USAR cuando el usuario pregunte "¿quiénes facturaron más en mayo?", "top clientes del mes", ' +
+      '"cliente más grande de junio".',
+    parameters: z.object({
+      mes: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).describe('Mes en formato YYYY-MM (ej: "2026-05").'),
+      topN: z.number().int().positive().max(20).default(5),
+    }),
+    execute: async ({ mes, topN }) => {
+      const [livianas, clientes] = await Promise.all([
+        getFacturasLiviano({ mes }),
+        getClientes(),
+      ]);
+      const r = computeTopClientesDelMes(livianas, clientes, topN);
+      return {
+        mes,
+        mes_legible: etiquetaMes(mes),
+        total_mes_Q: Math.round(r.totalMesQ),
+        cantidad_facturas: r.cantidadFacturas,
+        top: r.items.map(c => ({
+          cliente: c.nombre,
+          monto_Q: Math.round(c.montoQ),
+          num_facturas: c.numFacturas,
+          pct_del_mes: Number(c.porcentaje.toFixed(1)),
         })),
       };
     },

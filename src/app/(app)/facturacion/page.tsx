@@ -1,4 +1,4 @@
-import { getFacturasPagina, getFacturasLiviano, type FiltroTabFactura } from '@/lib/db/facturas';
+import { getFacturasPagina, getFacturasLiviano, computeTopClientesDelMes, type FiltroTabFactura } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { getKPIsNotasCredito } from '@/lib/db/notas-credito';
 import { FacturasListClient, type FacturasTab } from '@/components/facturas/list-client';
@@ -27,6 +27,8 @@ export default async function FacturacionPage({
     getClientes(),
     getKPIsNotasCredito(),   // F-045: para mostrar facturado bruto vs neto
   ]);
+  // F-BF-002b: top clientes del mes (no toca Airtable — usa el dataset liviano).
+  const topClientes = computeTopClientesDelMes(livianas, clientes, 5);
   return (
     <FacturasListClient
       key={`${initialTab}|${mes}`}
@@ -37,6 +39,8 @@ export default async function FacturacionPage({
       clientes={clientes}
       initialTab={initialTab}
       mesActivo={mes}
+      topClientes={topClientes.items}
+      totalMesQ={topClientes.totalMesQ}
       ncsActivasAnio={ncsKpis.montoActivasAnio}
     />
   );

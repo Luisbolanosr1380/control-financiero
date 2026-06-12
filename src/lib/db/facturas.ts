@@ -164,6 +164,59 @@ export async function getFacturasLiviano(args: { mes?: string } = {}): Promise<I
   }
 }
 
+/* ===== F-BF-002b: Top clientes del mes seleccionado ===== */
+
+export interface TopClienteMes {
+  custId: string;
+  nombre: string;
+  /** Para truncado elegante en la UI: short del Customer. */
+  nombreCorto: string;
+  /** SUM(TOTAL) en GTQ, excluyendo anuladas y refacturadas. */
+  montoQ: number;
+  numFacturas: number;
+  /** Participación 0-100 sobre el total facturado del mes. */
+  porcentaje: number;
+}
+
+/**
+ * Top N clientes por facturación del mes. Recibe el dataset liviano YA
+ * filtrado al mes (server-side via getFacturasLiviano({mes})) — no
+ * vuelve a tocar Airtable. Excluye estado bruto 'anulado' y 'refacturado'
+ * para reflejar facturación neta del mes.
+ */
+export function computeTopClientesDelMes(
+  livianas: InvoiceLiviano[],
+  clientes: { id: string; name: string; short?: string }[],
+  topN = 5,
+): { items: TopClienteMes[]; totalMesQ: number; cantidadFacturas: number } {
+  const validas = livianas.filter(i => i.estadoBruto !== 'anulado' && i.estadoBruto !== 'refacturado');
+  const totalMesQ = validas.reduce((s, i) => s + i.total, 0);
+  const byId = new Map<string, { monto: number; n: number }>();
+  for (const i of validas) {
+    const k = i.custId || '__sin_cliente__';
+    const b = byId.get(k) ?? { monto: 0, n: 0 };
+    b.monto += i.total;
+    b.n += 1;
+    byId.set(k, b);
+  }
+  const nameById = new Map(clientes.map(c => [c.id, { name: c.name, short: c.short || c.name }]));
+  const items: TopClienteMes[] = [...byId.entries()]
+    .map(([custId, v]) => {
+      const meta = nameById.get(custId);
+      return {
+        custId,
+        nombre:      meta?.name  ?? custId,
+        nombreCorto: meta?.short ?? meta?.name ?? custId,
+        montoQ:      v.monto,
+        numFacturas: v.n,
+        porcentaje:  totalMesQ > 0 ? (v.monto / totalMesQ) * 100 : 0,
+      };
+    })
+    .sort((a, b) => b.montoQ - a.montoQ)
+    .slice(0, topN);
+  return { items, totalMesQ, cantidadFacturas: validas.length };
+}
+
 /* ===== Paginación (F-022 + F-034 filtros server-side por tab) ===== */
 
 export interface GetFacturasPaginaResult {
