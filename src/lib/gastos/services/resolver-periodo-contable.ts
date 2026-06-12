@@ -1,32 +1,47 @@
 /**
- * F-050 — Resuelve el período contable de una fecha respetando devengo.
+ * F-050 — Resuelve el período contable mensual de una fecha.
  *
- * Convención CFO: el asiento va al período de FECHA_EMISION (no al de
- * aprobación). Si ese período está EXPLÍCITAMENTE cerrado, se ajusta al
- * período actual y se documenta la nota en la descripción del asiento.
+ * Convención CFO: el asiento va al período "YYYY-MM" derivado de
+ * FECHA_EMISION (no al de aprobación).
+ *
+ * F-050.4 — semántica final (reemplaza el comportamiento original de
+ * "caer al período actual con nota de ajuste"):
+ *
+ *   1. Si el período "YYYY-MM" EXISTE y NO está cerrado → usarlo.
+ *   2. Si el período EXISTE y está CERRADO → error claro inmediato.
+ *      No se redirige a otro período, no se duplica, no se ajusta.
+ *      El usuario debe reabrir el período o aprobar el gasto contra
+ *      uno abierto si corresponde.
+ *   3. Si el período NO EXISTE → se crea automáticamente con estado
+ *      "Abierto" (typecast:true), fechas YYYY-MM-01 a último día del
+ *      mes, y se usa de inmediato. Mata el "primera factura del mes
+ *      siempre falla" — el problema que se repetía cada 1° del mes.
  *
  * Nomenclatura: `resolverPeriodoContable` para no colisionar con
- * `resolverPeriodo` (src/lib/db/periodos.ts) que calcula rangos para AI
- * tools. Semánticas distintas.
+ * `resolverPeriodo` (src/lib/db/periodos.ts) que calcula rangos para
+ * AI tools. Semánticas distintas.
  *
- * Semántica RESTRICTIVA del estado: la tabla PERIODOS es la misma que usa
- * planilla; sus estados ("En pago", "Pagado", etc.) son workflow operacional
- * de planilla, NO estado contable. Por eso solo bloqueamos cuando el estado
- * es literalmente "cerrado"/"closed". Cualquier otro valor (vacío, "abierto",
- * "activo", "en pago", "pagado", etc.) permite registrar asientos contables.
+ * Semántica RESTRICTIVA del estado: la tabla PERIODOS es la misma que
+ * usa planilla; sus estados ("En pago", "Pagado", etc.) son workflow
+ * operacional de planilla, NO estado contable. Por eso solo bloqueamos
+ * cuando el estado es literalmente "cerrado"/"closed". Cualquier otro
+ * valor (vacío, "abierto", "activo", "en pago", "pagado", etc.) permite
+ * registrar asientos contables.
+ *
+ * Concurrencia (caso borde): si dos aprobaciones simultáneas detectan
+ * el período como inexistente, ambas intentarían crearlo. Mitigamos
+ * con una re-lectura inmediata antes del create (ventana en
+ * milisegundos, no segundos). Si aún así se cuela un duplicado por
+ * race más estrecho que la latencia de Airtable, queda como cleanup
+ * manual — el sistema sigue funcionando porque ambos registros son
+ * válidos para escribir asientos.
  */
 
 import { airtable } from '@/lib/db/airtable';
-import { notaAjustePeriodo } from './composer-descripcion';
 
-/**
- * F-050 — la tabla PERIODOS es COMPARTIDA con planilla (no hay separación
- * contable vs. operacional). Hardcodeamos el ID literal para no depender de
- * `TABLES.PERIODOS` y dejar explícito que es la misma tabla.
- */
 const PERIODOS_TABLE_ID = 'tblag6GLysk6erzlU';
 const PERIODOS_FIELDS = {
-  periodo:      'fldf4hhgArYRTpBmB',  // primary, ej "Q1-junio-2026"
+  periodo:      'fldf4hhgArYRTpBmB',  // primary, ej "2026-06"
   fecha_inicio: 'fldOhtnrlZayciWDx',
   fecha_fin:    'fldVzilClkgkJmQng',
   estado:       'fld3yjofU7JcJbl3Q',
@@ -42,31 +57,22 @@ function esEstadoCerrado(valor: string): boolean {
 export interface PeriodoResolucion {
   recordId: string;
   nombrePeriodo: string;
+  /**
+   * F-050.4: con la nueva semántica este flag siempre es `false` —
+   * ya no caemos al período actual con nota de ajuste. Lo conservamos
+   * en la interface por compat de los call-sites existentes.
+   */
   ajustado: boolean;
+  /** F-050.4: nunca se llena con la semántica actual. Se conserva por compat. */
   notaAjuste?: string;
 }
 
-/** Extrae el "YYYY-MM" de una fecha YYYY-MM-DD sin shift UTC. */
+/** Extrae el "YYYY-MM" de una fecha YYYY-MM-DD. Comparación de strings, sin Date (F-041). */
 function periodoDeFecha(fechaIso: string): string {
   if (!/^\d{4}-\d{2}-\d{2}/.test(fechaIso)) {
     throw new Error(`Fecha inválida: "${fechaIso}" (esperado YYYY-MM-DD).`);
   }
   return fechaIso.slice(0, 7);
-}
-
-/** Devuelve el "YYYY-MM" del mes actual en hora Guatemala. */
-function periodoActualGT(): string {
-  // Reusamos obtenerFechaHoyGuatemala via import dinámico para evitar
-  // dependencia top-level innecesaria (este servicio es server-only y la
-  // función de fechas vive en utils/fechas.ts).
-  // Constructor local: cero UTC shift (lección F-041).
-  const now = new Date();
-  // America/Guatemala = UTC-6 fija. Convertimos restando 6h del epoch y
-  // tomando getUTCFullYear/Month sobre ese pivot.
-  const guate = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-  const y = guate.getUTCFullYear();
-  const m = String(guate.getUTCMonth() + 1).padStart(2, '0');
-  return `${y}-${m}`;
 }
 
 interface PeriodoRow {
@@ -75,6 +81,11 @@ interface PeriodoRow {
   abierto: boolean;
 }
 
+/**
+ * Lee TODOS los períodos por field ID (regla F-050.2: nunca
+ * filterByFormula con field IDs — devuelve 0 records silencioso).
+ * Filtramos en JS por nombre exacto.
+ */
 async function listarPeriodos(): Promise<PeriodoRow[]> {
   if (!airtable) throw new Error('Airtable no está configurado.');
   const records = await airtable(PERIODOS_TABLE_ID)
@@ -91,15 +102,14 @@ async function listarPeriodos(): Promise<PeriodoRow[]> {
 }
 
 /**
- * F-050.4: crea un período abierto para el mes dado. Usa typecast:true
- * para que la opción "Abierto" del singleSelect se auto-cree si todavía
- * no existe (la tabla la comparte planilla, que tiene su propio set de
- * estados — el typecast la deja con todos los valores conviviendo).
+ * F-050.4: crea un período "Abierto" para el mes "YYYY-MM" dado.
  *
- * Las fechas se construyen con `new Date(year, monthIdx + 1, 0)` que
- * devuelve el último día del mes anterior al especificado (día 0 del
- * mes siguiente = último del actual). Constructor local, sin shift UTC
- * (lección F-041).
+ * Fechas: constructor local `new Date(y, m, 0)` = día 0 del mes
+ * siguiente = último día del mes actual. Sin shift UTC (F-041).
+ *
+ * typecast:true: la tabla PERIODOS la comparte planilla — su set de
+ * opciones del singleSelect puede no incluir "Abierto". typecast
+ * la auto-crea sin romper.
  */
 async function crearPeriodoAbierto(nombre: string): Promise<PeriodoRow> {
   if (!airtable) throw new Error('Airtable no está configurado.');
@@ -117,7 +127,7 @@ async function crearPeriodoAbierto(nombre: string): Promise<PeriodoRow> {
     [PERIODOS_FIELDS.fecha_inicio]: fechaInicio,
     [PERIODOS_FIELDS.fecha_fin]:    fechaFin,
     [PERIODOS_FIELDS.estado]:       'Abierto',
-    [PERIODOS_FIELDS.notas]:        'Auto-creado por F-050 al procesar factura del período',
+    [PERIODOS_FIELDS.notas]:        'Creado automáticamente por el sistema (F-050.4)',
   };
 
   const created = (await (airtable(PERIODOS_TABLE_ID).create as unknown as (
@@ -128,36 +138,37 @@ async function crearPeriodoAbierto(nombre: string): Promise<PeriodoRow> {
   return { id: created[0].id, nombre, abierto: true };
 }
 
-/** Busca un período por nombre. Si no existe, lo crea abierto. */
-async function obtenerOCrearPeriodo(nombre: string, indice: Map<string, PeriodoRow>): Promise<PeriodoRow> {
-  const existente = indice.get(nombre);
-  if (existente) return existente;
-  return crearPeriodoAbierto(nombre);
-}
-
 export async function resolverPeriodoContable(fechaEmision: string): Promise<PeriodoResolucion> {
   const objetivo = periodoDeFecha(fechaEmision);
+
+  // 1) Primer intento de lectura.
   const periodos = await listarPeriodos();
-  const byNombre = new Map(periodos.map(p => [p.nombre, p]));
+  const existente = periodos.find(p => p.nombre === objetivo);
 
-  // F-050.4: si el período del mes de emisión no existe, lo auto-creamos
-  // abierto. Solo bloqueamos cuando existe y está explícitamente cerrado.
-  const original = await obtenerOCrearPeriodo(objetivo, byNombre);
-  if (original.abierto) {
-    return { recordId: original.id, nombrePeriodo: original.nombre, ajustado: false };
+  if (existente) {
+    if (!existente.abierto) {
+      throw new Error(
+        `El período ${objetivo} está cerrado — no se pueden registrar gastos en él.`,
+      );
+    }
+    return { recordId: existente.id, nombrePeriodo: existente.nombre, ajustado: false };
   }
 
-  // El período de la fecha está cerrado → fallback al actual con nota de ajuste.
-  // El actual también se auto-crea si no existe (caso típico tras un cierre).
-  const actualNombre = periodoActualGT();
-  const actual = actualNombre === objetivo ? original : await obtenerOCrearPeriodo(actualNombre, byNombre);
-  if (!actual.abierto) {
-    throw new Error(`El período actual "${actualNombre}" está cerrado. No hay dónde devengar la factura.`);
+  // 2) No existe — re-leer inmediatamente antes de crear para mitigar la
+  //    ventana de race entre dos aprobaciones simultáneas. Si la otra
+  //    request lo creó en este ínterin, lo reutilizamos.
+  const periodos2 = await listarPeriodos();
+  const reaparecido = periodos2.find(p => p.nombre === objetivo);
+  if (reaparecido) {
+    if (!reaparecido.abierto) {
+      throw new Error(
+        `El período ${objetivo} está cerrado — no se pueden registrar gastos en él.`,
+      );
+    }
+    return { recordId: reaparecido.id, nombrePeriodo: reaparecido.nombre, ajustado: false };
   }
-  return {
-    recordId: actual.id,
-    nombrePeriodo: actual.nombre,
-    ajustado: true,
-    notaAjuste: notaAjustePeriodo(objetivo, actual.nombre),
-  };
+
+  // 3) Crear el período abierto y usarlo de inmediato.
+  const creado = await crearPeriodoAbierto(objetivo);
+  return { recordId: creado.id, nombrePeriodo: creado.nombre, ajustado: false };
 }
