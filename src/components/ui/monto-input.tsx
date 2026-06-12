@@ -119,8 +119,10 @@ export function MontoInput({
         <span
           aria-hidden
           style={{
-            position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)',
-            fontSize: 12, color: 'var(--ink-3)', fontWeight: 500, pointerEvents: 'none',
+            position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+            fontSize: 13, color: 'var(--ink-4)', fontWeight: 500,
+            pointerEvents: 'none', userSelect: 'none',
+            fontFamily: 'var(--mono, ui-monospace)',
           }}
         >
           {prefix}
@@ -139,9 +141,12 @@ export function MontoInput({
         placeholder={placeholder}
         className={className ?? 'input'}
         style={{
+          // F-051.5: el spread va PRIMERO y el paddingLeft después para que
+          // siempre se respete el espacio reservado al prefix, sin importar
+          // qué padding traiga el `style` del caller.
           width: '100%',
-          paddingLeft: prefix ? 22 : undefined,
           ...style,
+          paddingLeft: prefix ? 28 : (style?.paddingLeft as string | number | undefined),
         }}
         id={id}
         name={name}
@@ -211,8 +216,10 @@ export function EnteroInput({
         <span
           aria-hidden
           style={{
-            position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)',
-            fontSize: 12, color: 'var(--ink-3)', fontWeight: 500, pointerEvents: 'none',
+            position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)',
+            fontSize: 13, color: 'var(--ink-4)', fontWeight: 500,
+            pointerEvents: 'none', userSelect: 'none',
+            fontFamily: 'var(--mono, ui-monospace)',
           }}
         >
           {prefix}
@@ -233,8 +240,8 @@ export function EnteroInput({
         className={className ?? 'input'}
         style={{
           width: '100%',
-          paddingLeft: prefix ? 22 : undefined,
           ...style,
+          paddingLeft: prefix ? 28 : (style?.paddingLeft as string | number | undefined),
         }}
         id={id}
         name={name}
