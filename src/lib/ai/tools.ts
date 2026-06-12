@@ -18,7 +18,9 @@ import {
   computeTopClientesRango,
   resolverClienteAmbiguo,
   resumenFacturadoCliente,
+  resolverLineasNegocio,
 } from '@/lib/facturacion/top-clientes';
+import { getCentrosCosto } from '@/lib/db/centros';
 import {
   getNotasCredito,
   getNotasCreditoPendientesAprobacion,
@@ -1782,57 +1784,117 @@ export const aiTools = {
 
   topClientes: tool({
     description:
-      'F-BF-002c: ranking de clientes por facturación en un RANGO arbitrario [desde, hasta] ' +
+      'F-BF-002c/d: ranking de clientes por facturación en un RANGO arbitrario [desde, hasta] ' +
       '(ambos YYYY-MM-DD, inclusive). Excluye facturas ANULADO y REFACTURADO del cálculo, ' +
-      'pero reporta `num_anuladas` aparte. Devuelve top N con monto, % del total del rango, ' +
-      'y cantidad de facturas válidas. ' +
-      'USAR para preguntas como "top 5 del último trimestre", "mejores clientes del año", ' +
-      '"ranking marzo-mayo", "top de las últimas 6 semanas". ' +
-      'El LLM deriva el rango del lenguaje natural: "mayo" → 2026-05-01..2026-05-31; ' +
-      '"este año" → 2026-01-01..hoy; "último trimestre" → últimos 3 meses calendario completos. ' +
-      'Para un solo mes exacto, preferir topClientesDelMes.',
+      'pero reporta `num_anuladas` aparte. ' +
+      '\n\nF-BF-002d — filtro por LÍNEA DE NEGOCIO (centro de costo): si el usuario menciona una ' +
+      'o más líneas (polígrafos, socioeconómicos, talenttrack, ventas, etc.), pasar `lineas`. ' +
+      'Match parcial sin acentos: "poligrafos" → "Poligrafia", "socio" → "Socioeconomicos", ' +
+      '"talenttrack"/"tt" → "TalentTrackAI". Si se pasan VARIAS líneas, se devuelve un ranking ' +
+      'POR CADA línea (no mezclado), cada uno con su total y top. Una factura multi-servicio ' +
+      'aporta SOLO la porción correspondiente a cada CC (no su TOTAL completo). ' +
+      'Si alguna línea no matchea, se devuelve `lineas_no_resueltas` con candidatos. ' +
+      '\n\nUSAR para "top 5 del último trimestre", "mejores clientes en socioeconomicos", ' +
+      '"top 3 en polígrafos y socio de mayo". Para un solo mes exacto SIN línea, ' +
+      'usar topClientesDelMes.',
     parameters: z.object({
       desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('Fecha inicial inclusive YYYY-MM-DD.'),
       hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('Fecha final inclusive YYYY-MM-DD.'),
       limite: z.number().int().positive().max(10).default(5).describe('Cantidad de clientes top a devolver (1-10).'),
+      lineas: z.array(z.string().min(2)).optional()
+        .describe('F-BF-002d: nombres de líneas de negocio a filtrar (centros de costo). Si se omite, agrega todas las líneas.'),
     }),
-    execute: async ({ desde, hasta, limite }) => {
+    execute: async ({ desde, hasta, limite, lineas }) => {
       if (desde > hasta) return { ok: false, error: 'desde > hasta', rango: { desde, hasta } };
-      const [livianas, clientes] = await Promise.all([
+
+      const [livianas, clientes, centros] = await Promise.all([
         getFacturasLiviano({ desde, hasta }),
         getClientes(),
+        getCentrosCosto(),
       ]);
-      const r = computeTopClientesRango(livianas, clientes, limite);
+
+      // F-BF-002d: sin `lineas` el comportamiento es el de antes (un solo ranking).
+      if (!lineas || lineas.length === 0) {
+        const r = computeTopClientesRango(livianas, clientes, limite);
+        return {
+          rango: { desde, hasta },
+          total_facturado_rango_Q: Math.round(r.totalFacturadoRango),
+          num_facturas_validas:    r.numFacturasValidas,
+          num_anuladas:            r.numAnuladas,
+          top: r.items.map(c => ({
+            cliente:       c.nombre,
+            monto_Q:       Math.round(c.montoQ),
+            num_facturas:  c.numFacturas,
+            pct_del_rango: Number(c.porcentaje.toFixed(1)),
+          })),
+        };
+      }
+
+      // Resolver nombres → IDs.
+      const res = resolverLineasNegocio(lineas, centros);
+      const noResueltas = res.porInput.filter(p => !p.ok);
+
+      // Si NINGUNA matcheó, no podemos calcular nada útil: devolver las disponibles.
+      if (res.centroCostoIds.length === 0) {
+        return {
+          ok: false,
+          motivo: 'lineas_no_resueltas',
+          rango: { desde, hasta },
+          lineas_no_resueltas: noResueltas.map(p => ({ input: p.input, candidatos: p.candidatos })),
+          lineas_disponibles:  res.disponibles,
+        };
+      }
+
+      // Un ranking por línea matched. Cada uno con su total/top propios.
+      const matched = res.porInput.filter(p => p.ok);
+      const rankings = matched.map(line => {
+        const r = computeTopClientesRango(livianas, clientes, limite, [line.centroCostoId]);
+        return {
+          linea:                   line.centroCostoNombre,
+          centroCostoId:           line.centroCostoId,
+          total_facturado_linea_Q: Math.round(r.totalFacturadoRango),
+          num_facturas_validas:    r.numFacturasValidas,
+          num_anuladas:            r.numAnuladas,
+          top: r.items.map(c => ({
+            cliente:       c.nombre,
+            monto_Q:       Math.round(c.montoQ),
+            num_facturas:  c.numFacturas,
+            pct_de_linea:  Number(c.porcentaje.toFixed(1)),
+          })),
+        };
+      });
+
       return {
         rango: { desde, hasta },
-        total_facturado_rango_Q: Math.round(r.totalFacturadoRango),
-        num_facturas_validas: r.numFacturasValidas,
-        num_anuladas: r.numAnuladas,
-        top: r.items.map(c => ({
-          cliente:        c.nombre,
-          monto_Q:        Math.round(c.montoQ),
-          num_facturas:   c.numFacturas,
-          pct_del_rango:  Number(c.porcentaje.toFixed(1)),
-        })),
+        lineas: matched.map(p => p.centroCostoNombre),
+        rankings,
+        lineas_no_resueltas: noResueltas.length > 0
+          ? noResueltas.map(p => ({ input: p.input, candidatos: p.candidatos }))
+          : undefined,
       };
     },
   }),
 
   facturadoCliente: tool({
     description:
-      'F-BF-002c: cuánto se facturó a un cliente específico en un rango [desde, hasta]. ' +
+      'F-BF-002c/d: cuánto se facturó a un cliente específico en un rango [desde, hasta]. ' +
       'Match parcial case-insensitive sobre el nombre (quita acentos: "genesis" matchea "GÉNESIS"). ' +
       'Si el match es ambiguo, devuelve la lista de candidatos para que el usuario desambigüe. ' +
       'Excluye anuladas/refacturadas del total pero reporta cuántas hubo. ' +
+      '\n\nF-BF-002d — `lineas` opcional: filtrar a una o varias líneas de negocio ' +
+      '(centros de costo). Si se pasa, suma SOLO la porción correspondiente a esos CCs. ' +
       'USAR para "¿cuánto le facturamos a X en abril?", "facturación de Génesis YTD", ' +
-      '"¿qué le emitimos a Banco Cuscatlán este trimestre?".',
+      '"¿qué le emitimos a Cuscatlán en polígrafos este año?".',
     parameters: z.object({
       nombreCliente: z.string().min(2).describe('Nombre o fragmento del cliente.'),
       desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
       hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      lineas: z.array(z.string().min(2)).optional()
+        .describe('F-BF-002d: nombres de líneas de negocio a filtrar (centros de costo).'),
     }),
-    execute: async ({ nombreCliente, desde, hasta }) => {
+    execute: async ({ nombreCliente, desde, hasta, lineas }) => {
       if (desde > hasta) return { ok: false, error: 'desde > hasta', rango: { desde, hasta } };
+
       const clientes = await getClientes();
       const m = resolverClienteAmbiguo(nombreCliente, clientes);
       if (!m.id) {
@@ -1842,15 +1904,44 @@ export const aiTools = {
           candidatos: m.candidatos,
         };
       }
-      const livianas = await getFacturasLiviano({ desde, hasta });
-      const r = resumenFacturadoCliente(m.id, livianas);
+
+      const [livianas, centros] = await Promise.all([
+        getFacturasLiviano({ desde, hasta }),
+        lineas && lineas.length > 0 ? getCentrosCosto() : Promise.resolve([]),
+      ]);
+
+      let centroCostoIds: string[] | undefined;
+      let lineas_resueltas: string[] | undefined;
+      let lineas_no_resueltas: Array<{ input: string; candidatos: Array<{ id: string; nombre: string }> }> | undefined;
+      if (lineas && lineas.length > 0) {
+        const res = resolverLineasNegocio(lineas, centros);
+        if (res.centroCostoIds.length === 0) {
+          return {
+            ok: false,
+            motivo: 'lineas_no_resueltas',
+            rango: { desde, hasta },
+            lineas_no_resueltas: res.porInput.filter(p => !p.ok).map(p => ({ input: p.input, candidatos: p.candidatos })),
+            lineas_disponibles:  res.disponibles,
+          };
+        }
+        centroCostoIds = res.centroCostoIds;
+        lineas_resueltas = res.porInput.filter(p => p.ok).map(p => (p as { centroCostoNombre: string }).centroCostoNombre);
+        const noRes = res.porInput.filter(p => !p.ok);
+        lineas_no_resueltas = noRes.length > 0
+          ? noRes.map(p => ({ input: p.input, candidatos: p.candidatos }))
+          : undefined;
+      }
+
+      const r = resumenFacturadoCliente(m.id, livianas, centroCostoIds);
       return {
         ok: true,
         cliente: { id: m.id, nombre: m.nombreEncontrado },
         rango: { desde, hasta },
+        lineas: lineas_resueltas,
         monto_Q:       Math.round(r.montoQ),
         num_facturas:  r.numFacturas,
         num_anuladas:  r.numAnuladas,
+        lineas_no_resueltas,
       };
     },
   }),

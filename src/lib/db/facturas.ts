@@ -66,6 +66,16 @@ export interface InvoiceLiviano {
   fechaUltimaEdicion?: string;
   /** F-044: email del último editor — usado en el tooltip del ✏️. */
   editadoPor?: string;
+  /**
+   * F-BF-002d: desglose de TOTAL por CENTRO_COSTO. Una factura multi-línea
+   * puede mezclar centros (poco frecuente, pero ocurre). Acá guardamos
+   * cuánto va a cada uno para poder filtrar por línea de negocio sin
+   * sobre-atribuir el TOTAL completo a un solo CC. Si una línea no tiene
+   * CC, su monto se agrupa bajo `''`.
+   *
+   * Sin filtro de líneas, los callers usan `total` como antes.
+   */
+  montoPorCC: Record<string, number>;
 }
 
 const norm = (e: unknown) => String(e ?? '').toUpperCase().trim();
@@ -93,11 +103,18 @@ export async function getFacturasLiviano(args: { mes?: string; desde?: string; h
       .filter(i => !args.mes   || (i.fechaEmision ?? '').slice(0, 7) === args.mes)
       .filter(i => !args.desde || (i.fechaEmision ?? '') >= args.desde)
       .filter(i => !args.hasta || (i.fechaEmision ?? '') <= args.hasta)
-      .map(i => ({
-        id: i.id, noFactura: i.noFactura, custId: i.custId, total: i.total,
-        estadoBruto: i.estadoBruto, vencida: i.vencida,
-        numLineas: i.lineas?.length ?? 1,
-      }));
+      .map(i => {
+        // F-BF-002d: el mock no tiene CC reales — atribuimos todo al
+        // bucket vacío así los filtros por CC devuelven 0 en mock,
+        // coherente con "no hay datos reales".
+        const montoPorCC: Record<string, number> = { '': i.total };
+        return {
+          id: i.id, noFactura: i.noFactura, custId: i.custId, total: i.total,
+          estadoBruto: i.estadoBruto, vencida: i.vencida,
+          numLineas: i.lineas?.length ?? 1,
+          montoPorCC,
+        };
+      });
   }
   try {
     // F-034: sin maxRecords — `.all()` agota todas las páginas.
@@ -106,7 +123,7 @@ export async function getFacturasLiviano(args: { mes?: string; desde?: string; h
     // falla con INVALID_FIELD_NAME; ahí caemos al set base y seguimos.
     // F-BF-002a/c: filtro server-side por mes (YYYY-MM) o por rango
     // [desde, hasta] sobre FECHA_EMISION. Si vienen ambos, se aplica AND.
-    const FIELDS_BASE = [F.NO_FACTURA, F.TOTAL, F.ESTADO, F.ESTATUS_COBRANZA, F.CLIENTE, F.FECHA_EMISION];
+    const FIELDS_BASE = [F.NO_FACTURA, F.TOTAL, F.ESTADO, F.ESTATUS_COBRANZA, F.CLIENTE, F.FECHA_EMISION, F.CENTRO_COSTO];
     const FIELDS_CON_AUDIT = [...FIELDS_BASE, F.EDITADO_POR, F.FECHA_ULTIMA_EDIT];
     const partes: string[] = [];
     if (args.mes) {
@@ -159,6 +176,17 @@ export async function getFacturasLiviano(args: { mes?: string; desde?: string; h
         && bucket.records.some(r => norm(r.fields[F.ESTATUS_COBRANZA]) === 'VENCIDA');
       const total = bucket.records.reduce((s, r) => s + Number(r.fields[F.TOTAL] ?? 0), 0);
 
+      // F-BF-002d: desglose de TOTAL por CENTRO_COSTO. CENTRO_COSTO es un
+      // linked record → string[]. Tomamos el primer id de cada línea
+      // (en este schema cada línea es 1 CC). Líneas sin CC → key vacío.
+      const montoPorCC: Record<string, number> = {};
+      for (const r of bucket.records) {
+        const ccArr = r.fields[F.CENTRO_COSTO] as string[] | undefined;
+        const ccId = Array.isArray(ccArr) && ccArr.length > 0 ? String(ccArr[0]) : '';
+        const monto = Number(r.fields[F.TOTAL] ?? 0);
+        montoPorCC[ccId] = (montoPorCC[ccId] ?? 0) + monto;
+      }
+
       out.push({
         id: principal.id,
         noFactura: String(principal.fields[F.NO_FACTURA] ?? principal.id),
@@ -167,6 +195,7 @@ export async function getFacturasLiviano(args: { mes?: string; desde?: string; h
         estadoBruto: brutoDominante,
         vencida,
         numLineas: bucket.records.length,
+        montoPorCC,
         editadoPor:         principal.fields[F.EDITADO_POR]       ? String(principal.fields[F.EDITADO_POR])       : undefined,
         fechaUltimaEdicion: principal.fields[F.FECHA_ULTIMA_EDIT] ? String(principal.fields[F.FECHA_ULTIMA_EDIT]) : undefined,
       });

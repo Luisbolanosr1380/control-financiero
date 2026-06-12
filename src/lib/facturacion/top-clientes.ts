@@ -54,24 +54,59 @@ function esAnuladaORefacturada(estadoBruto: string): boolean {
 }
 
 /**
+ * F-BF-002d: monto atribuible al filtro de centros de costo. Sin
+ * filtro, devuelve el TOTAL completo. Con filtro, suma solo las
+ * porciones de la factura cuyo CC esté en el set.
+ *
+ * Una factura puede tener líneas en varios CCs (multi-servicio): si
+ * filtramos por Polígrafos, solo entra el monto polígrafos, NO el
+ * total de la factura.
+ */
+function montoSegunFiltro(i: InvoiceLiviano, ccSet: Set<string> | null): number {
+  if (!ccSet) return i.total;
+  let s = 0;
+  for (const [cc, m] of Object.entries(i.montoPorCC)) {
+    if (ccSet.has(cc)) s += m;
+  }
+  return s;
+}
+
+/**
  * Calcula top N clientes a partir de las livianas ya filtradas al rango
  * deseado. Devuelve también el total del rango y los conteos de
  * válidas vs anuladas para que el caller (UI o Auros) dé contexto.
+ *
+ * F-BF-002d: `centroCostoIds` opcional — si viene, las facturas se
+ * agregan solo por su porción correspondiente a esos CCs. Facturas
+ * cuya porción filtrada sea 0 quedan fuera del cálculo (y de
+ * numFacturasValidas). Las anuladas/refacturadas se cuentan en
+ * numAnuladas si tienen al menos $1 atribuible al filtro.
  */
 export function computeTopClientesRango(
   livianas: InvoiceLiviano[],
   clientes: ClienteMin[],
   topN = 5,
+  centroCostoIds?: readonly string[],
 ): TopClientesResultado {
-  const validas  = livianas.filter(i => !esAnuladaORefacturada(i.estadoBruto));
-  const anuladas = livianas.filter(i =>  esAnuladaORefacturada(i.estadoBruto));
-  const totalFacturadoRango = validas.reduce((s, i) => s + i.total, 0);
+  const ccSet = centroCostoIds && centroCostoIds.length > 0 ? new Set(centroCostoIds) : null;
+
+  const validasConMonto = livianas
+    .filter(i => !esAnuladaORefacturada(i.estadoBruto))
+    .map(i => ({ i, monto: montoSegunFiltro(i, ccSet) }))
+    .filter(x => x.monto > 0);
+
+  const anuladasConMonto = livianas
+    .filter(i =>  esAnuladaORefacturada(i.estadoBruto))
+    .map(i => ({ i, monto: montoSegunFiltro(i, ccSet) }))
+    .filter(x => x.monto > 0);
+
+  const totalFacturadoRango = validasConMonto.reduce((s, x) => s + x.monto, 0);
 
   const byId = new Map<string, { monto: number; n: number }>();
-  for (const i of validas) {
+  for (const { i, monto } of validasConMonto) {
     const k = i.custId || '__sin_cliente__';
     const b = byId.get(k) ?? { monto: 0, n: 0 };
-    b.monto += i.total;
+    b.monto += monto;
     b.n += 1;
     byId.set(k, b);
   }
@@ -95,8 +130,8 @@ export function computeTopClientesRango(
   return {
     items,
     totalFacturadoRango,
-    numFacturasValidas: validas.length,
-    numAnuladas:        anuladas.length,
+    numFacturasValidas: validasConMonto.length,
+    numAnuladas:        anuladasConMonto.length,
   };
 }
 
@@ -138,17 +173,103 @@ export function resolverClienteAmbiguo(
 /**
  * Resumen de facturado a un cliente específico en el rango (usa los
  * mismos filtros: excluye anuladas/refacturadas).
+ *
+ * F-BF-002d: si `centroCostoIds` viene, suma solo la porción
+ * atribuible a esos CCs (consistente con computeTopClientesRango).
  */
 export function resumenFacturadoCliente(
   custId: string,
   livianas: InvoiceLiviano[],
+  centroCostoIds?: readonly string[],
 ): { montoQ: number; numFacturas: number; numAnuladas: number } {
+  const ccSet = centroCostoIds && centroCostoIds.length > 0 ? new Set(centroCostoIds) : null;
   const delCliente = livianas.filter(i => i.custId === custId);
-  const validas    = delCliente.filter(i => !esAnuladaORefacturada(i.estadoBruto));
-  const anuladas   = delCliente.filter(i =>  esAnuladaORefacturada(i.estadoBruto));
+
+  const validas = delCliente
+    .filter(i => !esAnuladaORefacturada(i.estadoBruto))
+    .map(i => montoSegunFiltro(i, ccSet))
+    .filter(m => m > 0);
+  const anuladas = delCliente
+    .filter(i =>  esAnuladaORefacturada(i.estadoBruto))
+    .map(i => montoSegunFiltro(i, ccSet))
+    .filter(m => m > 0);
+
   return {
-    montoQ:      validas.reduce((s, i) => s + i.total, 0),
+    montoQ:      validas.reduce((s, m) => s + m, 0),
     numFacturas: validas.length,
     numAnuladas: anuladas.length,
+  };
+}
+
+/* =========================================================================
+ * F-BF-002d — Resolución de "líneas de negocio" → centros de costo IDs.
+ * Match parcial case-insensitive sin acentos:
+ *  "poligrafos"        → "Poligrafia"
+ *  "socioeconomicos"   → "Socioeconomicos"
+ *  "talenttrack" / "tt"→ "TalentTrackAI"
+ *  "ventas"            → si existe un CC con "ventas" en el nombre
+ *
+ * Devolvemos los IDs resueltos + los nombres no encontrados (para que
+ * Auros pueda desambiguar mostrando los disponibles).
+ * ========================================================================= */
+
+interface CentroCostoMin {
+  id: string;
+  nombre: string;
+  activo?: boolean;
+}
+
+export interface LineasResueltas {
+  /** Por cada input del usuario, el resultado: matched (1 CC ganador) o lista de candidatos. */
+  porInput: Array<
+    | { input: string; ok: true;  centroCostoId: string; centroCostoNombre: string; candidatos?: never }
+    | { input: string; ok: false; centroCostoId?: never; centroCostoNombre?: never; candidatos: Array<{ id: string; nombre: string }> }
+  >;
+  /** Set de IDs efectivos (los matched). Si ninguno matcheó, vacío. */
+  centroCostoIds: string[];
+  /** Lista de centros activos para mostrar al usuario si hubo no-matched. */
+  disponibles: Array<{ id: string; nombre: string }>;
+}
+
+function normalizar(s: string): string {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+}
+
+export function resolverLineasNegocio(
+  inputs: readonly string[],
+  centros: readonly CentroCostoMin[],
+): LineasResueltas {
+  const activos = centros.filter(c => c.activo !== false);
+  const porNombre = activos.map(c => ({ id: c.id, nombre: c.nombre, norm: normalizar(c.nombre) }));
+
+  const porInput: LineasResueltas['porInput'] = [];
+  const ids = new Set<string>();
+
+  for (const raw of inputs) {
+    const q = normalizar(raw);
+    if (!q) continue;
+
+    // Exacto > startsWith > includes. También cubre el alias "tt" → talenttrack.
+    const exactos    = porNombre.filter(c => c.norm === q);
+    const startsWith = porNombre.filter(c => c.norm.startsWith(q));
+    const includes   = porNombre.filter(c => c.norm.includes(q) || q.includes(c.norm));
+
+    const ganador = exactos[0] ?? (startsWith.length === 1 ? startsWith[0] : undefined)
+                              ?? (includes.length   === 1 ? includes[0]   : undefined);
+
+    if (ganador) {
+      porInput.push({ input: raw, ok: true, centroCostoId: ganador.id, centroCostoNombre: ganador.nombre });
+      ids.add(ganador.id);
+    } else {
+      const candidatos = (startsWith.length ? startsWith : includes).slice(0, 6)
+        .map(c => ({ id: c.id, nombre: c.nombre }));
+      porInput.push({ input: raw, ok: false, candidatos });
+    }
+  }
+
+  return {
+    porInput,
+    centroCostoIds: [...ids],
+    disponibles: activos.map(c => ({ id: c.id, nombre: c.nombre })),
   };
 }
