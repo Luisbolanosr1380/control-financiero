@@ -9,9 +9,12 @@ import { airtable } from '@/lib/db/airtable';
 import {
   OBLIGACIONES_RECURRENTES_TABLE_ID,
   OBLIGACIONES_RECURRENTES_FIELDS as FO,
+  POR_CUENTA_DE_OPCIONES,
+  POR_CUENTA_DE_DEFAULT,
   type TipoObligacion,
   type FrecuenciaObligacion,
   type PrioridadObligacion,
+  type PorCuentaDe,
 } from '@/lib/airtable/obligaciones-recurrentes-fields';
 
 export interface ObligacionRecurrente {
@@ -35,6 +38,8 @@ export interface ObligacionRecurrente {
   fechaInicio?: string;
   /** F-051.2: si existe, la obligación no genera eventos después de esta fecha. */
   fechaFin?: string;
+  /** F-051.6: empresa que asume el pago (default Golden Talent). */
+  porCuentaDe: PorCuentaDe;
 }
 
 const arrFirst = (v: unknown): string | undefined => {
@@ -72,6 +77,12 @@ function prioridadFromAirtable(v: unknown): PrioridadObligacion {
   if (s === 'Crítica' || s === 'Alta' || s === 'Media' || s === 'Baja') return s;
   return 'Media';
 }
+function porCuentaDeFromAirtable(v: unknown): PorCuentaDe {
+  const s = selectStr(v);
+  return (POR_CUENTA_DE_OPCIONES as readonly string[]).includes(s)
+    ? (s as PorCuentaDe)
+    : POR_CUENTA_DE_DEFAULT;
+}
 
 function mapObligacion(rec: { id: string; fields: Record<string, unknown> }): ObligacionRecurrente {
   const f = rec.fields;
@@ -93,6 +104,7 @@ function mapObligacion(rec: { id: string; fields: Record<string, unknown> }): Ob
     notas:            String(f[FO.notas] ?? '').trim() || undefined,
     fechaInicio:      String(f[FO.fecha_inicio] ?? '').slice(0, 10) || undefined,
     fechaFin:         String(f[FO.fecha_fin] ?? '').slice(0, 10) || undefined,
+    porCuentaDe:      porCuentaDeFromAirtable(f[FO.por_cuenta_de]),
   };
 }
 

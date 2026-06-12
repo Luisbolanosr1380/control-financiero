@@ -54,8 +54,14 @@ function sumarMeses(anio: number, mesIdx0: number, dia: number, n: number): { an
 }
 
 function descripcionEvento(o: ObligacionRecurrente): string {
-  const sufijo = o.tipo === 'Otro' ? '' : ` (${o.tipo.toLowerCase()})`;
-  return `${o.nombre}${sufijo}`;
+  const partes: string[] = [o.nombre];
+  if (o.tipo !== 'Otro') partes.push(`(${o.tipo.toLowerCase()})`);
+  // F-051.6: cuando la obligación es intercompany, lo marcamos en la
+  // descripción para que se vea claro en el timeline.
+  if (o.porCuentaDe && o.porCuentaDe !== 'Golden Talent') {
+    partes.push(`(por ${o.porCuentaDe})`);
+  }
+  return partes.join(' ');
 }
 
 function eventoDesde(o: ObligacionRecurrente, fecha: string): EventoFlujo {
@@ -69,6 +75,7 @@ function eventoDesde(o: ObligacionRecurrente, fecha: string): EventoFlujo {
     esEstimado: true,
     linkId: o.id,
     linkTipo: 'obligacion',
+    porCuentaDe: o.porCuentaDe,
   };
 }
 

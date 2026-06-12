@@ -397,7 +397,25 @@ function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: 
             <tbody>
               {obligaciones.map(o => (
                 <tr key={o.id} style={{ borderBottom: '1px solid var(--line)' }}>
-                  <Td><span style={{ fontWeight: 500 }}>{o.nombre}</span></Td>
+                  <Td>
+                    <span style={{ fontWeight: 500 }}>{o.nombre}</span>
+                    {o.porCuentaDe && o.porCuentaDe !== 'Golden Talent' && (
+                      <span style={{
+                        marginLeft: 6,
+                        display: 'inline-block',
+                        padding: '1px 6px',
+                        fontSize: 10,
+                        fontWeight: 500,
+                        letterSpacing: '0.04em',
+                        color: 'var(--indigo)',
+                        background: 'var(--indigo-bg)',
+                        borderRadius: 4,
+                        verticalAlign: 'middle',
+                      }} title={`Intercompany — pago por cuenta de ${o.porCuentaDe}`}>
+                        por {o.porCuentaDe}
+                      </span>
+                    )}
+                  </Td>
                   <Td>{o.tipo}</Td>
                   <Td align="right" style={{ fontVariantNumeric: 'tabular-nums' }}>{Q(o.montoEstimado)}</Td>
                   <Td align="center">{o.diaPago}</Td>

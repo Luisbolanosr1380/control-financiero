@@ -1678,7 +1678,9 @@ export const aiTools = {
   obligacionesRecurrentes: tool({
     description:
       'F-051: lista las OBLIGACIONES_RECURRENTES activas con su monto mensual equivalente. ' +
-      'USAR cuando el usuario pregunte "cuáles son mis gastos fijos", "cuánto pago mensualmente recurrente", "qué tengo configurado como recurrente".',
+      'F-051.6: incluye desglose por empresa (por_cuenta_de): Golden Talent vs. intercompany (HIT/Poligrafy). ' +
+      'Los pagos intercompany SALEN de la caja de Golden pero contablemente no son gasto propio. ' +
+      'USAR cuando el usuario pregunte "cuáles son mis gastos fijos", "cuánto pago mensualmente recurrente", "qué tengo configurado como recurrente", "cuánto sale a HIT/Poligrafy".',
     parameters: z.object({}),
     execute: async () => {
       const todas = await getObligacionesRecurrentes(false);
@@ -1692,10 +1694,30 @@ export const aiTools = {
         return 1;
       };
       const totalMensual = activas.reduce((s, o) => s + o.montoEstimado * factorMensual(o.frecuencia), 0);
+
+      // F-051.6: desglose por empresa.
+      const porEmpresa = new Map<string, { cantidad: number; mensual_Q: number }>();
+      for (const o of activas) {
+        const k = o.porCuentaDe;
+        const b = porEmpresa.get(k) ?? { cantidad: 0, mensual_Q: 0 };
+        b.cantidad += 1;
+        b.mensual_Q += o.montoEstimado * factorMensual(o.frecuencia);
+        porEmpresa.set(k, b);
+      }
+      const desgloseEmpresa = [...porEmpresa.entries()]
+        .map(([empresa, v]) => ({
+          empresa,
+          cantidad: v.cantidad,
+          mensual_Q: Math.round(v.mensual_Q),
+          es_intercompany: empresa !== 'Golden Talent' && empresa !== 'Otra',
+        }))
+        .sort((a, b) => b.mensual_Q - a.mensual_Q);
+
       return {
         cantidad_total: todas.length,
         cantidad_activas: activas.length,
         total_mensual_Q: Math.round(totalMensual),
+        por_empresa: desgloseEmpresa,
         obligaciones: activas.map(o => ({
           nombre: o.nombre,
           tipo: o.tipo,
@@ -1703,6 +1725,7 @@ export const aiTools = {
           dia_pago: o.diaPago,
           frecuencia: o.frecuencia,
           prioridad: o.prioridad,
+          por_cuenta_de: o.porCuentaDe,
           mensual_equivalente_Q: Math.round(o.montoEstimado * factorMensual(o.frecuencia)),
         })),
       };

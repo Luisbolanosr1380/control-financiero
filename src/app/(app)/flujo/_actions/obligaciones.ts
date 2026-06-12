@@ -26,9 +26,12 @@ import {
   TIPOS_OBLIGACION,
   FRECUENCIAS_OBLIGACION,
   PRIORIDADES_OBLIGACION,
+  POR_CUENTA_DE_OPCIONES,
+  POR_CUENTA_DE_DEFAULT,
   type TipoObligacion,
   type FrecuenciaObligacion,
   type PrioridadObligacion,
+  type PorCuentaDe,
 } from '@/lib/airtable/obligaciones-recurrentes-fields';
 import {
   getObligacionesRecurrentes,
@@ -53,6 +56,8 @@ export interface ObligacionInput {
   /** F-051.2: vigencia opcional. YYYY-MM-DD. */
   fechaInicio?: string;
   fechaFin?: string;
+  /** F-051.6: empresa que asume el pago. Default Golden Talent. */
+  porCuentaDe?: PorCuentaDe;
 }
 
 export type ObligacionResult =
@@ -80,6 +85,9 @@ function validarInput(input: ObligacionInput): string | null {
   if (input.fechaInicio && input.fechaFin && input.fechaFin < input.fechaInicio) {
     return 'La fecha fin no puede ser anterior a la fecha inicio.';
   }
+  if (input.porCuentaDe && !POR_CUENTA_DE_OPCIONES.includes(input.porCuentaDe)) {
+    return `Por cuenta de inválido (${input.porCuentaDe}).`;
+  }
   return null;
 }
 
@@ -93,6 +101,8 @@ function fieldsDeInput(input: ObligacionInput): Record<string, unknown> {
     [FO.frecuencia]:     input.frecuencia,
     [FO.prioridad]:      input.prioridad,
     [FO.activo]:         input.activo ?? true,
+    // F-051.6: default Golden Talent si no se especifica.
+    [FO.por_cuenta_de]:  input.porCuentaDe ?? POR_CUENTA_DE_DEFAULT,
   };
   if (input.proveedorId)      f[FO.proveedor]       = [input.proveedorId];
   if (input.acreedorId)       f[FO.acreedor]        = [input.acreedorId];

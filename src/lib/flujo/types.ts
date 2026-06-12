@@ -8,7 +8,7 @@
  * Convención: `monto` SIEMPRE es positivo. El signo lo da `tipo`.
  */
 
-import type { PrioridadObligacion } from '@/lib/airtable/obligaciones-recurrentes-fields';
+import type { PrioridadObligacion, PorCuentaDe } from '@/lib/airtable/obligaciones-recurrentes-fields';
 
 export type TipoEvento = 'egreso' | 'ingreso';
 
@@ -34,6 +34,11 @@ export interface EventoFlujo {
   /** ID del record origen para navegar al detalle. */
   linkId?: string;
   linkTipo?: LinkTipoEvento;
+  /**
+   * F-051.6: empresa que asume el pago. Solo aplica a fuente='recurrente'.
+   * Para las otras fuentes queda undefined (no se modelan intercompany todavía).
+   */
+  porCuentaDe?: PorCuentaDe;
 }
 
 export interface DiaFlujo {

@@ -6,9 +6,12 @@ import {
   TIPOS_OBLIGACION,
   FRECUENCIAS_OBLIGACION,
   PRIORIDADES_OBLIGACION,
+  POR_CUENTA_DE_OPCIONES,
+  POR_CUENTA_DE_DEFAULT,
   type TipoObligacion,
   type FrecuenciaObligacion,
   type PrioridadObligacion,
+  type PorCuentaDe,
 } from '@/lib/airtable/obligaciones-recurrentes-fields';
 import type { ObligacionRecurrente } from '@/lib/flujo/obligaciones';
 import { MontoInput, EnteroInput } from '@/components/ui/monto-input';
@@ -41,6 +44,7 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
   const [diaPago, setDiaPago]             = useState<number | null>(obligacion?.diaPago ?? null);
   const [frecuencia, setFrecuencia]       = useState<FrecuenciaObligacion>(obligacion?.frecuencia ?? 'Mensual');
   const [prioridad, setPrioridad]         = useState<PrioridadObligacion>(obligacion?.prioridad ?? 'Media');
+  const [porCuentaDe, setPorCuentaDe]     = useState<PorCuentaDe>(obligacion?.porCuentaDe ?? POR_CUENTA_DE_DEFAULT);
   const [mesReferencia, setMesReferencia] = useState(obligacion?.mesReferencia ?? '');
   const [fechaInicio, setFechaInicio]     = useState(obligacion?.fechaInicio ?? '');
   const [fechaFin, setFechaFin]           = useState(obligacion?.fechaFin ?? '');
@@ -81,6 +85,7 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
       diaPago: diaPago!,
       frecuencia,
       prioridad,
+      porCuentaDe,
       mesReferencia: necesitaAncla && mesReferencia ? mesReferencia : undefined,
       fechaInicio: fechaInicio || '',
       fechaFin:    fechaFin    || '',
@@ -189,6 +194,19 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
               <PrioridadSegmented value={prioridad} onChange={setPrioridad} />
             </Field>
           </div>
+
+          <Field
+            label="Por cuenta de"
+            hint="HIT / Poligrafy = pago intercompany (sale de caja de Golden pero no es gasto propio)."
+          >
+            <select
+              value={porCuentaDe}
+              onChange={(e) => setPorCuentaDe(e.target.value as PorCuentaDe)}
+              style={inputStyle}
+            >
+              {POR_CUENTA_DE_OPCIONES.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </Field>
 
           {/* § MONTO Y CALENDARIO */}
           <SectionLabel>Monto y calendario</SectionLabel>

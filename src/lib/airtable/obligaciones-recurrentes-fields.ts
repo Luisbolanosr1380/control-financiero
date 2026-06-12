@@ -31,6 +31,10 @@ export const OBLIGACIONES_RECURRENTES_FIELDS = {
   // después. Ambos vacíos = sin límite.
   fecha_inicio:    'fldQ3NnQ3HL4tp3U2',  // date opcional
   fecha_fin:       'fldzXwVWjr1CgDqdU',  // date opcional
+  // F-051.6: empresa que asume el pago. HIT/Poligrafy son intercompany —
+  // la plata sale de la caja de Golden pero contablemente no es gasto
+  // propio (es CxC vs la otra empresa). Default Golden Talent.
+  por_cuenta_de:   'fldkuLXmo2MsBLaof',  // singleSelect
 } as const;
 
 export type TipoObligacion = 'Renta' | 'Servicio' | 'Tarjeta' | 'Seguro' | 'Suscripción' | 'Impuesto' | 'Otro';
@@ -47,3 +51,17 @@ export type PrioridadObligacion = 'Crítica' | 'Alta' | 'Media' | 'Baja';
 export const PRIORIDADES_OBLIGACION: readonly PrioridadObligacion[] = [
   'Crítica', 'Alta', 'Media', 'Baja',
 ];
+
+/**
+ * F-051.6: empresa que asume el pago.
+ * - "Golden Talent" → gasto propio (default).
+ * - "HIT" / "Poligrafy" → intercompany: la plata sale de la caja de
+ *   Golden pero contablemente es CxC contra la otra empresa, NO gasto.
+ *   El cash-flow planner igual lo cuenta porque la liquidez SÍ sale.
+ * - "Otra" → fallback genérico.
+ */
+export type PorCuentaDe = 'Golden Talent' | 'HIT' | 'Poligrafy' | 'Otra';
+export const POR_CUENTA_DE_OPCIONES: readonly PorCuentaDe[] = [
+  'Golden Talent', 'HIT', 'Poligrafy', 'Otra',
+];
+export const POR_CUENTA_DE_DEFAULT: PorCuentaDe = 'Golden Talent';
