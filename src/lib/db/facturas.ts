@@ -86,10 +86,13 @@ function brutoFromEstado(estado: unknown): InvoiceEstadoBruto {
  * separados, mismo criterio que consolidateRecords). Pensada para los headers
  * agregados de F-033 — ~890 records → ~300-500ms.
  */
-export async function getFacturasLiviano(args: { mes?: string } = {}): Promise<InvoiceLiviano[]> {
+export async function getFacturasLiviano(args: { mes?: string; desde?: string; hasta?: string } = {}): Promise<InvoiceLiviano[]> {
+  // Mock: filtra en JS según el set de args provisto.
   if (USE_MOCK || !airtable) {
     return MOCK_INVOICES
-      .filter(i => !args.mes || (i.fechaEmision ?? '').slice(0, 7) === args.mes)
+      .filter(i => !args.mes   || (i.fechaEmision ?? '').slice(0, 7) === args.mes)
+      .filter(i => !args.desde || (i.fechaEmision ?? '') >= args.desde)
+      .filter(i => !args.hasta || (i.fechaEmision ?? '') <= args.hasta)
       .map(i => ({
         id: i.id, noFactura: i.noFactura, custId: i.custId, total: i.total,
         estadoBruto: i.estadoBruto, vencida: i.vencida,
@@ -101,12 +104,23 @@ export async function getFacturasLiviano(args: { mes?: string } = {}): Promise<I
     // F-044 fail-soft: pedimos también los campos de auditoría para mostrar
     // el ✏️ en la lista. Si los campos aún no existen en Airtable, la query
     // falla con INVALID_FIELD_NAME; ahí caemos al set base y seguimos.
-    // F-BF-002a: filtro server-side por mes (YYYY-MM) si viene.
+    // F-BF-002a/c: filtro server-side por mes (YYYY-MM) o por rango
+    // [desde, hasta] sobre FECHA_EMISION. Si vienen ambos, se aplica AND.
     const FIELDS_BASE = [F.NO_FACTURA, F.TOTAL, F.ESTADO, F.ESTATUS_COBRANZA, F.CLIENTE, F.FECHA_EMISION];
     const FIELDS_CON_AUDIT = [...FIELDS_BASE, F.EDITADO_POR, F.FECHA_ULTIMA_EDIT];
-    const filterByFormula = args.mes
-      ? `DATETIME_FORMAT({FECHA_EMISION}, 'YYYY-MM') = "${args.mes.replace(/"/g, '')}"`
-      : undefined;
+    const partes: string[] = [];
+    if (args.mes) {
+      partes.push(`DATETIME_FORMAT({FECHA_EMISION}, 'YYYY-MM') = "${args.mes.replace(/"/g, '')}"`);
+    }
+    if (args.desde) {
+      partes.push(`IS_AFTER({FECHA_EMISION}, DATEADD(DATETIME_PARSE("${args.desde.replace(/"/g, '')}"), -1, 'days'))`);
+    }
+    if (args.hasta) {
+      partes.push(`IS_BEFORE({FECHA_EMISION}, DATEADD(DATETIME_PARSE("${args.hasta.replace(/"/g, '')}"), 1, 'days'))`);
+    }
+    const filterByFormula = partes.length === 0 ? undefined
+      : partes.length === 1 ? partes[0]
+      : `AND(${partes.join(',')})`;
     let records;
     try {
       records = await airtable(TABLES.FACTURAS).select({ fields: FIELDS_CON_AUDIT, ...(filterByFormula ? { filterByFormula } : {}) }).all();
@@ -164,57 +178,28 @@ export async function getFacturasLiviano(args: { mes?: string } = {}): Promise<I
   }
 }
 
-/* ===== F-BF-002b: Top clientes del mes seleccionado ===== */
-
-export interface TopClienteMes {
-  custId: string;
-  nombre: string;
-  /** Para truncado elegante en la UI: short del Customer. */
-  nombreCorto: string;
-  /** SUM(TOTAL) en GTQ, excluyendo anuladas y refacturadas. */
-  montoQ: number;
-  numFacturas: number;
-  /** Participación 0-100 sobre el total facturado del mes. */
-  porcentaje: number;
-}
-
-/**
- * Top N clientes por facturación del mes. Recibe el dataset liviano YA
- * filtrado al mes (server-side via getFacturasLiviano({mes})) — no
- * vuelve a tocar Airtable. Excluye estado bruto 'anulado' y 'refacturado'
- * para reflejar facturación neta del mes.
+/* ===== F-BF-002b/c: Top clientes — agregación reutilizable =====
+ * La lógica vive en src/lib/facturacion/top-clientes.ts (una sola
+ * fuente de verdad para la card UI y para las Auros tools). Acá
+ * dejamos un re-export con el shape histórico (`TopClienteMes`,
+ * `totalMesQ`, `cantidadFacturas`) para no romper /facturacion.
  */
+
+import { computeTopClientesRango } from '@/lib/facturacion/top-clientes';
+
+export type TopClienteMes = import('@/lib/facturacion/top-clientes').TopClienteItem;
+
 export function computeTopClientesDelMes(
   livianas: InvoiceLiviano[],
   clientes: { id: string; name: string; short?: string }[],
   topN = 5,
 ): { items: TopClienteMes[]; totalMesQ: number; cantidadFacturas: number } {
-  const validas = livianas.filter(i => i.estadoBruto !== 'anulado' && i.estadoBruto !== 'refacturado');
-  const totalMesQ = validas.reduce((s, i) => s + i.total, 0);
-  const byId = new Map<string, { monto: number; n: number }>();
-  for (const i of validas) {
-    const k = i.custId || '__sin_cliente__';
-    const b = byId.get(k) ?? { monto: 0, n: 0 };
-    b.monto += i.total;
-    b.n += 1;
-    byId.set(k, b);
-  }
-  const nameById = new Map(clientes.map(c => [c.id, { name: c.name, short: c.short || c.name }]));
-  const items: TopClienteMes[] = [...byId.entries()]
-    .map(([custId, v]) => {
-      const meta = nameById.get(custId);
-      return {
-        custId,
-        nombre:      meta?.name  ?? custId,
-        nombreCorto: meta?.short ?? meta?.name ?? custId,
-        montoQ:      v.monto,
-        numFacturas: v.n,
-        porcentaje:  totalMesQ > 0 ? (v.monto / totalMesQ) * 100 : 0,
-      };
-    })
-    .sort((a, b) => b.montoQ - a.montoQ)
-    .slice(0, topN);
-  return { items, totalMesQ, cantidadFacturas: validas.length };
+  const r = computeTopClientesRango(livianas, clientes, topN);
+  return {
+    items: r.items,
+    totalMesQ: r.totalFacturadoRango,
+    cantidadFacturas: r.numFacturasValidas,
+  };
 }
 
 /* ===== Paginación (F-022 + F-034 filtros server-side por tab) ===== */

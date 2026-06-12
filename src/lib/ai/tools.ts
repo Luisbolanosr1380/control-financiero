@@ -15,6 +15,11 @@ import { z } from 'zod';
 import { getFacturas, getHistorialEdicionesFactura, getFacturasLiviano, computeTopClientesDelMes } from '@/lib/db/facturas';
 import { etiquetaMes } from '@/lib/utils/mes-activo';
 import {
+  computeTopClientesRango,
+  resolverClienteAmbiguo,
+  resumenFacturadoCliente,
+} from '@/lib/facturacion/top-clientes';
+import {
   getNotasCredito,
   getNotasCreditoPendientesAprobacion,
   getKPIsNotasCredito,
@@ -1745,11 +1750,11 @@ export const aiTools = {
 
   topClientesDelMes: tool({
     description:
-      'F-BF-002b: ranking de clientes por facturación de un mes específico. ' +
+      'F-BF-002b: ranking de clientes por facturación de un mes específico (YYYY-MM). ' +
       'Excluye facturas ANULADO y REFACTURADO. Devuelve top N con monto Q, ' +
       '% del total del mes y cantidad de facturas. ' +
-      'USAR cuando el usuario pregunte "¿quiénes facturaron más en mayo?", "top clientes del mes", ' +
-      '"cliente más grande de junio".',
+      'Usar SOLO si el usuario menciona un mes exacto. Para rangos de varios meses, trimestres, ' +
+      'YTD o cualquier período no-mensual, usar topClientes(desde, hasta) en su lugar.',
     parameters: z.object({
       mes: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/).describe('Mes en formato YYYY-MM (ej: "2026-05").'),
       topN: z.number().int().positive().max(20).default(5),
@@ -1771,6 +1776,81 @@ export const aiTools = {
           num_facturas: c.numFacturas,
           pct_del_mes: Number(c.porcentaje.toFixed(1)),
         })),
+      };
+    },
+  }),
+
+  topClientes: tool({
+    description:
+      'F-BF-002c: ranking de clientes por facturación en un RANGO arbitrario [desde, hasta] ' +
+      '(ambos YYYY-MM-DD, inclusive). Excluye facturas ANULADO y REFACTURADO del cálculo, ' +
+      'pero reporta `num_anuladas` aparte. Devuelve top N con monto, % del total del rango, ' +
+      'y cantidad de facturas válidas. ' +
+      'USAR para preguntas como "top 5 del último trimestre", "mejores clientes del año", ' +
+      '"ranking marzo-mayo", "top de las últimas 6 semanas". ' +
+      'El LLM deriva el rango del lenguaje natural: "mayo" → 2026-05-01..2026-05-31; ' +
+      '"este año" → 2026-01-01..hoy; "último trimestre" → últimos 3 meses calendario completos. ' +
+      'Para un solo mes exacto, preferir topClientesDelMes.',
+    parameters: z.object({
+      desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('Fecha inicial inclusive YYYY-MM-DD.'),
+      hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('Fecha final inclusive YYYY-MM-DD.'),
+      limite: z.number().int().positive().max(10).default(5).describe('Cantidad de clientes top a devolver (1-10).'),
+    }),
+    execute: async ({ desde, hasta, limite }) => {
+      if (desde > hasta) return { ok: false, error: 'desde > hasta', rango: { desde, hasta } };
+      const [livianas, clientes] = await Promise.all([
+        getFacturasLiviano({ desde, hasta }),
+        getClientes(),
+      ]);
+      const r = computeTopClientesRango(livianas, clientes, limite);
+      return {
+        rango: { desde, hasta },
+        total_facturado_rango_Q: Math.round(r.totalFacturadoRango),
+        num_facturas_validas: r.numFacturasValidas,
+        num_anuladas: r.numAnuladas,
+        top: r.items.map(c => ({
+          cliente:        c.nombre,
+          monto_Q:        Math.round(c.montoQ),
+          num_facturas:   c.numFacturas,
+          pct_del_rango:  Number(c.porcentaje.toFixed(1)),
+        })),
+      };
+    },
+  }),
+
+  facturadoCliente: tool({
+    description:
+      'F-BF-002c: cuánto se facturó a un cliente específico en un rango [desde, hasta]. ' +
+      'Match parcial case-insensitive sobre el nombre (quita acentos: "genesis" matchea "GÉNESIS"). ' +
+      'Si el match es ambiguo, devuelve la lista de candidatos para que el usuario desambigüe. ' +
+      'Excluye anuladas/refacturadas del total pero reporta cuántas hubo. ' +
+      'USAR para "¿cuánto le facturamos a X en abril?", "facturación de Génesis YTD", ' +
+      '"¿qué le emitimos a Banco Cuscatlán este trimestre?".',
+    parameters: z.object({
+      nombreCliente: z.string().min(2).describe('Nombre o fragmento del cliente.'),
+      desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    }),
+    execute: async ({ nombreCliente, desde, hasta }) => {
+      if (desde > hasta) return { ok: false, error: 'desde > hasta', rango: { desde, hasta } };
+      const clientes = await getClientes();
+      const m = resolverClienteAmbiguo(nombreCliente, clientes);
+      if (!m.id) {
+        return {
+          ok: false,
+          motivo: m.candidatos.length === 0 ? 'cliente_no_encontrado' : 'multiples_candidatos',
+          candidatos: m.candidatos,
+        };
+      }
+      const livianas = await getFacturasLiviano({ desde, hasta });
+      const r = resumenFacturadoCliente(m.id, livianas);
+      return {
+        ok: true,
+        cliente: { id: m.id, nombre: m.nombreEncontrado },
+        rango: { desde, hasta },
+        monto_Q:       Math.round(r.montoQ),
+        num_facturas:  r.numFacturas,
+        num_anuladas:  r.numAnuladas,
       };
     },
   }),
