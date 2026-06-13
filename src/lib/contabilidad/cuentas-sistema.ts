@@ -79,6 +79,44 @@ export const CXC_INTERCOMPANY = {
 export type EmpresaIntercompany = keyof typeof CXC_INTERCOMPANY;
 
 /**
+ * F-057 — Cuentas de DEPRECIACIÓN ACUMULADA (crédito del asiento de
+ * depreciación). Convención del plan de cuentas Golden Talent:
+ *  · 1-2-2-x — para activos tangibles (PPE). 1-2-2-1 cómputo; 1-2-2-9
+ *    catch-all "Otras".
+ *  · 1-2-4-x — para intangibles. 1-2-4-1 software; 1-2-4-2 licencias.
+ *
+ * El motor mapea CATEGORIA del activo (o el nombre de Cuenta_Activo) a
+ * una de estas cuentas. Si nada matchea específicamente, va a 1-2-2-9
+ * (Otras Depreciaciones Acumuladas). Esto se documenta en el motor.
+ *
+ * Las cuentas de GASTO de depreciación (Dr del asiento) son 6-6-x y se
+ * leen RUNTIME por prefijo desde CUENTAS — no las hardcodeamos porque
+ * Stark puede agregar líneas nuevas y el motor debe absorberlas.
+ */
+export const DEPRECIACION_ACUMULADA = {
+  COMPUTO_PPE: {
+    recordId: 'reckAzU9c6JZ634qw',
+    codigo: '1-2-2-1',
+    nombre: 'Deprec. Acum. — Cómputo',
+  },
+  OTRAS_PPE: {
+    recordId: 'recxOl8R995374a3L',
+    codigo: '1-2-2-9',
+    nombre: 'Deprec. Acum. — Otras (catch-all PPE)',
+  },
+  SOFTWARE: {
+    recordId: 'recNfiGDCyXXgvmfn',
+    codigo: '1-2-4-1',
+    nombre: 'Amort. Acum. — Software',
+  },
+  LICENCIAS: {
+    recordId: 'recU6D5clgs3roBoF',
+    codigo: '1-2-4-2',
+    nombre: 'Amort. Acum. — Licencias',
+  },
+} as const;
+
+/**
  * F-056.1 — Cuentas de INGRESO por servicios administrativos a la
  * empresa hermana (management fee / margen intercompany).
  *
