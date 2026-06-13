@@ -22,6 +22,7 @@ import {
 } from '@/lib/facturacion/top-clientes';
 import { getCentrosCosto } from '@/lib/db/centros';
 import { generarEstadoResultados } from '@/lib/contabilidad/estado-resultados';
+import { generarBalanceGeneral } from '@/lib/contabilidad/balance-general';
 import {
   getNotasCredito,
   getNotasCreditoPendientesAprobacion,
@@ -2004,6 +2005,89 @@ export const aiTools = {
       };
     },
   }),
+
+  getBalanceGeneral: tool({
+    description:
+      'F-059: Balance General al CIERRE de un mes específico, construido desde PARTIDAS reales del libro diario. ' +
+      'A diferencia del ER (que mide flujo), el Balance es una FOTO: saldo acumulado desde el inicio del libro ' +
+      'hasta el corte. Devuelve totales (Activo, Pasivo, Capital, Pasivo+Capital), si la ecuación contable cuadra ' +
+      '(Activo = Pasivo + Capital con tolerancia 0.01), si el balance de comprobación cuadra (Σdebe = Σhaber) y ' +
+      'ratios básicos (liquidez corriente = Activo Corriente / Pasivo Corriente; endeudamiento = Pasivo / Activo). ' +
+      '\n\nEl "Resultado del Ejercicio" del balance es la Utilidad Neta YTD del ER del mismo corte — es la pieza ' +
+      'que conecta los dos estados; el motor la importa solo, no hay que pedir el ER aparte. ' +
+      '\n\n`centroCostoId` opcional filtra a una línea de negocio. ' +
+      'USAR para "¿cómo está el balance al cierre de mayo?", "¿cuál es mi liquidez?", "¿endeudamiento al corte?", ' +
+      '"¿el activo cuadra con pasivo + capital?".',
+    parameters: z.object({
+      periodoCorte: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+        .describe('Mes de corte en formato YYYY-MM (ej: "2026-05"). El balance acumula HASTA fin de ese mes inclusive.'),
+      centroCostoId: z.string().optional()
+        .describe('record-id de CENTRO_COSTO para filtrar a una línea de negocio.'),
+    }),
+    execute: async ({ periodoCorte, centroCostoId }) => {
+      const bg = await generarBalanceGeneral({ periodoCorte, centroCostoId });
+
+      // Ratios — recalculamos a partir de los totales devueltos por el motor
+      // (más simple que duplicar lookups por nombre acá).
+      const liquidez = (() => {
+        const ac = lineaPorNombre(bg.lineas, 'activo corriente');
+        const pc = lineaPorNombre(bg.lineas, 'pasivo corriente');
+        return (pc != null && Math.abs(pc) > 0.01 && ac != null)
+          ? Math.round((ac / pc) * 100) / 100
+          : null;
+      })();
+      const endeudamiento = bg.subtotales.totalActivo && Math.abs(bg.subtotales.totalActivo) > 0.01
+        ? Math.round((bg.subtotales.totalPasivo / bg.subtotales.totalActivo) * 10000) / 100
+        : null;
+
+      return {
+        periodo_corte: bg.periodoCorte,
+        periodo_anterior: bg.periodoAnterior,
+        centro_costo_id: bg.centroCostoId ?? null,
+        subtotales: {
+          total_activo_Q:           Math.round(bg.subtotales.totalActivo),
+          total_pasivo_Q:           Math.round(bg.subtotales.totalPasivo),
+          total_capital_Q:          Math.round(bg.subtotales.totalCapital),
+          total_pasivo_capital_Q:   Math.round(bg.subtotales.totalPasivoCapital),
+          resultado_ejercicio_ytd_Q: Math.round(bg.subtotales.resultadoEjercicio),
+        },
+        ecuacion: {
+          cuadra:       bg.ecuacion.cuadra,
+          diferencia_Q: Math.round(bg.ecuacion.diferencia),
+        },
+        comprobacion: {
+          total_debe_Q:  Math.round(bg.comprobacion.totalDebe),
+          total_haber_Q: Math.round(bg.comprobacion.totalHaber),
+          cuadra:        bg.comprobacion.cuadra,
+          diferencia_Q:  Math.round(bg.comprobacion.diferencia),
+        },
+        ratios: {
+          liquidez_corriente: liquidez,
+          endeudamiento_pct:  endeudamiento,
+        },
+        conteos: bg.conteos,
+        advertencias: bg.advertencias,
+        // Solo líneas con monto > 0 en alguna columna para ahorrar tokens.
+        lineas: bg.lineas
+          .filter(l => l.monto !== 0 || l.montoAnterior !== 0)
+          .map(l => ({
+            linea:           l.nombre,
+            tipo:            l.tipo,
+            orden:           l.orden,
+            corte_Q:         Math.round(l.monto),
+            cierre_anterior_Q: Math.round(l.montoAnterior),
+            variacion_Q:     Math.round(l.variacion),
+            variacion_pct:   l.variacionPct,
+          })),
+      };
+    },
+  }),
 } as const;
+
+function lineaPorNombre(lineas: ReadonlyArray<{ nombre: string; monto: number }>, needle: string): number | null {
+  const q = needle.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+  const l = lineas.find(x => x.nombre.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().includes(q));
+  return l ? l.monto : null;
+}
 
 export type AiToolName = keyof typeof aiTools;

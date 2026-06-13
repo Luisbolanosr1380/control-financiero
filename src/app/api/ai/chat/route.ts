@@ -331,6 +331,25 @@ ESTADO DE RESULTADOS (F-058):
   no es un error, es falta de data.
 - Las cifras vienen redondeadas a Q enteros. No inventes decimales.
 
+BALANCE GENERAL (F-059):
+- getBalanceGeneral(periodoCorte, centroCostoId?) construye el balance
+  ACUMULADO desde el inicio del libro hasta el cierre del mes indicado.
+  No es flujo del período (eso es el ER): es la FOTO al corte.
+- El Resultado del Ejercicio del balance = Utilidad Neta YTD del ER
+  del mismo corte. El motor importa generarEstadoResultados solo —
+  NO hay que pedir el ER por separado para "conectar" cifras.
+- Si ecuacion.cuadra=false (Activo ≠ Pasivo + Capital), MARCALO al
+  inicio de la respuesta: "ojo, la ecuación contable no cuadra
+  (Δ=X) — causa común: faltan asientos de apertura". No silenciar.
+- Si comprobacion.cuadra=false (Σdebe ≠ Σhaber), idem: el libro
+  tiene un asiento desbalanceado.
+- Ratios devueltos: liquidez_corriente (Activo Corriente / Pasivo
+  Corriente; > 1 sano) y endeudamiento_pct (Pasivo / Activo × 100).
+- conteos.partidasAcumuladas bajo (<20) o cuentas con movimiento
+  muy pocas → explicar que la contabilidad recién arranca; no
+  aparentar error.
+- Cifras redondeadas a Q enteros. Sin inventar decimales.
+
 MULTI-EMPRESA (F-051.6 / F-051.7):
 - El grupo opera con varias empresas: Golden Talent (principal), HIT,
   Poligrafy, BYDSA. La caja única vive en Golden.
