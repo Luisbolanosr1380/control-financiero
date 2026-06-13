@@ -21,6 +21,7 @@ import {
   resolverLineasNegocio,
 } from '@/lib/facturacion/top-clientes';
 import { getCentrosCosto } from '@/lib/db/centros';
+import { generarEstadoResultados } from '@/lib/contabilidad/estado-resultados';
 import {
   getNotasCredito,
   getNotasCreditoPendientesAprobacion,
@@ -1942,6 +1943,64 @@ export const aiTools = {
         num_facturas:  r.numFacturas,
         num_anuladas:  r.numAnuladas,
         lineas_no_resueltas,
+      };
+    },
+  }),
+
+  getEstadoResultados: tool({
+    description:
+      'F-058: Estado de Resultados de un mes específico, calculado desde PARTIDAS reales del libro diario. ' +
+      'Devuelve las líneas principales con su monto del mes, mes anterior y YTD, los subtotales clave ' +
+      '(Ingresos Netos, Utilidad Bruta, EBITDA, Utilidad Operativa, Utilidad Neta), los márgenes ' +
+      '(bruto %, operativo %, neto %) y el control de balance de comprobación (Σdebe = Σhaber). ' +
+      '\n\nModo "fiscal" (default) incluye todas las partidas (lo que ve SAT). ' +
+      'Modo "operativo" excluye partidas cuyo gasto tiene TIPO_OPERATIVO="No Operativo" — ' +
+      'mejor lente para el desempeño del giro real. La diferencia entre ambos = Σ gastos No Operativo del mes. ' +
+      '\n\n`centroCostoId` opcional filtra a una línea de negocio específica (Poligrafia / Socioeconomicos / etc.). ' +
+      'USAR para "¿cómo cerró el ER de mayo?", "margen operativo de Poligrafía", ' +
+      '"compará la utilidad neta de abril vs marzo", "¿cuál es mi EBITDA YTD?".',
+    parameters: z.object({
+      periodo: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+        .describe('Mes en formato YYYY-MM (ej: "2026-05").'),
+      modo: z.enum(['fiscal', 'operativo']).default('fiscal')
+        .describe('"operativo" excluye gastos No Operativo; "fiscal" incluye todo.'),
+      centroCostoId: z.string().optional()
+        .describe('record-id del CENTRO_COSTO para filtrar (línea de negocio). Si no viene, todas las líneas.'),
+    }),
+    execute: async ({ periodo, modo, centroCostoId }) => {
+      const er = await generarEstadoResultados({ periodo, modo, centroCostoId });
+      return {
+        periodo: er.periodo,
+        periodo_anterior: er.periodoAnterior,
+        modo: er.modo,
+        centro_costo_id: er.centroCostoId ?? null,
+        margenes: {
+          margen_bruto_pct:     er.margenes.brutoPct,
+          margen_operativo_pct: er.margenes.operativoPct,
+          margen_neto_pct:      er.margenes.netoPct,
+        },
+        control: {
+          total_debe_Q:  Math.round(er.control.totalDebe),
+          total_haber_Q: Math.round(er.control.totalHaber),
+          cuadra:        er.control.cuadra,
+          diferencia_Q:  Math.round(er.control.diferencia),
+        },
+        conteos: er.conteos,
+        advertencias: er.advertencias,
+        // Solo enviamos las líneas con monto > 0 en alguna columna para
+        // ahorrar tokens; las líneas en cero no aportan al análisis.
+        lineas: er.lineas
+          .filter(l => l.mes !== 0 || l.mesAnterior !== 0 || l.ytd !== 0)
+          .map(l => ({
+            linea:           l.nombre,
+            tipo:            l.tipo,
+            orden:           l.orden,
+            mes_Q:           Math.round(l.mes),
+            mes_anterior_Q:  Math.round(l.mesAnterior),
+            ytd_Q:           Math.round(l.ytd),
+            variacion_Q:     Math.round(l.variacion),
+            variacion_pct:   l.variacionPct,
+          })),
       };
     },
   }),

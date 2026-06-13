@@ -63,9 +63,10 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
       { href: '/pagos-deudas', label: 'Pagos a deudas', icon: 'Coins' },
     ]},
     { group: 'Contabilidad', items: [
-      { href: '/asientos',    label: 'Asientos',            icon: 'Journal' },
-      { href: '/estados',     label: 'Estados Financieros', icon: 'Statement' },
-      { href: '/retenciones', label: 'Retenciones',         icon: 'Statement' },
+      { href: '/asientos',                       label: 'Asientos',            icon: 'Journal' },
+      { href: '/reportes/estado-resultados',     label: 'Estado de Resultados',icon: 'TrendUp' },   // F-058
+      { href: '/estados',                        label: 'Estados Financieros', icon: 'Statement' },
+      { href: '/retenciones',                    label: 'Retenciones',         icon: 'Statement' },
     ]},
   ];
 
