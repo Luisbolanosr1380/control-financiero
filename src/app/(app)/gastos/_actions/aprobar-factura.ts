@@ -24,6 +24,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { aprenderCuentaHabitualProveedor } from '@/lib/gastos/services/sugerir-cuenta-gasto';
+import { aprenderCentroHabitualProveedor } from '@/lib/gastos/services/sugerir-centro-costo';
 import { currentUser } from '@clerk/nextjs/server';
 import { airtable } from '@/lib/db/airtable';
 import { obtenerDateTimeHoyGuatemala } from '@/lib/utils/fechas';
@@ -386,6 +387,18 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
     });
   } catch (err) {
     console.warn('F-052b aprenderCuentaHabitualProveedor falló (no bloquea):',
+      err instanceof Error ? err.message : err);
+  }
+
+  // F-052.1: aprendizaje pasivo del CENTRO DE COSTO. Misma semántica.
+  // El motor descarta "Pendiente" como hábito (catch-all manual).
+  try {
+    await aprenderCentroHabitualProveedor({
+      proveedorId:   proveedor.recordId,
+      centroCostoId: input.centroCostoId,
+    });
+  } catch (err) {
+    console.warn('F-052.1 aprenderCentroHabitualProveedor falló (no bloquea):',
       err instanceof Error ? err.message : err);
   }
 

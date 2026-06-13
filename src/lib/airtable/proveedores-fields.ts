@@ -21,6 +21,10 @@ export const PROVEEDORES_FIELDS = {
   // automáticamente al aprobar un gasto si Stark cambió la sugerencia
   // (aprendizaje pasivo).
   cuenta_gasto_habitual: 'fldsoUE0ktkKrmRnA',
+  // F-052.1: análogo a cuenta_gasto_habitual pero para el centro de costo.
+  // Mismo bucle de aprendizaje: se actualiza al aprobar el gasto cuando
+  // Stark cambia el CC sugerido.
+  centro_costo_habitual: 'fldIsk97VKDG80PCz',
 } as const;
 
 export type ProveedorFieldKey = keyof typeof PROVEEDORES_FIELDS;

@@ -41,6 +41,10 @@ import {
   sugerirCuentaGastoAction,
   type SugerenciaCuenta,
 } from '@/app/(app)/gastos/_actions/sugerir-cuenta-gasto';
+import {
+  sugerirCentroCostoAction,
+  type SugerenciaCentroCosto,
+} from '@/app/(app)/gastos/_actions/sugerir-centro-costo';
 
 interface Props {
   factura: FacturaIn;
@@ -146,6 +150,10 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
   // Sticky: si el usuario YA tocó el dropdown manualmente, NO pisamos su
   // elección cuando llega o cambia la sugerencia.
   const [usuarioTocoCuenta, setUsuarioTocoCuenta] = useState(false);
+  // F-052.1: sugerencia análoga para el centro de costo.
+  const [sugerenciaCC, setSugerenciaCC] = useState<SugerenciaCentroCosto | null>(null);
+  const [sugerenciaCCLoading, setSugerenciaCCLoading] = useState(false);
+  const [usuarioTocoCC, setUsuarioTocoCC] = useState(false);
   const [tipoOperativo, setTipoOperativo] = useState<TipoOp>('Operativo');
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Plazo');
   const [bancoId, setBancoId] = useState('');
@@ -226,6 +234,49 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
     // al cambiar el flag. Solo se re-evalúa cuando cambia algo del input.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opciones, estadoProveedor, proveedorNombre, proveedorNit, factura.datosNormalizados]);
+
+  // F-052.1: sugerencia de centro de costo. Igual patrón que cuenta,
+  // pero recibe ADEMÁS el código de la cuenta elegida/sugerida como
+  // señal de derivación (5-1-3-* → Poligrafia, etc.). Re-dispara cuando
+  // cambia la cuenta elegida — así si Stark corrige la cuenta, el CC se
+  // re-sugiere coherentemente.
+  useEffect(() => {
+    if (!opciones) return;
+    if (estadoProveedor.tipo === 'idle' || estadoProveedor.tipo === 'buscando') return;
+    let cancelado = false;
+    setSugerenciaCCLoading(true);
+    const proveedorId = estadoProveedor.tipo === 'existe' ? estadoProveedor.recordId : undefined;
+    // Buscamos el label "código · nombre" de la cuenta actualmente
+    // seleccionada en el form. Si no hay cuenta aún, pasamos undefined
+    // y la fuente "derivacion" del motor queda sin match.
+    const cuentaSelLabel = opciones.cuentasGasto.find(c => c.id === categoriaGastoId)?.label ?? '';
+    // El label viene como "5-1-3-2 · Costos Poligrafía". Separamos.
+    const [cuentaCodigoSel, ...rest] = cuentaSelLabel.split(' · ');
+    const cuentaNombreSel = rest.join(' · ').trim() || undefined;
+    sugerirCentroCostoAction({
+      proveedorId,
+      proveedorNombre: proveedorNombre || (estadoProveedor.tipo === 'existe' ? estadoProveedor.nombre : ''),
+      proveedorNit: proveedorNit || undefined,
+      descripcion: (factura.datosNormalizados || '').slice(0, 1500) || undefined,
+      cuentaCodigo: cuentaCodigoSel?.trim() || undefined,
+      cuentaNombre: cuentaNombreSel,
+    })
+      .then(s => {
+        if (cancelado) return;
+        setSugerenciaCC(s);
+        if (!usuarioTocoCC && s.centroCostoId && s.confianza >= 0.5) {
+          setCentroCostoId(s.centroCostoId);
+        }
+      })
+      .catch(err => {
+        if (!cancelado) console.warn('F-052.1 sugerencia CC falló (UI):', err);
+      })
+      .finally(() => {
+        if (!cancelado) setSugerenciaCCLoading(false);
+      });
+    return () => { cancelado = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opciones, estadoProveedor, proveedorNombre, proveedorNit, factura.datosNormalizados, categoriaGastoId]);
 
   // Cuentas filtradas por search.
   const cuentasFiltradas = useMemo(() => {
@@ -492,7 +543,12 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
 
               {/* 3.2 Centro de Costo */}
               <SubSection title="Centro de Costo (obligatorio)">
-                <select value={centroCostoId} onChange={(e) => setCentroCostoId(e.target.value)} className="input">
+                <SugerenciaCCBadge sugerencia={sugerenciaCC} loading={sugerenciaCCLoading} />
+                <select
+                  value={centroCostoId}
+                  onChange={(e) => { setCentroCostoId(e.target.value); setUsuarioTocoCC(true); }}
+                  className="input"
+                >
                   <option value="">— Elegí un centro de costo —</option>
                   {opciones.centrosCosto.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                 </select>
@@ -802,6 +858,75 @@ function SugerenciaCuentaBadge({
       <span style={{ fontWeight: 500 }}>{labelOrigen}:</span>
       <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {codigo ? `${codigo} · ${nombre}` : nombre}
+      </span>
+      {esIA && (
+        <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>
+          {(confianza * 100).toFixed(0)}%
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* =========================================================================
+ * F-052.1 — Badge de sugerencia de centro de costo
+ *
+ * Comparte el visual del badge de cuenta. Origen 'derivacion' va en verde
+ * porque es señal determinística fuerte (mapeo cuenta→CC).
+ * ========================================================================= */
+
+function SugerenciaCCBadge({
+  sugerencia, loading,
+}: {
+  sugerencia: SugerenciaCentroCosto | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div style={{ fontSize: 11, color: 'var(--ink-4)', marginBottom: 6 }}>
+        Buscando sugerencia…
+      </div>
+    );
+  }
+  if (!sugerencia || !sugerencia.centroCostoId) return null;
+
+  const { origen, confianza, nombre, razon } = sugerencia;
+  const esIA = origen === 'ia';
+  const labelOrigen =
+    origen === 'memoria'    ? 'Sugerido · proveedor habitual' :
+    origen === 'recurrente' ? 'Sugerido · obligación recurrente' :
+    origen === 'derivacion' ? 'Sugerido · derivado de la cuenta' :
+    esIA && confianza >= 0.75 ? 'Sugerido por IA' :
+    esIA && confianza >= 0.5  ? 'Sugerido por IA · verificá' :
+    esIA                      ? 'Posible (baja confianza)' :
+    'Sugerido';
+
+  const colores =
+    !esIA || confianza >= 0.75 ? { bg: '#E8EDDE', bd: 'var(--olive)', fg: 'var(--ink)' } :
+    confianza >= 0.5           ? { bg: '#FBF1DC', bd: 'var(--amber)', fg: 'var(--ink-2)' } :
+                                 { bg: 'var(--paper-2)', bd: 'var(--line-2)', fg: 'var(--ink-3)' };
+
+  const tooltip = esIA && razon
+    ? `${razon} · confianza ${(confianza * 100).toFixed(0)}%`
+    : undefined;
+
+  return (
+    <div
+      title={tooltip}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 10px',
+        background: colores.bg,
+        border: `1px solid ${colores.bd}`,
+        borderRadius: 4,
+        fontSize: 11.5,
+        color: colores.fg,
+        marginBottom: 6,
+      }}
+    >
+      <span style={{ fontWeight: 500 }}>{labelOrigen}:</span>
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {nombre}
       </span>
       {esIA && (
         <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>
