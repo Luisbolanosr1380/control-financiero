@@ -130,8 +130,11 @@ export const CUENTAS_TABLE_ID = 'tblP2yysprsDBIjx5';
  * filtro de cuentas de gasto se hace por prefijo de codigo_path (5- / 6-).
  */
 export const CUENTAS_FIELDS = {
-  codigo_path: 'flda7PNsXwgb6RRU9',
-  nombre:      'fldB5n2COhwEnCCAO',
-  nivel:       'fldRM0TRZXa7w25h6',
-  activo:      'fldeApsomJ7Z3ip0x',
+  codigo_path:    'flda7PNsXwgb6RRU9',
+  nombre:         'fldB5n2COhwEnCCAO',
+  nivel:          'fldRM0TRZXa7w25h6',
+  activo:         'fldeApsomJ7Z3ip0x',
+  // F-058: singleSelect "Acreedora" | "Deudora" — usado por el motor de
+  // Estado de Resultados para determinar el signo natural del saldo.
+  naturaleza_er:  'fldbcwjsLuBYTIhtV',
 } as const;
