@@ -255,9 +255,10 @@ export async function getCobrosCompletos(args: { mes?: string } = {}): Promise<C
     if (args.mes) {
       const mesEsc = args.mes.replace(/"/g, '');
       select.filterByFormula = `DATETIME_FORMAT({${FC_READ.FECHA}}, 'YYYY-MM') = "${mesEsc}"`;
-    } else {
-      select.maxRecords = 5000;
     }
+    // F-BF-004: sin maxRecords — `.all()` agota la paginación interna del
+    // SDK. Un cap silencioso truncaba COBROS_CLIENTES (178 hoy pero crece
+    // mes a mes).
     const [records, bancos] = await Promise.all([
       airtable(TABLES.COBROS).select(select).all(),
       getBancos(),
@@ -275,8 +276,10 @@ export async function getCobrosCompletos(args: { mes?: string } = {}): Promise<C
 export async function getCobrosCountTotal(): Promise<number> {
   if (USE_MOCK || !airtable) return 0;
   try {
+    // F-BF-004: sin maxRecords — el conteo silenciosamente devolvía 2000
+    // como tope. `.all()` ya pagina.
     const records = await airtable(TABLES.COBROS)
-      .select({ fields: [FC_READ.FECHA, FC_READ.NO_FACTURA], maxRecords: 2000 })
+      .select({ fields: [FC_READ.FECHA, FC_READ.NO_FACTURA] })
       .all();
     const claves = new Set<string>();
     for (const r of records) {

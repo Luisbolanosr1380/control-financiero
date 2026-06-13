@@ -42,7 +42,8 @@ export async function getCentrosCosto(): Promise<CentroCosto[]> {
   if (USE_MOCK || !airtable) return [];
 
   try {
-    const records = await airtable(TABLES.CENTROS_COSTO).select({ maxRecords: 100 }).all();
+    // F-BF-004: sin maxRecords — `.all()` agota la paginación.
+    const records = await airtable(TABLES.CENTROS_COSTO).select().all();
     return records.map(r => recordToCentro({ id: r.id, fields: r.fields }));
   } catch (err) {
     console.error('Error fetching centros de costo:', err);

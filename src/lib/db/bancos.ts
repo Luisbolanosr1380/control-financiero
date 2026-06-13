@@ -41,7 +41,9 @@ function recordToBanco(record: { id: string; fields: FieldSet }): Banco {
 export async function getBancos(): Promise<Banco[]> {
   if (USE_MOCK || !airtable) return [];
   try {
-    const records = await airtable(TABLES.BANCOS).select({ maxRecords: 100 }).all();
+    // F-BF-004: sin maxRecords — BANCOS son pocos hoy (~10) pero cualquier
+    // hardcap es bomba de tiempo silenciosa.
+    const records = await airtable(TABLES.BANCOS).select().all();
     return records.map(r => recordToBanco({ id: r.id, fields: r.fields }));
   } catch (err) {
     console.error('Error fetching bancos:', err);

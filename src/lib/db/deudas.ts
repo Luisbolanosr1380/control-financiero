@@ -285,8 +285,11 @@ let _centrosCache: Map<string, string> | null = null;
 async function getCentrosNombreById(): Promise<Map<string, string>> {
   if (_centrosCache) return _centrosCache;
   if (USE_MOCK || !airtable) return new Map();
+  // F-BF-004: sin maxRecords — `.all()` agota la paginación interna del SDK
+  // (pageSize 100 hasta vaciar offsets). Hardcaps silenciosos truncan a medida
+  // que las tablas crecen sin error visible.
   const recs = await airtable(TABLES.CENTROS_COSTO)
-    .select({ fields: ['NOMBRE'], maxRecords: 500 })
+    .select({ fields: ['NOMBRE'] })
     .all();
   _centrosCache = new Map(recs.map(r => [r.id, String(r.fields.NOMBRE ?? '')]));
   return _centrosCache;
@@ -299,9 +302,8 @@ async function getCentrosNombreById(): Promise<Map<string, string>> {
 export async function getAcreedores(): Promise<Acreedor[]> {
   if (USE_MOCK || !airtable) return [];
   try {
-    const recs = await airtable(TABLES.ACREEDORES)
-      .select({ maxRecords: 500 })
-      .all();
+    // F-BF-004: sin maxRecords — paginación completa.
+    const recs = await airtable(TABLES.ACREEDORES).select().all();
     return recs.map(r => acreedorFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }));
   } catch (err) {
     console.error('Error fetching acreedores:', err);
@@ -319,8 +321,11 @@ export async function getAcreedores(): Promise<Acreedor[]> {
 async function getTotalPagadoPorDeuda(): Promise<Map<string, { suma: number; count: number }>> {
   if (USE_MOCK || !airtable) return new Map();
   try {
+    // F-BF-004: sin maxRecords — PAGOS_PROVEEDORES crece con cada cuota
+    // pagada (hipoteca = 240 cuotas en 1 ingreso), un cap de 5000 es una
+    // bomba de tiempo silenciosa.
     const recs = await airtable(TABLES.PAGOS_PROVEEDORES)
-      .select({ fields: ['Deuda', 'Monto_Pago'], maxRecords: 5000 })
+      .select({ fields: ['Deuda', 'Monto_Pago'] })
       .all();
     const m = new Map<string, { suma: number; count: number }>();
     for (const r of recs) {
@@ -343,8 +348,17 @@ async function getTotalPagadoPorDeuda(): Promise<Map<string, { suma: number; cou
 export async function getDeudas(filtros: DeudasFiltros = {}): Promise<Deuda[]> {
   if (USE_MOCK || !airtable) return [];
   try {
+    // F-BF-004:
+    //  · Sin maxRecords — paginación completa de DEUDAS. El cap de 500
+    //    estaba truncando silenciosamente con la incorporación de 240
+    //    cuotas de hipoteca (134 → 374+ y subiendo).
+    //  · Empujamos el filtro `No Incluir != TRUE()` al servidor para
+    //    reducir volumen transferido (las cuotas históricas pagadas se
+    //    marcan así). El filtro JS posterior queda como red de seguridad.
     const [recs, acreedores, centrosById, pagadosPorDeuda] = await Promise.all([
-      airtable(TABLES.DEUDAS).select({ maxRecords: 500 }).all(),
+      airtable(TABLES.DEUDAS)
+        .select({ filterByFormula: `OR({${FD.NO_INCLUIR}} = FALSE(), {${FD.NO_INCLUIR}} = BLANK())` })
+        .all(),
       getAcreedores(),
       getCentrosNombreById(),
       getTotalPagadoPorDeuda(),
