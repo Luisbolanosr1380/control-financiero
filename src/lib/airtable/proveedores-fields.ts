@@ -16,6 +16,11 @@ export const PROVEEDORES_FIELDS = {
   direccion: 'fldEBOAADrsLIgoiG',
   activo:    'fldI2I0dSkYvcAhvG',
   gastos:    'fld6MzEphGjKxWDlR',
+  // F-052: link a CUENTAS — la cuenta de gasto que el sistema sugerirá
+  // por default cuando llegue una factura de este proveedor. Se actualiza
+  // automáticamente al aprobar un gasto si Stark cambió la sugerencia
+  // (aprendizaje pasivo).
+  cuenta_gasto_habitual: 'fldsoUE0ktkKrmRnA',
 } as const;
 
 export type ProveedorFieldKey = keyof typeof PROVEEDORES_FIELDS;
