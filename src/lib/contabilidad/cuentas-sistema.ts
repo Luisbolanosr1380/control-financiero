@@ -31,6 +31,53 @@ export const CUENTAS_SISTEMA = {
   },
 } as const;
 
+/**
+ * F-056 — CxC intercompany por empresa hermana.
+ *
+ * Cuando Golden paga la planilla de un empleado de HIT/Poligrafy/BYDSA,
+ * el desembolso NO es gasto de Golden: es una cuenta por cobrar a la
+ * empresa hermana que se liquida vía facturación intercompany.
+ *
+ * Cuentas creadas via MCP el 12 jun 2026 (códigos 1-1-3-3-x).
+ *
+ * NOTA DE ALCANCE (F-056):
+ * Lo que SÍ se modela acá: la PROYECCIÓN del débito al generar la
+ * planilla — sustituye Dr Gasto Nómina por Dr CxC para las líneas
+ * no-Golden. El módulo `src/lib/planilla/proyectar-asiento.ts` calcula
+ * las partidas sin escribir a Airtable (el generador real de ASIENTOS
+ * + PARTIDAS para planilla aún no existe en este repo — F-051.7 banner
+ * y este módulo son el preview).
+ *
+ * Lo que NO se modela todavía (queda para F-056.1+):
+ *  · La RECLASIFICACIÓN cuando Golden emite la factura intercompany
+ *    (Dr CxC Cliente / Cr 1-1-3-3-x). Requiere decidir con el contador
+ *    si la factura lleva management fee o es reembolso exacto.
+ *  · Auros tool de saldos vivos de CxC intercompany.
+ *  · La conciliación quincena intercompany vs. factura emitida.
+ */
+export const CXC_INTERCOMPANY = {
+  HIT: {
+    recordId: 'rec6m7Qbn3NCBug3x',
+    codigo: '1-1-3-3-1',
+    nombre: 'CxC Intercompany — HIT',
+    empresa: 'HIT' as const,
+  },
+  Poligrafy: {
+    recordId: 'rec6od3KsYTzARZpu',
+    codigo: '1-1-3-3-2',
+    nombre: 'CxC Intercompany — Poligrafy',
+    empresa: 'Poligrafy' as const,
+  },
+  BYDSA: {
+    recordId: 'recBhglJe2Go0r0Ok',
+    codigo: '1-1-3-3-3',
+    nombre: 'CxC Intercompany — BYDSA',
+    empresa: 'BYDSA' as const,
+  },
+} as const;
+
+export type EmpresaIntercompany = keyof typeof CXC_INTERCOMPANY;
+
 export const CUENTAS_TABLE_ID = 'tblP2yysprsDBIjx5';
 
 /**

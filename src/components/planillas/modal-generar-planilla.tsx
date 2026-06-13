@@ -14,6 +14,7 @@ import {
   EMPRESA_EMPLEADORA_DEFAULT,
   type EmpresaEmpleadora,
 } from '@/lib/empleados/empresa';
+import { proyectarAsientoPlanilla } from '@/lib/planilla/proyectar-asiento';
 
 interface EmpleadoPreview {
   id: string;
@@ -75,22 +76,25 @@ export function ModalGenerarPlanilla({ empleadosActivos, periodosExistentes, def
   const montoTotal = empleadosActivos.reduce((s, e) => s + e.netoEstimado, 0);
   const valido = !yaExiste && empleadosActivos.length > 0;
 
-  // F-051.7: desglose por empresa empleadora para el banner intercompany.
-  const desgloseNoGolden = useMemo(() => {
-    const m = new Map<EmpresaEmpleadora, { cantidad: number; monto: number }>();
-    for (const e of empleadosActivos) {
-      const emp = e.empresaEmpleadora ?? EMPRESA_EMPLEADORA_DEFAULT;
-      if (esGolden(emp)) continue;
-      const b = m.get(emp) ?? { cantidad: 0, monto: 0 };
-      b.cantidad += 1;
-      b.monto += e.netoEstimado;
-      m.set(emp, b);
-    }
-    return EMPRESAS_EMPLEADORAS
-      .filter(emp => !esGolden(emp) && m.has(emp))
-      .map(emp => ({ empresa: emp, cantidad: m.get(emp)!.cantidad, monto: m.get(emp)!.monto }));
-  }, [empleadosActivos]);
-  const totalNoGolden = desgloseNoGolden.reduce((s, x) => s + x.cantidad, 0);
+  // F-051.7 + F-056: proyección del asiento. La función pura mapea cada
+  // empleado a su empresa y genera las partidas DÉBITO esperadas
+  // (gasto nómina Golden + Dr CxC intercompany por empresa hermana).
+  const proyeccion = useMemo(() => {
+    const periodoNombre = `Q${quincena}-${MESES[mes - 1]}-${anio}`;
+    return proyectarAsientoPlanilla({
+      periodoNombre,
+      lineas: empleadosActivos.map(e => ({ empleadoId: e.id, netoPagar: e.netoEstimado })),
+      empleados: empleadosActivos.map(e => ({
+        id: e.id,
+        empresaEmpleadora: e.empresaEmpleadora ?? EMPRESA_EMPLEADORA_DEFAULT,
+      })),
+    });
+  }, [empleadosActivos, quincena, mes, anio]);
+
+  const desgloseGolden = proyeccion.porEmpresa.find(p => esGolden(p.empresa));
+  const desgloseIntercompany = proyeccion.porEmpresa.filter(p => !esGolden(p.empresa));
+  const totalNoGolden = desgloseIntercompany.reduce((s, d) => s + d.numEmpleados, 0);
+  void EMPRESAS_EMPLEADORAS;  // import conservado por compat con UI futura.
 
   const onConfirm = async () => {
     if (!valido) return;
@@ -195,21 +199,44 @@ export function ModalGenerarPlanilla({ empleadosActivos, periodosExistentes, def
               color: 'var(--ink-2)',
               lineHeight: 1.5,
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--ink)', marginBottom: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, color: 'var(--ink)', marginBottom: 6 }}>
                 <I.Alert size={13} style={{ color: 'var(--amber)' }} />
-                Incluye {totalNoGolden} {totalNoGolden === 1 ? 'persona' : 'personas'} de otras empresas
+                Asiento multi-empresa (F-056)
               </div>
-              <div style={{ fontSize: 11.5 }}>
-                {desgloseNoGolden.map((d, i) => (
-                  <span key={d.empresa}>
-                    {i > 0 && ' · '}
-                    <strong>{d.cantidad}</strong> de {d.empresa} ({Q(d.monto)})
-                  </span>
+              <div style={{ fontSize: 11.5, marginBottom: 6 }}>
+                Este asiento registrará:
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, fontSize: 11.5 }}>
+                {desgloseGolden && desgloseGolden.totalQ > 0 && (
+                  <li>
+                    <strong>{Q(desgloseGolden.totalQ)}</strong> como gasto de nómina <strong>Golden</strong>{' '}
+                    <span style={{ color: 'var(--ink-3)' }}>
+                      ({desgloseGolden.numEmpleados} {desgloseGolden.numEmpleados === 1 ? 'empleado' : 'empleados'})
+                    </span>
+                  </li>
+                )}
+                {desgloseIntercompany.map(d => (
+                  <li key={d.empresa}>
+                    <strong>{Q(d.totalQ)}</strong> como CxC a <strong>{d.empresa}</strong>{' '}
+                    <span style={{ color: 'var(--ink-3)' }}>
+                      ({d.numEmpleados} {d.numEmpleados === 1 ? 'empleado' : 'empleados'}
+                      {d.cuentaCodigo ? ` · cuenta ${d.cuentaCodigo}` : ''})
+                    </span>
+                    {!d.cuentaContableId && (
+                      <span style={{ color: 'var(--wine)', fontWeight: 500 }}> · sin cuenta CxC mapeada</span>
+                    )}
+                  </li>
                 ))}
-              </div>
+              </ul>
               <div style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 6 }}>
-                Su costo no es nómina de Golden — son intercompany. La separación contable del asiento queda para F-056.
+                Las CxC intercompany se liquidan luego vía facturación entre empresas (reclasificación: F-056.1).
               </div>
+              {proyeccion.empresasSinCuenta.length > 0 && (
+                <div style={{ fontSize: 11, color: 'var(--wine)', marginTop: 4 }}>
+                  ⚠ Empresa{proyeccion.empresasSinCuenta.length === 1 ? '' : 's'} sin cuenta CxC: {proyeccion.empresasSinCuenta.join(', ')}.
+                  Pedile al contador la cuenta y agregala a CXC_INTERCOMPANY.
+                </div>
+              )}
             </div>
           )}
 
