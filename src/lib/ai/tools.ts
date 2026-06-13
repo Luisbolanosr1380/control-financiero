@@ -23,6 +23,8 @@ import {
 import { getCentrosCosto } from '@/lib/db/centros';
 import { generarEstadoResultados } from '@/lib/contabilidad/estado-resultados';
 import { generarBalanceGeneral } from '@/lib/contabilidad/balance-general';
+import { calcularDepreciacionMes } from '@/lib/contabilidad/depreciacion';
+import { GENERAR_ASIENTO_DEPRECIACION } from '@/lib/contabilidad/depreciacion-config';
 import {
   getNotasCredito,
   getNotasCreditoPendientesAprobacion,
@@ -2078,6 +2080,53 @@ export const aiTools = {
             cierre_anterior_Q: Math.round(l.montoAnterior),
             variacion_Q:     Math.round(l.variacion),
             variacion_pct:   l.variacionPct,
+          })),
+      };
+    },
+  }),
+
+  getDepreciacionMes: tool({
+    description:
+      'F-057: depreciación mensual lineal calculada desde ACTIVOS_FIJOS. ' +
+      'Devuelve la cuota total contable del mes, la cuota fiscal (si tasas están cargadas), ' +
+      'el número de activos depreciándose, los totalmente depreciados, y advertencias relevantes ' +
+      '(tasa fiscal pendiente del contador, idempotencia si el mes ya fue depreciado, etc.). ' +
+      '\n\nEsta cuota alimenta la línea "Depreciación y Amortización" del ER del período (orden 260) ' +
+      'y la cuenta de depreciación acumulada del Balance (contra-activo). ' +
+      '\n\nIMPORTANTE: la GENERACIÓN del asiento está detrás de un flag — el motor calcula y ' +
+      'reporta, pero NADIE escribe a libros hasta que el contador valide las tasas Ley ISR y la ' +
+      'estructura del asiento. ' +
+      'USAR para "¿cuánto deprecio este mes?", "¿qué activos llegan a tope?", "¿cuál es la ' +
+      'depreciación fiscal vs contable?".',
+    parameters: z.object({
+      periodo: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)
+        .describe('Mes en formato YYYY-MM (ej: "2026-05").'),
+    }),
+    execute: async ({ periodo }) => {
+      const dep = await calcularDepreciacionMes({ periodo });
+      return {
+        periodo: dep.periodo,
+        fecha_asiento: dep.fechaAsiento,
+        generacion_habilitada: GENERAR_ASIENTO_DEPRECIACION,
+        ya_generado_en_periodo: dep.yaGeneradoEnPeriodo,
+        cuota_contable_total_Q: Math.round(dep.cuotaTotalQ),
+        cuota_fiscal_total_Q:   Math.round(dep.cuotaFiscalTotalQ),
+        activos_depreciando:        dep.activosDepreciando,
+        activos_totalmente_depreciados: dep.activosTotalmenteDepreciados,
+        asiento_balanceado: dep.balanceado,
+        advertencias: dep.advertencias,
+        // Activos que aportan cuota > 0 (lo relevante para análisis).
+        activos: dep.activos
+          .filter(a => a.cuotaMes > 0 || a.llegaAlTope)
+          .map(a => ({
+            nombre:                a.nombre,
+            categoria:             a.categoria,
+            cuota_mes_Q:           Math.round(a.cuotaMes),
+            cuota_fiscal_mes_Q:    a.cuotaFiscalMes == null ? null : Math.round(a.cuotaFiscalMes),
+            deprec_acum_antes_Q:   Math.round(a.depreciacionAcumuladaAntes),
+            deprec_acum_despues_Q: Math.round(a.depreciacionAcumuladaDespues),
+            valor_libros_Q:        Math.round(a.valorEnLibrosDespues),
+            llega_al_tope:         a.llegaAlTope,
           })),
       };
     },

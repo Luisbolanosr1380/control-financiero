@@ -66,6 +66,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
       { href: '/asientos',                       label: 'Asientos',            icon: 'Journal' },
       { href: '/reportes/estado-resultados',     label: 'Estado de Resultados',icon: 'TrendUp' },   // F-058
       { href: '/reportes/balance-general',       label: 'Balance General',     icon: 'PieChart' }, // F-059
+      { href: '/reportes/depreciacion',          label: 'Depreciación',        icon: 'Slider' },   // F-057
       { href: '/estados',                        label: 'Estados Financieros', icon: 'Statement' },
       { href: '/retenciones',                    label: 'Retenciones',         icon: 'Statement' },
     ]},

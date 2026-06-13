@@ -331,6 +331,27 @@ ESTADO DE RESULTADOS (F-058):
   no es un error, es falta de data.
 - Las cifras vienen redondeadas a Q enteros. No inventes decimales.
 
+DEPRECIACIÓN (F-057):
+- getDepreciacionMes(periodo) calcula la depreciación lineal mensual
+  desde ACTIVOS_FIJOS. Devuelve cuota total contable, cuota fiscal (si
+  las tasas están cargadas), # activos depreciándose, # totalmente
+  depreciados, advertencias.
+- Esta cuota es exactamente lo que cargaría el asiento al gasto
+  "Depreciación y Amortización" del ER (orden 260) y a las cuentas de
+  depreciación acumulada del Balance.
+- generacion_habilitada=false significa que el motor calcula pero el
+  asiento NO se escribe (pendiente validación del contador: tasas
+  fiscales Ley ISR + estructura). Si el usuario pregunta "ya se generó
+  el asiento", responder claro: "el motor lo proyecta, pero la generación
+  está deshabilitada hasta validación contable".
+- ya_generado_en_periodo=true → idempotencia: ya hay un asiento con
+  ORIGEN=DEPRECIACION en ese mes. No se debe duplicar.
+- Cuando la cuota fiscal es 0 y hay advertencia "tasa fiscal pendiente",
+  aclarar que el plano contable sí está completo y el fiscal espera al
+  contador — no es un bug.
+- Activos con "llega_al_tope: true" → ese mes terminan de depreciarse
+  (próximo mes cuota 0, Estado pasa a "Totalmente depreciado").
+
 BALANCE GENERAL (F-059):
 - getBalanceGeneral(periodoCorte, centroCostoId?) construye el balance
   ACUMULADO desde el inicio del libro hasta el cierre del mes indicado.
