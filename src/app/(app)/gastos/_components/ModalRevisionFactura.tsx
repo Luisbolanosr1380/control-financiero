@@ -37,6 +37,10 @@ import { cargarOpcionesModalAction, type OpcionesModal, type OpcionSelector } fr
 import { CUENTAS_SISTEMA } from '@/lib/contabilidad/cuentas-sistema';
 import type { FacturaIn } from '@/lib/db/facturas-in';
 import { MontoInput } from '@/components/ui/monto-input';
+import {
+  sugerirCuentaGastoAction,
+  type SugerenciaCuenta,
+} from '@/app/(app)/gastos/_actions/sugerir-cuenta-gasto';
 
 interface Props {
   factura: FacturaIn;
@@ -135,6 +139,13 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
   const [centroCostoId, setCentroCostoId] = useState('');
   const [categoriaGastoId, setCategoriaGastoId] = useState('');
   const [searchCuenta, setSearchCuenta] = useState('');
+  // F-052b: sugerencia IA de cuenta de gasto. Se calcula UNA vez cuando
+  // tenemos opciones cargadas + el resolver de proveedor (existe o no).
+  const [sugerencia, setSugerencia] = useState<SugerenciaCuenta | null>(null);
+  const [sugerenciaLoading, setSugerenciaLoading] = useState(false);
+  // Sticky: si el usuario YA tocó el dropdown manualmente, NO pisamos su
+  // elección cuando llega o cambia la sugerencia.
+  const [usuarioTocoCuenta, setUsuarioTocoCuenta] = useState(false);
   const [tipoOperativo, setTipoOperativo] = useState<TipoOp>('Operativo');
   const [metodoPago, setMetodoPago] = useState<MetodoPago>('Plazo');
   const [bancoId, setBancoId] = useState('');
@@ -180,6 +191,41 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
     }, 400);
     return () => { cancelado = true; clearTimeout(tid); };
   }, [proveedorNit, proveedorNombre]);
+
+  // F-052b: una vez que tenemos opciones + resolución del proveedor,
+  // pedimos la sugerencia jerárquica (memoria/recurrente/catálogo/IA).
+  // Si el usuario YA tocó el dropdown, NO pisamos su elección.
+  useEffect(() => {
+    if (!opciones) return;
+    if (estadoProveedor.tipo === 'idle' || estadoProveedor.tipo === 'buscando') return;
+    let cancelado = false;
+    setSugerenciaLoading(true);
+    const proveedorId = estadoProveedor.tipo === 'existe' ? estadoProveedor.recordId : undefined;
+    sugerirCuentaGastoAction({
+      proveedorId,
+      proveedorNombre: proveedorNombre || (estadoProveedor.tipo === 'existe' ? estadoProveedor.nombre : ''),
+      proveedorNit: proveedorNit || undefined,
+      descripcion: (factura.datosNormalizados || '').slice(0, 1500) || undefined,
+    })
+      .then(s => {
+        if (cancelado) return;
+        setSugerencia(s);
+        // Pre-seleccionar SI confianza ≥ 0.5 Y usuario no tocó.
+        if (!usuarioTocoCuenta && s.cuentaId && s.confianza >= 0.5) {
+          setCategoriaGastoId(s.cuentaId);
+        }
+      })
+      .catch(err => {
+        if (!cancelado) console.warn('F-052 sugerencia falló (UI):', err);
+      })
+      .finally(() => {
+        if (!cancelado) setSugerenciaLoading(false);
+      });
+    return () => { cancelado = true; };
+    // Importante: NO depender de `usuarioTocoCuenta` para no re-disparar
+    // al cambiar el flag. Solo se re-evalúa cuando cambia algo del input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opciones, estadoProveedor, proveedorNombre, proveedorNit, factura.datosNormalizados]);
 
   // Cuentas filtradas por search.
   const cuentasFiltradas = useMemo(() => {
@@ -454,6 +500,7 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
 
               {/* 3.3 Cuenta contable */}
               <SubSection title="Cuenta contable de gasto (obligatorio)">
+                <SugerenciaCuentaBadge sugerencia={sugerencia} loading={sugerenciaLoading} />
                 <input
                   type="text"
                   className="input"
@@ -464,7 +511,7 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
                 />
                 <select
                   value={categoriaGastoId}
-                  onChange={(e) => setCategoriaGastoId(e.target.value)}
+                  onChange={(e) => { setCategoriaGastoId(e.target.value); setUsuarioTocoCuenta(true); }}
                   className="input"
                   size={6}
                   style={{ height: 'auto' }}
@@ -472,7 +519,7 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
                   {cuentasFiltradas.map(o => <option key={o.id} value={o.id}>{o.label}</option>)}
                 </select>
                 <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 4 }}>
-                  {opciones.cuentasGasto.length} cuentas cargadas · sin pre-filtro automático (CUENTAS field IDs pendientes).
+                  {opciones.cuentasGasto.length} cuentas cargadas.
                 </div>
               </SubSection>
 
@@ -688,6 +735,79 @@ function Banner({ kind, children }: { kind: 'info' | 'ok' | 'warn'; children: Re
   return (
     <div style={{ padding: '6px 10px', background: styles.bg, border: `1px solid ${styles.bd}`, borderRadius: 4, fontSize: 11.5, color: styles.fg }}>
       {children}
+    </div>
+  );
+}
+
+/* =========================================================================
+ * F-052b — Badge de sugerencia de cuenta
+ *
+ * Patrón "AI sugiere, humano decide". El color sale del nivel de
+ * confianza × origen:
+ *   - memoria / recurrente / catálogo → verde "Sugerido ✓"
+ *   - ia ≥ 0.75 → verde "Sugerido por IA"
+ *   - ia 0.5–0.75 → ámbar "Sugerido por IA · verificar"
+ *   - ia < 0.5 → gris "Posible: …" (NO se preselecciona)
+ * ========================================================================= */
+
+function SugerenciaCuentaBadge({
+  sugerencia, loading,
+}: {
+  sugerencia: SugerenciaCuenta | null;
+  loading: boolean;
+}) {
+  if (loading) {
+    return (
+      <div style={{ fontSize: 11, color: 'var(--ink-4)', marginBottom: 6 }}>
+        Buscando sugerencia…
+      </div>
+    );
+  }
+  if (!sugerencia || !sugerencia.cuentaId) return null;
+
+  const { origen, confianza, codigo, nombre, razon } = sugerencia;
+  const esIA = origen === 'ia';
+  const labelOrigen =
+    origen === 'memoria'    ? 'Sugerido · proveedor habitual' :
+    origen === 'recurrente' ? 'Sugerido · obligación recurrente' :
+    origen === 'catalogo'   ? 'Sugerido · catálogo' :
+    esIA && confianza >= 0.75 ? 'Sugerido por IA' :
+    esIA && confianza >= 0.5  ? 'Sugerido por IA · verificá' :
+    esIA                      ? 'Posible (baja confianza)' :
+    'Sugerido';
+
+  const colores =
+    !esIA || confianza >= 0.75 ? { bg: '#E8EDDE', bd: 'var(--olive)', fg: 'var(--ink)' } :
+    confianza >= 0.5           ? { bg: '#FBF1DC', bd: 'var(--amber)', fg: 'var(--ink-2)' } :
+                                 { bg: 'var(--paper-2)', bd: 'var(--line-2)', fg: 'var(--ink-3)' };
+
+  const tooltip = esIA && razon
+    ? `${razon} · confianza ${(confianza * 100).toFixed(0)}%`
+    : undefined;
+
+  return (
+    <div
+      title={tooltip}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '6px 10px',
+        background: colores.bg,
+        border: `1px solid ${colores.bd}`,
+        borderRadius: 4,
+        fontSize: 11.5,
+        color: colores.fg,
+        marginBottom: 6,
+      }}
+    >
+      <span style={{ fontWeight: 500 }}>{labelOrigen}:</span>
+      <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {codigo ? `${codigo} · ${nombre}` : nombre}
+      </span>
+      {esIA && (
+        <span style={{ fontSize: 10.5, color: 'var(--ink-3)' }}>
+          {(confianza * 100).toFixed(0)}%
+        </span>
+      )}
     </div>
   );
 }

@@ -23,6 +23,7 @@
  */
 
 import { revalidatePath } from 'next/cache';
+import { aprenderCuentaHabitualProveedor } from '@/lib/gastos/services/sugerir-cuenta-gasto';
 import { currentUser } from '@clerk/nextjs/server';
 import { airtable } from '@/lib/db/airtable';
 import { obtenerDateTimeHoyGuatemala } from '@/lib/utils/fechas';
@@ -372,6 +373,20 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
       console.warn(`F-050.1: MOVIMIENTO_BANCARIO no creado para gasto ${gastoId}:`,
         err instanceof Error ? err.message : err);
     }
+  }
+
+  // F-052b: aprendizaje pasivo. Si la cuenta que Stark dejó en el form
+  // difiere de la que el proveedor tenía como CUENTA_GASTO_HABITUAL,
+  // actualizamos. Idempotente y fail-soft (un error acá no debe romper
+  // el éxito de la aprobación).
+  try {
+    await aprenderCuentaHabitualProveedor({
+      proveedorId: proveedor.recordId,
+      cuentaId:    input.categoriaGastoId,
+    });
+  } catch (err) {
+    console.warn('F-052b aprenderCuentaHabitualProveedor falló (no bloquea):',
+      err instanceof Error ? err.message : err);
   }
 
   revalidatePath('/gastos');
