@@ -137,4 +137,10 @@ export const CUENTAS_FIELDS = {
   // F-058: singleSelect "Acreedora" | "Deudora" — usado por el motor de
   // Estado de Resultados para determinar el signo natural del saldo.
   naturaleza_er:  'fldbcwjsLuBYTIhtV',
+  // F-059: análogo para Balance General. Activo natural=Deudora;
+  // Pasivo/Capital natural=Acreedora. Las cuentas contra-activo
+  // (depreciación acumulada, amortización acumulada) son acreedoras
+  // por convención — se reportan dentro del activo pero el signo
+  // de MAPEO_BS las resta.
+  naturaleza_bs:  'fldnPhG8C6h1t1cW9',
 } as const;
