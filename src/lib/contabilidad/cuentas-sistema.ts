@@ -78,6 +78,41 @@ export const CXC_INTERCOMPANY = {
 
 export type EmpresaIntercompany = keyof typeof CXC_INTERCOMPANY;
 
+/**
+ * F-056.1 — Cuentas de INGRESO por servicios administrativos a la
+ * empresa hermana (management fee / margen intercompany).
+ *
+ * Códigos 4-1-7-x creados via MCP el 12 jun 2026. Una cuenta de ingreso
+ * por cada empresa hermana, espejo de CXC_INTERCOMPANY.
+ *
+ * Cuando se cobra la factura intercompany con margen > 0, la diferencia
+ * entre (cobrado) y (CxC adelantada) se acredita acá como ingreso por
+ * servicios administrativos prestados.
+ *
+ * Con margen = 0 (estado actual: reembolso al costo), esta cuenta no se
+ * usa — el asiento de recuperación es solo Dr Banco / Cr CxC.
+ */
+export const INGRESO_INTERCOMPANY = {
+  HIT: {
+    recordId: 'recnw90JQ1TWJtIEz',
+    codigo: '4-1-7-1',
+    nombre: 'Ingresos Servicios Admin. — HIT',
+    empresa: 'HIT' as const,
+  },
+  Poligrafy: {
+    recordId: 'recOTOhk4GIPO0cJI',
+    codigo: '4-1-7-2',
+    nombre: 'Ingresos Servicios Admin. — Poligrafy',
+    empresa: 'Poligrafy' as const,
+  },
+  BYDSA: {
+    recordId: 'recOjSaZjPI6gMHYX',
+    codigo: '4-1-7-3',
+    nombre: 'Ingresos Servicios Admin. — BYDSA',
+    empresa: 'BYDSA' as const,
+  },
+} as const;
+
 export const CUENTAS_TABLE_ID = 'tblP2yysprsDBIjx5';
 
 /**

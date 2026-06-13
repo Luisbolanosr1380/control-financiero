@@ -83,7 +83,8 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
   // Admin: solo si rol = admin.
   if (esAdmin) {
     groups.push({ group: 'Admin', items: [
-      { href: '/admin/usuarios', label: 'Usuarios y AI', icon: 'Users' },
+      { href: '/admin/usuarios',     label: 'Usuarios y AI',   icon: 'Users' },
+      { href: '/admin/intercompany', label: 'Intercompany',    icon: 'Journal' },   // F-056.1
     ]});
   }
 
