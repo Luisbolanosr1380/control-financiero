@@ -28,6 +28,7 @@ import { BoletaAcciones } from './boleta-acciones';
 import { BoletasBulkButton } from './boletas-bulk-button';
 import { ModalCancelarPago } from './modal-cancelar-pago';
 import { ModalAgregarDescuento } from './modal-agregar-descuento';
+import { ModalGenerarAsientoPlanilla } from './modal-generar-asiento-planilla';
 import type { LineaPlanilla, Periodo, EstadoPeriodo, EstadoPagoLinea } from '@/lib/db/planillas';
 import { calcularQuincena, type AjustesQuincena, type DescuentoQuincena } from '@/lib/calculos/planilla-calc';
 
@@ -85,6 +86,8 @@ const formatFecha = (s: string | undefined): string =>
 
 export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, bancos }: Props) {
   const [aprobarOpen, setAprobarOpen] = useState(false);
+  // F-056.2: modal de generación de asiento (preview + escritura behind flag).
+  const [asientoOpen, setAsientoOpen] = useState(false);
   const [pagarLinea, setPagarLinea]   = useState<LineaPlanilla | null>(null);
   const [diferirLinea, setDiferirLinea] = useState<LineaPlanilla | null>(null);
   const [cancelarLinea, setCancelarLinea] = useState<LineaPlanilla | null>(null);   // F-038.4
@@ -312,6 +315,16 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
             </span>
           )}
           {!esBorrador && (
+            <button
+              type="button"
+              className="btn btn-secondary"
+              onClick={() => setAsientoOpen(true)}
+              title="Generar el asiento contable de esta planilla (preview + escritura tras validación)"
+            >
+              <I.Journal size={13} /> Generar asiento
+            </button>
+          )}
+          {!esBorrador && (
             <BoletasBulkButton
               periodoId={periodo.id}
               cantidadPagadas={lineasUI.filter(l => l.estadoPago === 'Pagado').length}
@@ -465,6 +478,14 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
        * ============================================================ */}
       {aprobarOpen && (
         <ModalAprobarPlanilla periodo={periodo} onClose={() => setAprobarOpen(false)} />
+      )}
+      {asientoOpen && (
+        <ModalGenerarAsientoPlanilla
+          periodoId={periodo.id}
+          periodoNombre={periodo.nombre}
+          bancos={bancos}
+          onClose={() => setAsientoOpen(false)}
+        />
       )}
       {pagarLinea && (
         <ModalPagarEmpleado linea={pagarLinea} bancos={bancos} onClose={() => setPagarLinea(null)} />
