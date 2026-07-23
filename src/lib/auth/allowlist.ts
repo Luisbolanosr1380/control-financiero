@@ -21,6 +21,7 @@ export const ROLES_USUARIOS: Record<string, Role> = {
   'luis@goldentalent.org': 'admin',
   // 'monica@goldentalent.org': 'gerencia',
   // 'operativo1@goldentalent.org': 'operativo',
+  'rcontreras@goldentalent.org': 'admin',
 };
 
 
