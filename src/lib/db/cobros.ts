@@ -4,7 +4,7 @@ import { F } from './mappers';
 import { getBancos } from './bancos';
 import { dataSource, writeSource } from '../config/data-source';
 import { sbCobrosRecords, sbFacturasRecords } from '../supabase/records';
-import { rpc, uuidRequerido, uuidOpcional } from '../supabase/writes';
+import { rpc, uuidRequerido } from '../supabase/writes';
 import type { Payment } from '../types';
 
 /* ===== Rama Supabase (MIGRACIÓN CAPA 2 · Fase 1) ===== */
@@ -602,15 +602,19 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
       for (const l of lineas) {
         facturaUuid.set(l.id, await uuidRequerido('facturas_clientes', l.id, 'registrarCobro'));
       }
-      const bancoUuid = new Map<string, string | null>();
+      const bancoUuid = new Map<string, string>();
       const cobrosJson = [] as Array<Record<string, unknown>>;
       for (const p of cobrosPlan) {
         const c = p.componente;
         const isRet = esMetodoRetencion(c.metodo);
         let cuentaBancoId: string | null = null;
         if (!isRet && c.bancoId) {
-          if (!bancoUuid.has(c.bancoId)) bancoUuid.set(c.bancoId, await uuidOpcional('bancos', c.bancoId));
-          cuentaBancoId = bancoUuid.get(c.bancoId) ?? null;
+          // FIX-F2C: banco inválido debe FALLAR (como fallaría el link en
+          // Airtable), no degradarse a null silenciosamente.
+          if (!bancoUuid.has(c.bancoId)) {
+            bancoUuid.set(c.bancoId, await uuidRequerido('bancos', c.bancoId, 'registrarCobro (banco)'));
+          }
+          cuentaBancoId = bancoUuid.get(c.bancoId)!;
         }
         cobrosJson.push({
           factura_id:          facturaUuid.get(p.facturaLineId),

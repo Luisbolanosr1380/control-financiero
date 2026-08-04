@@ -91,17 +91,33 @@ async function main() {
     const saldo1 = await getSaldoPendiente(marca);
     check(saldo1?.saldoPendiente === 300 && saldo1?.estado === 'COBRADO PARCIAL', `getSaldoPendiente refleja 300 / COBRADO PARCIAL`);
 
-    // ATOMICIDAD: un componente con banco basura → RPC falla → nada nuevo
-    const antes = await sb.from('cobros_clientes').select('id', { count: 'exact' }).limit(1);
-    const rBad = await registrarCobro({
+    // Banco inválido debe RECHAZARSE antes de escribir (paridad con Airtable).
+    const rBadBanco = await registrarCobro({
       noFactura: marca, fecha: '2026-08-04',
       componentes: [{ monto: 100, metodo: 'Transferencia', bancoId: 'recNOEXISTE123456', referencia: 'x' }],
     });
+    check(!rBadBanco.ok, `banco inexistente rechazado (${(rBadBanco.error ?? '').slice(0, 60)}…)`);
+
+    // ATOMICIDAD real: RPC con 2 cobros, el 2º con factura_id inválido →
+    // la FK revienta DENTRO de la transacción → ni el 1º ni el estado quedan.
+    const antes = await sb.from('cobros_clientes').select('id', { count: 'exact' }).limit(1);
+    const facturaUuid = (await sb.from('facturas_clientes').select('id').eq('airtable_id', `${marca}-fac`).single()).data!.id;
+    let rpcFallo = false;
+    try {
+      await sb.rpc('fase2_registrar_cobro', {
+        p_cobros: [
+          { factura_id: facturaUuid, fecha_cobro: '2026-08-04', monto_cobrado: 50, metodo: 'Transferencia', moneda: 'GTQ', tipo_cambio: 1, cobro_grupo_id: `${marca}-atom` },
+          { factura_id: '00000000-0000-0000-0000-000000000000', fecha_cobro: '2026-08-04', monto_cobrado: 50, metodo: 'Transferencia', moneda: 'GTQ', tipo_cambio: 1, cobro_grupo_id: `${marca}-atom` },
+        ],
+        p_factura_ids: [facturaUuid],
+        p_nuevo_estado: 'COBRADO ',
+      }).then(r => { if (r.error) throw new Error(r.error.message); });
+    } catch { rpcFallo = true; }
     const despues = await sb.from('cobros_clientes').select('id', { count: 'exact' }).limit(1);
-    check(!rBad.ok && antes.count === despues.count, `ATOMICIDAD cobro: fallo forzado → 0 filas nuevas (${rBad.error?.slice(0, 60)}…)`);
+    check(rpcFallo && antes.count === despues.count, 'ATOMICIDAD cobro: FK inválida a mitad de la RPC → 0 filas nuevas (rollback)');
     {
       const { data } = await sb.from('facturas_clientes').select('estado').eq('airtable_id', `${marca}-fac`).single();
-      check((data?.estado ?? '') === 'COBRADO PARCIAL ', 'ATOMICIDAD cobro: estado de factura intacto');
+      check((data?.estado ?? '') === 'COBRADO PARCIAL ', 'ATOMICIDAD cobro: estado de factura intacto (no quedó COBRADO)');
     }
 
     // anular el grupo → estado vuelve a EMITIDA
@@ -256,6 +272,12 @@ async function main() {
         if (tabla === 'facturas_in') {
           // gasto_id FK: los gastos de prueba ya se borran por su propia entrada.
           await sb2.from('facturas_in').update({ gasto_id: null }).eq('airtable_id', appId);
+        }
+        if (tabla === 'facturas_clientes') {
+          // Cualquier cobro de prueba que haya quedado colgando de la factura
+          // TEST (aunque no esté trackeado) se barre antes de borrarla.
+          const { data } = await sb2.from('facturas_clientes').select('id').eq('airtable_id', appId).single();
+          if (data) await sb2.from('cobros_clientes').delete().eq('factura_id', data.id);
         }
         await sb2.from(tabla).delete().eq('airtable_id', appId);
       } catch (err) {

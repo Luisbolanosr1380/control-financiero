@@ -366,8 +366,12 @@ interface CobroRow extends Row {
 }
 
 export async function sbCobrosRecords(): Promise<PseudoRecord[]> {
+  // FIX-F2C: cobros↔facturas tiene DOS relaciones desde que existe la tabla
+  // puente cobros_facturas (03_fase2_gaps.sql): la FK directa factura_id y
+  // la many-to-many. El embed DEBE nombrar la FK directa o PostgREST
+  // devuelve PGRST201 (ambiguo) y la lectura entera falla.
   const rows = await fetchAll<CobroRow>('cobros_clientes', {
-    select: '*, factura:facturas_clientes(airtable_id, no_factura, cliente:clientes(airtable_id)), banco:bancos!cobros_clientes_cuenta_banco_id_fkey(airtable_id)',
+    select: '*, factura:facturas_clientes!cobros_clientes_factura_id_fkey(airtable_id, no_factura, cliente:clientes(airtable_id)), banco:bancos!cobros_clientes_cuenta_banco_id_fkey(airtable_id)',
     order: { column: 'fecha_cobro', ascending: false },
   });
   ordenarFechaDesc(rows, 'fecha_cobro');
@@ -553,7 +557,9 @@ export async function sbPlanillaRecords(): Promise<PseudoRecord[]> {
 
 export async function sbNotasCreditoRecords(): Promise<PseudoRecord[]> {
   const rows = await fetchAll<Row>('notas_credito', {
-    select: '*, factura:facturas_clientes(airtable_id, no_factura), cliente:clientes(airtable_id, razon_social)',
+    // FK explícita (lección FIX-F2C: los embeds sin hint se rompen si
+    // aparece una segunda relación entre las mismas tablas).
+    select: '*, factura:facturas_clientes!notas_credito_factura_id_fkey(airtable_id, no_factura), cliente:clientes(airtable_id, razon_social)',
     order: { column: 'fecha_emision', ascending: false },
   });
   ordenarFechaDesc(rows, 'fecha_emision');
