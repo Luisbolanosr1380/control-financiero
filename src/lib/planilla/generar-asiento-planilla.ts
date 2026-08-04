@@ -55,6 +55,10 @@ import {
   type EmpresaEmpleadora,
 } from '@/lib/empleados/empresa';
 import { TABLES } from '@/lib/db/airtable';
+import { dataSource, writeSource } from '@/lib/config/data-source';
+import { getCentrosCosto } from '@/lib/db/centros';
+import { supabase } from '@/lib/supabase/client';
+import { rpc, uuidRequerido, uuidOpcional } from '@/lib/supabase/writes';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -165,6 +169,21 @@ const selectName = (v: unknown): string => {
  * RECORD_ID() (fórmula function, NO field reference) + returnFieldsByFieldId.
  */
 async function cuentaContableDelBanco(bancoId: string): Promise<{ id: string; codigo: string }> {
+  if (dataSource('bancos') === 'supabase') {
+    const sb = supabase();
+    if (!sb) throw new Error('Supabase no está configurado.');
+    const { data, error } = await sb.from('bancos')
+      .select('cuenta:cuentas!bancos_cuenta_contable_id_fkey(airtable_id, codigo_path)')
+      .eq('airtable_id', bancoId)
+      .limit(1);
+    if (error) throw new Error(`bancos: ${error.message}`);
+    if (!data || data.length === 0) throw new Error(`Banco ${bancoId} no encontrado.`);
+    const cuenta = (data[0] as { cuenta: { airtable_id?: string; codigo_path?: string } | null }).cuenta;
+    if (!cuenta?.airtable_id) {
+      throw new Error(`Banco ${bancoId} sin CUENTA_CONTABLE configurada. Asignala en BANCOS antes de generar el asiento.`);
+    }
+    return { id: cuenta.airtable_id, codigo: cuenta.codigo_path ?? '' };
+  }
   if (!airtable) throw new Error('Airtable no está configurado.');
   const records = await airtable(BANCOS_TABLE_ID)
     .select({
@@ -190,6 +209,23 @@ async function cuentaContableDelBanco(bancoId: string): Promise<{ id: string; co
  * período dado? Buscamos en ASIENTOS por origen + periodo (link).
  */
 async function asientoExistenteParaPeriodo(periodoId: string): Promise<string | null> {
+  if (writeSource('planilla') === 'supabase') {
+    try {
+      const sb = supabase();
+      if (!sb) return null;
+      const periodoUuid = await uuidOpcional('periodos', periodoId);
+      if (!periodoUuid) return null;
+      const { data } = await sb.from('asientos')
+        .select('airtable_id')
+        .eq('origen', ORIGEN_ASIENTO_PLANILLA)
+        .eq('periodo_id', periodoUuid)
+        .limit(1);
+      return data?.[0] ? String((data[0] as { airtable_id: string }).airtable_id) : null;
+    } catch (err) {
+      console.warn('FASE 2.4 asientoExistenteParaPeriodo (supabase) falló:', err instanceof Error ? err.message : err);
+      return null;
+    }
+  }
   if (!airtable) return null;
   try {
     const records = await airtable(ASIENTOS_TABLE_ID)
@@ -402,6 +438,10 @@ function construirGrupos(
  * ========================================================================= */
 
 async function leerCentrosNombre(): Promise<Map<string, string>> {
+  if (dataSource('centros_costo') === 'supabase') {
+    const centros = await getCentrosCosto();
+    return new Map(centros.map(c => [c.id, c.nombre]));
+  }
   if (!airtable) return new Map();
   try {
     const records = await airtable(TABLES.CENTROS_COSTO).select({ fields: ['NOMBRE'] }).all();
@@ -516,7 +556,7 @@ export async function previewAsientoPlanilla(input: GenerarAsientoPlanillaInput)
  * ========================================================================= */
 
 export async function generarAsientoPlanilla(input: GenerarAsientoPlanillaInput): Promise<ResultadoGeneracion> {
-  if (!airtable) {
+  if (!airtable && writeSource('planilla') !== 'supabase') {
     return { ok: false, error: 'Airtable no está configurado.' };
   }
   if (!GENERAR_ASIENTO_PLANILLA) {
@@ -534,6 +574,64 @@ export async function generarAsientoPlanilla(input: GenerarAsientoPlanillaInput)
     return { ok: false, previa, error: 'Sin partidas para escribir.' };
   }
 
+  // ═══ FASE 2.4 — ESCRITURA TRANSACCIONAL EN SUPABASE ═══
+  // Una RPC crea ASIENTO + PARTIDAS y vincula las líneas de PLANILLA al
+  // asiento — TODO en una transacción (incluido el vínculo, que en la ruta
+  // Airtable era fail-soft). El unique index de asiento_ref refuerza la
+  // idempotencia: reintento del mismo período → ASIENTO_DUPLICADO.
+  if (writeSource('planilla') === 'supabase') {
+    try {
+      const periodoUuid = await uuidRequerido('periodos', input.periodoId, 'generarAsientoPlanilla');
+      const partidasJson: Array<Record<string, unknown>> = [];
+      for (const p of previa.partidas) {
+        partidasJson.push({
+          cuenta_id: await uuidRequerido('cuentas', p.cuentaContableId, 'generarAsientoPlanilla (cuenta)'),
+          centro_costo_id: p.centroCostoId
+            ? await uuidRequerido('centros_costo', p.centroCostoId, 'generarAsientoPlanilla (CC)')
+            : '',
+          descripcion_linea: p.descripcion,
+          debe: p.tipo === 'Dr' ? p.montoQ : 0,
+          haber: p.tipo === 'Cr' ? p.montoQ : 0,
+          moneda: 'GTQ',
+          tipo_cambio: 1,
+          periodo: input.periodoNombre,
+        });
+      }
+      const planillaUuids: string[] = [];
+      for (const l of input.lineas) {
+        const u = await uuidOpcional('planilla', l.id);
+        if (u) planillaUuids.push(u);
+      }
+      const res = await rpc<{ asiento_airtable_id: string; partidas_airtable_ids: string[] }>(
+        'fase2_crear_asiento_con_partidas',
+        {
+          p_asiento: {
+            asiento_ref: `PLA-${input.periodoNombre}`,
+            fecha_asiento: input.fechaAsiento,
+            periodo_id: periodoUuid,
+            origen: ORIGEN_ASIENTO_PLANILLA,
+            descripcion: `Planilla ${input.periodoNombre}`,
+          },
+          p_partidas: partidasJson,
+          p_planilla_ids: planillaUuids,
+        },
+        ['asientos', 'partidas'],
+      );
+      return {
+        ok: true,
+        previa,
+        asientoId: res.asiento_airtable_id,
+        numPartidas: (res.partidas_airtable_ids ?? []).length,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('ASIENTO_DUPLICADO')) {
+        return { ok: false, previa, error: `Idempotencia: este período ya está contabilizado (${msg}).` };
+      }
+      return { ok: false, previa, error: `Error generando asiento en Supabase (nada se escribió): ${msg}` };
+    }
+  }
+
   // 1) Crear ASIENTO.
   type AField = string | number | string[] | undefined;
   const origen: OrigenAsiento = ORIGEN_ASIENTO_PLANILLA;
@@ -547,7 +645,7 @@ export async function generarAsientoPlanilla(input: GenerarAsientoPlanillaInput)
 
   let asientoId = '';
   try {
-    const creados = (await (airtable(ASIENTOS_TABLE_ID).create as unknown as (
+    const creados = (await (airtable!(ASIENTOS_TABLE_ID).create as unknown as (
       records: Array<{ fields: Record<string, AField> }>,
       opts: { typecast: boolean },
     ) => Promise<Array<{ id: string }>>)([{ fields: fieldsAsiento }], { typecast: true }));
@@ -578,7 +676,7 @@ export async function generarAsientoPlanilla(input: GenerarAsientoPlanillaInput)
   try {
     for (let i = 0; i < payloads.length; i += 10) {
       const lote = payloads.slice(i, i + 10);
-      const creadas = (await (airtable(PARTIDAS_TABLE_ID).create as unknown as (
+      const creadas = (await (airtable!(PARTIDAS_TABLE_ID).create as unknown as (
         records: Array<{ fields: Record<string, AField> }>,
         opts: { typecast: boolean },
       ) => Promise<Array<{ id: string }>>)(lote, { typecast: true }));
@@ -587,12 +685,12 @@ export async function generarAsientoPlanilla(input: GenerarAsientoPlanillaInput)
   } catch (err) {
     // Rollback: borrar partidas creadas + el asiento, en ese orden.
     try {
-      if (partidasIds.length > 0) await airtable(PARTIDAS_TABLE_ID).destroy(partidasIds);
+      if (partidasIds.length > 0) await airtable!(PARTIDAS_TABLE_ID).destroy(partidasIds);
     } catch (e) {
       console.warn('F-056.2 rollback partidas falló:', e instanceof Error ? e.message : e);
     }
     try {
-      await airtable(ASIENTOS_TABLE_ID).destroy([asientoId]);
+      await airtable!(ASIENTOS_TABLE_ID).destroy([asientoId]);
     } catch (e) {
       console.warn('F-056.2 rollback ASIENTO falló — queda huérfano:', e instanceof Error ? e.message : e);
       return {
@@ -610,7 +708,7 @@ export async function generarAsientoPlanilla(input: GenerarAsientoPlanillaInput)
     const FL_ASIENTO_NAME = 'ASIENTO';  // field name en PLANILLA (legacy; los IDs aún no están en código)
     const lineaUpdates = input.lineas.map(l => ({ id: l.id, fields: { [FL_ASIENTO_NAME]: [asientoId] } }));
     for (let i = 0; i < lineaUpdates.length; i += 10) {
-      await airtable(TABLES.PLANILLA).update(lineaUpdates.slice(i, i + 10), { typecast: true });
+      await airtable!(TABLES.PLANILLA).update(lineaUpdates.slice(i, i + 10), { typecast: true });
     }
   } catch (err) {
     console.warn('F-056.2 vínculo PLANILLA→ASIENTO falló (asiento OK):', err instanceof Error ? err.message : err);

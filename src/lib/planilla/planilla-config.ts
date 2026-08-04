@@ -25,21 +25,25 @@ export const ORIGEN_ASIENTO_PLANILLA = 'PLANILLA';
  * 6-1-1 (Admin) se LEE en runtime por código porque su recordId no
  * estaba listado en el brief — buscar por prefijo "6-1-1" en CUENTAS.
  */
+// FASE 2.6: códigos actualizados a los definitivos de Supabase. Airtable
+// tenía estos 3 códigos DUPLICADOS (los reusaba "Insumos y Calibración"
+// etc.); Postgres los reasignó al siguiente hermano libre (…-3). Los
+// recordIds NO cambian — son los mismos records.
 export const CUENTAS_NOMINA_GOLDEN_POR_CC = {
   POLIGRAFIA: {
     recordId: 'reckqFTk5CnY7rHFC',
-    codigo:   '5-1-3-2',
-    nombre:   'Sueldos Polígrafía (costo)',
+    codigo:   '5-1-3-3',
+    nombre:   'Nómina Directa Poligrafía',
   },
   SOCIOECONOMICOS: {
     recordId: 'reczi8KqO4NrkMe26',
-    codigo:   '5-1-4-2',
-    nombre:   'Sueldos Socioeconómicos (costo)',
+    codigo:   '5-1-4-3',
+    nombre:   'Nómina Directa Socioeconómicos',
   },
   TALENTTRACK: {
     recordId: 'rec23VvQjJjCQxgLo',
-    codigo:   '5-1-5-2',
-    nombre:   'Sueldos TalentTrackAI (costo)',
+    codigo:   '5-1-5-3',
+    nombre:   'Nómina Directa TalentTrack',
   },
   // ADMIN: se resuelve en runtime por prefijo "6-1-1" desde CUENTAS,
   // porque su recordId no estaba listado en el brief F-056.2.
@@ -47,9 +51,9 @@ export const CUENTAS_NOMINA_GOLDEN_POR_CC = {
 
 /** Códigos exactos que mapean cada nombre de CC al codigo_path de CUENTAS. */
 export const PREFIJOS_NOMINA_GOLDEN = {
-  POLIGRAFIA:        '5-1-3-2',
-  SOCIOECONOMICOS:   '5-1-4-2',
-  TALENTTRACK:       '5-1-5-2',
+  POLIGRAFIA:        '5-1-3-3',
+  SOCIOECONOMICOS:   '5-1-4-3',
+  TALENTTRACK:       '5-1-5-3',
   ADMINISTRATIVO:    '6-1-1',  // se resuelve en runtime
 } as const;
 
