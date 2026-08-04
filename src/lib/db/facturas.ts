@@ -2,15 +2,45 @@ import { airtable, USE_MOCK, TABLES } from './airtable';
 import { obtenerFechaHoyGuatemala } from "../utils/fechas";
 import { formatInTimeZone } from 'date-fns-tz';
 import { consolidateRecords, F } from './mappers';
+import { dataSource } from '../config/data-source';
+import { sbFacturasRecords } from '../supabase/records';
 import { INVOICES as MOCK_INVOICES } from '../mock-data';
 import type { Invoice, InvoiceEstadoBruto } from '../types';
+import type { FieldSet } from 'airtable';
+
+/* ===== Rama Supabase (MIGRACIÓN CAPA 2 · Fase 1) =====
+ * sbFacturasRecords() devuelve pseudo-records con los mismos nombres de
+ * campo que Airtable, ya ordenados por FECHA_EMISION desc. Los filtros que
+ * en Airtable van por filterByFormula acá se aplican en JS con la misma
+ * semántica (los volúmenes son chicos: ~1100 líneas).
+ */
+
+type RecordLike = { id: string; fields: Record<string, unknown> };
+
+/** Equivalente JS de filtroToFormula() — evalúa sobre el record CRUDO. */
+function pasaFiltroRaw(filtro: FiltroTabFactura | undefined, f: Record<string, unknown>): boolean {
+  const e = String(f[F.ESTADO] ?? '').toUpperCase().trim();
+  const v = String(f[F.ESTATUS_COBRANZA] ?? '').toUpperCase().trim();
+  switch (filtro) {
+    case 'cartera_total': return e === 'EMITIDA' || e === 'PENDIENTE' || e === 'COBRADO PARCIAL';
+    case 'por_cobrar':    return e === 'EMITIDA' || e === 'COBRADO PARCIAL';
+    case 'vencidas':      return (e === 'EMITIDA' || e === 'COBRADO PARCIAL') && v === 'VENCIDA';
+    case 'pendientes':    return e === 'PENDIENTE';
+    case 'parciales':     return e === 'COBRADO PARCIAL';
+    case 'cobradas':      return e === 'COBRADO' || e === 'COBRADA';
+    case 'anuladas':      return e === 'ANULADO' || e === 'ANULADA';
+    case 'refacturadas':  return e === 'REFACTURADO' || e === 'REFACTURADA';
+    case 'todas':
+    default:              return true;
+  }
+}
 
 export async function getFacturas(filters?: {
   status?: Invoice['status'];
   custId?: string;
   line?: string;
 }): Promise<Invoice[]> {
-  if (USE_MOCK || !airtable) {
+  if ((USE_MOCK || !airtable) && dataSource('facturas_clientes') !== 'supabase') {
     let result = [...MOCK_INVOICES];
     if (filters?.status) result = result.filter(i => i.status === filters.status);
     if (filters?.custId) result = result.filter(i => i.custId === filters.custId);
@@ -22,13 +52,13 @@ export async function getFacturas(filters?: {
     // F-034: sin maxRecords. `.all()` pagina hasta agotar (eachPage interno).
     // Antes el cap de 2000 cortaba líneas: 888 facturas consolidadas pueden
     // tener > 2000 líneas (multi-línea), bajando count visible a ~757.
-    const records = await airtable(TABLES.FACTURAS)
-      .select({
-        sort: [{ field: 'FECHA_EMISION', direction: 'desc' }],
-      })
-      .all();
+    const records: RecordLike[] = dataSource('facturas_clientes') === 'supabase'
+      ? await sbFacturasRecords()
+      : (await airtable!(TABLES.FACTURAS)
+          .select({ sort: [{ field: 'FECHA_EMISION', direction: 'desc' }] })
+          .all()).map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
 
-    let invoices = consolidateRecords(records.map(r => ({ id: r.id, fields: r.fields })));
+    let invoices = consolidateRecords(records.map(r => ({ id: r.id, fields: r.fields as FieldSet })));
 
     if (filters?.status) invoices = invoices.filter(i => i.status === filters.status);
     if (filters?.custId) invoices = invoices.filter(i => i.custId === filters.custId);
@@ -98,7 +128,7 @@ function brutoFromEstado(estado: unknown): InvoiceEstadoBruto {
  */
 export async function getFacturasLiviano(args: { mes?: string; desde?: string; hasta?: string } = {}): Promise<InvoiceLiviano[]> {
   // Mock: filtra en JS según el set de args provisto.
-  if (USE_MOCK || !airtable) {
+  if ((USE_MOCK || !airtable) && dataSource('facturas_clientes') !== 'supabase') {
     return MOCK_INVOICES
       .filter(i => !args.mes   || (i.fechaEmision ?? '').slice(0, 7) === args.mes)
       .filter(i => !args.desde || (i.fechaEmision ?? '') >= args.desde)
@@ -138,11 +168,25 @@ export async function getFacturasLiviano(args: { mes?: string; desde?: string; h
     const filterByFormula = partes.length === 0 ? undefined
       : partes.length === 1 ? partes[0]
       : `AND(${partes.join(',')})`;
-    let records;
-    try {
-      records = await airtable(TABLES.FACTURAS).select({ fields: FIELDS_CON_AUDIT, ...(filterByFormula ? { filterByFormula } : {}) }).all();
-    } catch {
-      records = await airtable(TABLES.FACTURAS).select({ fields: FIELDS_BASE, ...(filterByFormula ? { filterByFormula } : {}) }).all();
+    let records: ReadonlyArray<{ id: string; fields: FieldSet | Record<string, unknown> }>;
+    if (dataSource('facturas_clientes') === 'supabase') {
+      // Mismo filtro que la fórmula: mes exacto o rango [desde, hasta] inclusive.
+      // La ruta Airtable de liviano NO ordena → orden por record id (ASCII).
+      records = (await sbFacturasRecords())
+        .filter(r => {
+          const fecha = String(r.fields[F.FECHA_EMISION] ?? '').slice(0, 10);
+          if (args.mes && fecha.slice(0, 7) !== args.mes) return false;
+          if (args.desde && !(fecha >= args.desde)) return false;
+          if (args.hasta && !(fecha <= args.hasta)) return false;
+          return true;
+        })
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    } else {
+      try {
+        records = await airtable!(TABLES.FACTURAS).select({ fields: FIELDS_CON_AUDIT, ...(filterByFormula ? { filterByFormula } : {}) }).all();
+      } catch {
+        records = await airtable!(TABLES.FACTURAS).select({ fields: FIELDS_BASE, ...(filterByFormula ? { filterByFormula } : {}) }).all();
+      }
     }
 
     type Row = { id: string; fields: Record<string, unknown> };
@@ -306,6 +350,30 @@ export async function getFacturasPagina(args: { limit?: number; before?: string;
   const limit = args.limit ?? 50;
   const mes = args.mes; // 'YYYY-MM' opcional (F-BF-002a)
 
+  if (dataSource('facturas_clientes') === 'supabase') {
+    try {
+      // Los filtros de la fórmula Airtable se replican en JS sobre el record
+      // crudo, ANTES de consolidar (misma semántica que el server-side filter).
+      const raw = (await sbFacturasRecords()).filter(r => {
+        if (!pasaFiltroRaw(args.filtro, r.fields)) return false;
+        const fecha = String(r.fields[F.FECHA_EMISION] ?? '').slice(0, 10);
+        if (mes && fecha.slice(0, 7) !== mes) return false;
+        if (args.before && !(fecha < args.before)) return false;
+        return true;
+      });
+      const invoices = consolidateRecords(raw.map(r => ({ id: r.id, fields: r.fields as FieldSet })));
+      const page = invoices.slice(0, limit);
+      return {
+        invoices: page,
+        hayMas: invoices.length > limit,
+        ultimaFecha: page[page.length - 1]?.fechaEmision ?? null,
+      };
+    } catch (err) {
+      console.error('Error fetching facturas pagina (supabase):', err);
+      return { invoices: [], hayMas: false, ultimaFecha: null };
+    }
+  }
+
   if (USE_MOCK || !airtable) {
     const mock = [...MOCK_INVOICES]
       .filter(predicadoFiltro(args.filtro))
@@ -364,12 +432,16 @@ export async function getFacturasPagina(args: { limit?: number; before?: string;
  * Trae solo los campos NO.FACTURA y ESTADO (más liviano que el fetch completo).
  */
 export async function getFacturasCountTotal(): Promise<number> {
-  if (USE_MOCK || !airtable) return MOCK_INVOICES.length;
+  const src = dataSource('facturas_clientes');
+  if (src !== 'supabase' && (USE_MOCK || !airtable)) return MOCK_INVOICES.length;
   try {
     // F-034: sin maxRecords (agota todas las páginas).
-    const records = await airtable(TABLES.FACTURAS)
-      .select({ fields: [F.NO_FACTURA, F.ESTADO] })
-      .all();
+    const records: ReadonlyArray<{ id: string; fields: FieldSet | Record<string, unknown> }> =
+      src === 'supabase'
+        ? await sbFacturasRecords()
+        : await airtable!(TABLES.FACTURAS)
+            .select({ fields: [F.NO_FACTURA, F.ESTADO] })
+            .all();
     const noAnulNoFactura = new Set<string>();
     let anuladasYRef = 0;   // cada una cuenta individual (no se consolidan)
     for (const r of records) {
@@ -796,6 +868,12 @@ export function parsearHistorialEdiciones(raw: string | undefined): EntradaHisto
 }
 
 export async function getHistorialEdicionesFactura(facturaId: string): Promise<EntradaHistorialEdicion[]> {
+  if (dataSource('facturas_clientes') === 'supabase') {
+    // GAP conocido: Historial_Ediciones no existe en el schema Postgres
+    // (2 facturas lo tienen en Airtable). Se agrega en Fase 2 — ver
+    // supabase/03_fase2_gaps.sql.
+    return [];
+  }
   if (!airtable) return [];
   try {
     const rec = await airtable(TABLES.FACTURAS).find(facturaId);

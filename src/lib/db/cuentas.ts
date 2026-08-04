@@ -19,6 +19,8 @@
 
 import { airtable, USE_MOCK } from './airtable';
 import { CUENTAS_TABLE_ID, CUENTAS_FIELDS } from '@/lib/contabilidad/cuentas-sistema';
+import { dataSource } from '@/lib/config/data-source';
+import { sbCuentasRecords } from '@/lib/supabase/records';
 
 export interface Cuenta {
   id: string;
@@ -30,6 +32,25 @@ export interface Cuenta {
 const arrFirst = (v: unknown): string => Array.isArray(v) ? String(v[0] ?? '') : String(v ?? '');
 
 export async function getCuentas(): Promise<Cuenta[]> {
+  if (dataSource('cuentas') === 'supabase') {
+    try {
+      const records = await sbCuentasRecords();
+      const lista: Cuenta[] = records.map(r => {
+        const f = r.fields;
+        return {
+          id: r.id,
+          codigo: arrFirst(f[CUENTAS_FIELDS.codigo_path]).trim(),
+          nombre: arrFirst(f[CUENTAS_FIELDS.nombre]).trim(),
+          activo: Boolean(f[CUENTAS_FIELDS.activo]),
+        };
+      });
+      lista.sort((a, b) => a.codigo.localeCompare(b.codigo));
+      return lista;
+    } catch (err) {
+      console.warn('cuentas (supabase): lectura falló:', err instanceof Error ? err.message : err);
+      return [];
+    }
+  }
   if (USE_MOCK || !airtable) return [];
   try {
     const records = await airtable(CUENTAS_TABLE_ID)

@@ -6,6 +6,13 @@
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { obtenerFechaHoyGuatemala } from '../utils/fechas';
+import { dataSource } from '../config/data-source';
+import {
+  sbAcreedoresRecords,
+  sbCentrosCostoRecords,
+  sbDeudasRecords,
+  sbPagosRecords,
+} from '../supabase/records';
 
 const FA = {
   NOMBRE:           'Nombre_Acreedor',           // formula
@@ -281,9 +288,18 @@ function deudaFromRecord(
 // Loaders bases (cache de centros para el JOIN)
 // ============================================================
 
-let _centrosCache: Map<string, string> | null = null;
+// Cache por backend: el diff script corre ambos en el mismo proceso.
+const _centrosCache = new Map<string, Map<string, string>>();
 async function getCentrosNombreById(): Promise<Map<string, string>> {
-  if (_centrosCache) return _centrosCache;
+  const src = dataSource('centros_costo');
+  const hit = _centrosCache.get(src);
+  if (hit) return hit;
+  if (src === 'supabase') {
+    const recs = await sbCentrosCostoRecords();
+    const m = new Map(recs.map(r => [r.id, String(r.fields.NOMBRE ?? '')]));
+    _centrosCache.set(src, m);
+    return m;
+  }
   if (USE_MOCK || !airtable) return new Map();
   // F-BF-004: sin maxRecords — `.all()` agota la paginación interna del SDK
   // (pageSize 100 hasta vaciar offsets). Hardcaps silenciosos truncan a medida
@@ -291,8 +307,9 @@ async function getCentrosNombreById(): Promise<Map<string, string>> {
   const recs = await airtable(TABLES.CENTROS_COSTO)
     .select({ fields: ['NOMBRE'] })
     .all();
-  _centrosCache = new Map(recs.map(r => [r.id, String(r.fields.NOMBRE ?? '')]));
-  return _centrosCache;
+  const m = new Map(recs.map(r => [r.id, String(r.fields.NOMBRE ?? '')]));
+  _centrosCache.set(src, m);
+  return m;
 }
 
 // ============================================================
@@ -300,6 +317,15 @@ async function getCentrosNombreById(): Promise<Map<string, string>> {
 // ============================================================
 
 export async function getAcreedores(): Promise<Acreedor[]> {
+  if (dataSource('acreedores') === 'supabase') {
+    try {
+      const recs = await sbAcreedoresRecords();
+      return recs.map(r => acreedorFromRecord(r));
+    } catch (err) {
+      console.error('Error fetching acreedores (supabase):', err);
+      return [];
+    }
+  }
   if (USE_MOCK || !airtable) return [];
   try {
     // F-BF-004: sin maxRecords — paginación completa.
@@ -319,6 +345,26 @@ export async function getAcreedores(): Promise<Acreedor[]> {
  * Esto nos vuelve independientes de la configuración del rollup.
  */
 async function getTotalPagadoPorDeuda(): Promise<Map<string, { suma: number; count: number }>> {
+  if (dataSource('pagos_proveedores') === 'supabase') {
+    try {
+      const recs = await sbPagosRecords();
+      const m = new Map<string, { suma: number; count: number }>();
+      for (const r of recs) {
+        const f = r.fields;
+        const deudaIds = Array.isArray(f.Deuda) ? f.Deuda as string[] : [];
+        const monto = Number(f.Monto_Pago ?? 0);
+        for (const id of deudaIds) {
+          const e = m.get(id) ?? { suma: 0, count: 0 };
+          e.suma += monto;
+          e.count += 1;
+          m.set(id, e);
+        }
+      }
+      return m;
+    } catch {
+      return new Map();
+    }
+  }
   if (USE_MOCK || !airtable) return new Map();
   try {
     // F-BF-004: sin maxRecords — PAGOS_PROVEEDORES crece con cada cuota
@@ -346,7 +392,8 @@ async function getTotalPagadoPorDeuda(): Promise<Map<string, { suma: number; cou
 }
 
 export async function getDeudas(filtros: DeudasFiltros = {}): Promise<Deuda[]> {
-  if (USE_MOCK || !airtable) return [];
+  const src = dataSource('deudas');
+  if (src !== 'supabase' && (USE_MOCK || !airtable)) return [];
   try {
     // F-BF-004:
     //  · Sin maxRecords — paginación completa de DEUDAS. El cap de 500
@@ -355,10 +402,14 @@ export async function getDeudas(filtros: DeudasFiltros = {}): Promise<Deuda[]> {
     //  · Empujamos el filtro `No Incluir != TRUE()` al servidor para
     //    reducir volumen transferido (las cuotas históricas pagadas se
     //    marcan así). El filtro JS posterior queda como red de seguridad.
+    //    En Supabase el mismo filtro es un WHERE no_incluir = false.
     const [recs, acreedores, centrosById, pagadosPorDeuda] = await Promise.all([
-      airtable(TABLES.DEUDAS)
-        .select({ filterByFormula: `OR({${FD.NO_INCLUIR}} = FALSE(), {${FD.NO_INCLUIR}} = BLANK())` })
-        .all(),
+      src === 'supabase'
+        ? sbDeudasRecords({ soloIncluidas: true })
+        : airtable!(TABLES.DEUDAS)
+            .select({ filterByFormula: `OR({${FD.NO_INCLUIR}} = FALSE(), {${FD.NO_INCLUIR}} = BLANK())` })
+            .all()
+            .then(rs => rs.map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }))),
       getAcreedores(),
       getCentrosNombreById(),
       getTotalPagadoPorDeuda(),
@@ -366,8 +417,8 @@ export async function getDeudas(filtros: DeudasFiltros = {}): Promise<Deuda[]> {
     const acreedoresById = new Map(acreedores.map(a => [a.id, a]));
 
     let deudas = recs
-      .filter(r => !bool((r.fields as Record<string, unknown>)[FD.NO_INCLUIR]))
-      .map(r => deudaFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }, acreedoresById, centrosById))
+      .filter(r => !bool(r.fields[FD.NO_INCLUIR]))
+      .map(r => deudaFromRecord(r, acreedoresById, centrosById))
       .map(d => recomputeFromPagos(d, pagadosPorDeuda.get(d.id)));
 
     if (filtros.estado)         deudas = deudas.filter(d => d.estado === filtros.estado);
@@ -388,17 +439,20 @@ export async function getDeudas(filtros: DeudasFiltros = {}): Promise<Deuda[]> {
 }
 
 export async function getDeudaPorId(id: string): Promise<Deuda | null> {
-  if (USE_MOCK || !airtable) return null;
+  const src = dataSource('deudas');
+  if (src !== 'supabase' && (USE_MOCK || !airtable)) return null;
   try {
     const [rec, acreedores, centrosById, pagadosPorDeuda] = await Promise.all([
-      airtable(TABLES.DEUDAS).find(id),
+      src === 'supabase'
+        ? sbDeudasRecords().then(rs => rs.find(r => r.id === id) ?? null)
+        : airtable!(TABLES.DEUDAS).find(id).then(r => r ? { id: r.id, fields: r.fields as Record<string, unknown> } : null),
       getAcreedores(),
       getCentrosNombreById(),
       getTotalPagadoPorDeuda(),
     ]);
     if (!rec) return null;
     const acreedoresById = new Map(acreedores.map(a => [a.id, a]));
-    const d = deudaFromRecord({ id: rec.id, fields: rec.fields as Record<string, unknown> }, acreedoresById, centrosById);
+    const d = deudaFromRecord(rec, acreedoresById, centrosById);
     return recomputeFromPagos(d, pagadosPorDeuda.get(d.id));
   } catch (err) {
     console.error('Error fetching deuda:', err);

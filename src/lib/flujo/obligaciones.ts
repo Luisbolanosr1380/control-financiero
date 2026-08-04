@@ -6,6 +6,8 @@
  */
 
 import { airtable } from '@/lib/db/airtable';
+import { dataSource } from '@/lib/config/data-source';
+import { sbObligacionesRecords } from '@/lib/supabase/records';
 import {
   OBLIGACIONES_RECURRENTES_TABLE_ID,
   OBLIGACIONES_RECURRENTES_FIELDS as FO,
@@ -109,6 +111,16 @@ function mapObligacion(rec: { id: string; fields: Record<string, unknown> }): Ob
 }
 
 export async function getObligacionesRecurrentes(soloActivas = false): Promise<ObligacionRecurrente[]> {
+  if (dataSource('obligaciones_recurrentes') === 'supabase') {
+    try {
+      const recs = await sbObligacionesRecords();
+      const lista = recs.map(r => mapObligacion(r));
+      return soloActivas ? lista.filter(o => o.activo) : lista;
+    } catch (err) {
+      console.warn('getObligacionesRecurrentes (supabase) falló:', err instanceof Error ? err.message : err);
+      return [];
+    }
+  }
   if (!airtable) return [];
   try {
     const recs = await airtable(OBLIGACIONES_RECURRENTES_TABLE_ID)

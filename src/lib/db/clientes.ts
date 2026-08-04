@@ -1,4 +1,6 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
+import { dataSource } from '../config/data-source';
+import { sbClientesRecords } from '../supabase/records';
 import { CUSTOMERS } from '../mock-data';
 import type { Customer } from '../types';
 import type { FieldSet } from 'airtable';
@@ -35,6 +37,15 @@ function recordToCustomer(record: { id: string; fields: FieldSet }): Customer {
 }
 
 export async function getClientes(): Promise<Customer[]> {
+  if (dataSource('clientes') === 'supabase') {
+    try {
+      const records = await sbClientesRecords();
+      return records.map(r => recordToCustomer({ id: r.id, fields: r.fields as FieldSet }));
+    } catch (err) {
+      console.error('Error fetching clientes (supabase):', err);
+      return CUSTOMERS;
+    }
+  }
   if (USE_MOCK || !airtable) return CUSTOMERS;
 
   try {

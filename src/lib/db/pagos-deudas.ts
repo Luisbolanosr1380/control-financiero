@@ -22,6 +22,8 @@ import { airtable, USE_MOCK, TABLES } from './airtable';
 import { getDeudaPorId, type Deuda } from './deudas';
 import { getBancos, type Banco } from './bancos';
 import { obtenerFechaHoyGuatemala } from '../utils/fechas';
+import { dataSource } from '../config/data-source';
+import { sbPagosRecords, sbDeudasRecords } from '../supabase/records';
 
 export type MetodoPagoDeuda =
   | 'Transferencia'
@@ -282,13 +284,17 @@ export async function eliminarPagoDeuda(pagoId: string): Promise<{ ok: boolean; 
  * FIND no encuentra nada (verificado en smoke).
  */
 export async function getPagosPorDeuda(deudaId: string, opts: { incluirAnulados?: boolean } = {}): Promise<PagoDeuda[]> {
-  if (USE_MOCK || !airtable) return [];
+  const src = dataSource('pagos_proveedores');
+  if (src !== 'supabase' && (USE_MOCK || !airtable)) return [];
   try {
     // F-BF-004: sin maxRecords — PAGOS_PROVEEDORES crece con cada cuota
     // pagada. Un cap de 5000 truncaba silenciosamente la lectura.
-    const recs = await airtable(TABLES.PAGOS_PROVEEDORES).select().all();
+    const recs = src === 'supabase'
+      ? await sbPagosRecords()
+      : (await airtable!(TABLES.PAGOS_PROVEEDORES).select().all())
+          .map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
     let pagos = recs
-      .map(r => pagoFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }))
+      .map(r => pagoFromRecord(r))
       .filter(p => p.deudaId === deudaId);
     // F-036: por default ocultamos anulados; el detalle de la deuda y los
     // listados con toggle pasan { incluirAnulados: true } cuando quieren todos.
@@ -303,25 +309,31 @@ export async function getPagosPorDeuda(deudaId: string, opts: { incluirAnulados?
 
 /** Consolida todos los pagos hechos a un acreedor (sumando todas sus deudas). */
 export async function getPagosPorAcreedor(acreedorId: string): Promise<PagoDeuda[]> {
-  if (USE_MOCK || !airtable) return [];
+  const srcPagos  = dataSource('pagos_proveedores');
+  const srcDeudas = dataSource('deudas');
+  if ((srcPagos !== 'supabase' || srcDeudas !== 'supabase') && (USE_MOCK || !airtable)) return [];
   try {
     // 1) Record IDs de deudas del acreedor — filtramos en JS por la misma
     //    razón que arriba (ARRAYJOIN devuelve display names).
     // F-BF-004: sin maxRecords — DEUDAS y PAGOS crecen con el tiempo.
-    const deudasRecs = await airtable(TABLES.DEUDAS)
-      .select({ fields: ['Acreedor'] })
-      .all();
+    const deudasRecs = srcDeudas === 'supabase'
+      ? await sbDeudasRecords()
+      : (await airtable!(TABLES.DEUDAS).select({ fields: ['Acreedor'] }).all())
+          .map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
     const deudaIds = new Set<string>();
     for (const r of deudasRecs) {
-      const a = (r.fields as Record<string, unknown>).Acreedor;
+      const a = r.fields.Acreedor;
       if (Array.isArray(a) && a.includes(acreedorId)) deudaIds.add(r.id);
     }
     if (deudaIds.size === 0) return [];
 
     // 2) Traer todos los pagos y quedarnos con los de esas deudas
-    const pagosRecs = await airtable(TABLES.PAGOS_PROVEEDORES).select().all();
+    const pagosRecs = srcPagos === 'supabase'
+      ? await sbPagosRecords()
+      : (await airtable!(TABLES.PAGOS_PROVEEDORES).select().all())
+          .map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
     const pagos = pagosRecs
-      .map(r => pagoFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }))
+      .map(r => pagoFromRecord(r))
       .filter(p => deudaIds.has(p.deudaId) && p.estadoPago === 'Activo');   // F-036
     pagos.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
     return pagos;
@@ -339,12 +351,16 @@ export interface PagoEnriquecido extends PagoDeuda {
 }
 
 export async function getPagosRecientes(limite = 20, opts: { incluirAnulados?: boolean } = {}): Promise<PagoEnriquecido[]> {
-  if (USE_MOCK || !airtable) return [];
+  const src = dataSource('pagos_proveedores');
+  if (src !== 'supabase' && (USE_MOCK || !airtable)) return [];
   try {
     // F-BF-004: sin maxRecords. El limite=N se aplica DESPUÉS del sort por
     // fecha, así que no es un cap del fetch.
-    const pagosRecs = await airtable(TABLES.PAGOS_PROVEEDORES).select().all();
-    let pagos = pagosRecs.map(r => pagoFromRecord({ id: r.id, fields: r.fields as Record<string, unknown> }));
+    const pagosRecs = src === 'supabase'
+      ? await sbPagosRecords()
+      : (await airtable!(TABLES.PAGOS_PROVEEDORES).select().all())
+          .map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
+    let pagos = pagosRecs.map(r => pagoFromRecord(r));
     // F-036: por default ocultamos anulados.
     if (!opts.incluirAnulados) pagos = pagos.filter(p => p.estadoPago === 'Activo');
     pagos.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
@@ -383,15 +399,17 @@ export async function getCuentasBancoParaPago(): Promise<string[]> {
   // Para no requerir Meta API, devolvemos las opciones que existen en
   // los records (vacío si nunca hubo pagos). Esto SIEMPRE produce las
   // que Stark realmente ha usado.
-  if (USE_MOCK || !airtable) return [];
+  const src = dataSource('pagos_proveedores');
+  if (src !== 'supabase' && (USE_MOCK || !airtable)) return [];
   try {
     // F-BF-004: sin maxRecords.
-    const recs = await airtable(TABLES.PAGOS_PROVEEDORES)
-      .select({ fields: ['Cuenta_Banco'] })
-      .all();
+    const recs = src === 'supabase'
+      ? await sbPagosRecords()
+      : (await airtable!(TABLES.PAGOS_PROVEEDORES).select({ fields: ['Cuenta_Banco'] }).all())
+          .map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
     const opts = new Set<string>();
     for (const r of recs) {
-      const v = (r.fields as Record<string, unknown>).Cuenta_Banco;
+      const v = r.fields.Cuenta_Banco;
       const name = selectName(v);
       if (name) opts.add(name);
     }

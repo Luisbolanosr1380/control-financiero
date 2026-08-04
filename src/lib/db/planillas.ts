@@ -21,6 +21,8 @@
  */
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
+import { dataSource } from '../config/data-source';
+import { sbPlanillaRecords, sbPeriodosRecords } from '../supabase/records';
 import { getEmpleados, crearDeudaSalarioPendiente, type Empleado } from './empleados';
 import { calcularQuincena, type AjustesQuincena, type QuincenaCalculada } from '../calculos/planilla-calc';
 import { obtenerFechaHoyGuatemala, diferenciaDias } from '../utils/fechas';
@@ -239,7 +241,8 @@ function recordToLinea(record: { id: string; fields: Record<string, unknown> }, 
 }
 
 async function getLineasPorPeriodo(periodoId: string | null): Promise<LineaPlanilla[]> {
-  if (!airtable) return [];
+  const src = dataSource('planilla');
+  if (src !== 'supabase' && !airtable) return [];
   const empleados = await getEmpleados({ status: 'todos' });
   const empleadoNombreById = new Map(empleados.map(e => [e.id, e.nombre]));
 
@@ -248,8 +251,11 @@ async function getLineasPorPeriodo(periodoId: string | null): Promise<LineaPlani
   // así que FIND("rec...", "Q1-junio-2026") = 0 y se pierden TODAS las
   // líneas. Mismo patrón que pagos-deudas.getPagosPorDeuda: traemos todas
   // y filtramos en JS por periodoId.
-  const records = await airtable(TABLES.PLANILLA).select().all();
-  const lineas = records.map(r => recordToLinea({ id: r.id, fields: r.fields as Record<string, unknown> }, empleadoNombreById));
+  const records = src === 'supabase'
+    ? await sbPlanillaRecords()
+    : (await airtable!(TABLES.PLANILLA).select().all())
+        .map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
+  const lineas = records.map(r => recordToLinea(r, empleadoNombreById));
   return periodoId ? lineas.filter(l => l.periodoId === periodoId) : lineas;
 }
 
@@ -264,11 +270,15 @@ export async function getLineasPlanilla(periodoId: string): Promise<LineaPlanill
 }
 
 export async function getPeriodos(filtros: { estado?: EstadoPeriodo | 'todos'; anio?: number } = {}): Promise<Periodo[]> {
-  if (USE_MOCK || !airtable) return [];
+  const src = dataSource('periodos');
+  if (src !== 'supabase' && (USE_MOCK || !airtable)) return [];
 
   try {
     const [periodoRecords, todasLineas] = await Promise.all([
-      airtable(TABLES.PERIODOS).select().all(),
+      src === 'supabase'
+        ? sbPeriodosRecords()
+        : airtable!(TABLES.PERIODOS).select().all()
+            .then(rs => rs.map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }))),
       getLineasPorPeriodo(null),
     ]);
 

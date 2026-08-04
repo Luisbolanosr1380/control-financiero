@@ -13,6 +13,8 @@
  */
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
+import { dataSource } from '../config/data-source';
+import { sbEmpleadosRecords } from '../supabase/records';
 import { getCentrosCosto } from './centros';
 import { getBancos } from './bancos';
 import { getDeudas, type Deuda } from './deudas';
@@ -157,11 +159,15 @@ function esActivo(s: StatusEmpleado): boolean {
  * ============================================================ */
 
 export async function getEmpleados(filtros: EmpleadosFiltros = {}): Promise<Empleado[]> {
-  if (USE_MOCK || !airtable) return [];
+  const src = dataSource('empleados');
+  if (src !== 'supabase' && (USE_MOCK || !airtable)) return [];
 
   try {
     const [recs, centros, bancos, deudas] = await Promise.all([
-      airtable(TABLES.EMPLEADOS).select().all(),
+      src === 'supabase'
+        ? sbEmpleadosRecords()
+        : airtable!(TABLES.EMPLEADOS).select().all()
+            .then(rs => rs.map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }))),
       getCentrosCosto(),
       getBancos(),
       getDeudas(),
@@ -181,7 +187,7 @@ export async function getEmpleados(filtros: EmpleadosFiltros = {}): Promise<Empl
     }
 
     const empleados: Empleado[] = recs.map(r => {
-      const f = r.fields as Record<string, unknown>;
+      const f = r.fields;
       const nombre = String(f[FE.NOMBRE] ?? '').trim();
       const ccId  = arrFirst(f[FE.CENTRO_COSTO]);
       const status = statusFromAirtable(f[FE.STATUS]);

@@ -1,4 +1,6 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
+import { dataSource } from '../config/data-source';
+import { sbBancosRecords } from '../supabase/records';
 import type { FieldSet } from 'airtable';
 
 export type MonedaBanco = 'Q' | 'USD' | 'OTRA';
@@ -39,6 +41,15 @@ function recordToBanco(record: { id: string; fields: FieldSet }): Banco {
 }
 
 export async function getBancos(): Promise<Banco[]> {
+  if (dataSource('bancos') === 'supabase') {
+    try {
+      const records = await sbBancosRecords();
+      return records.map(r => recordToBanco({ id: r.id, fields: r.fields as FieldSet }));
+    } catch (err) {
+      console.error('Error fetching bancos (supabase):', err);
+      return [];
+    }
+  }
   if (USE_MOCK || !airtable) return [];
   try {
     // F-BF-004: sin maxRecords — BANCOS son pocos hoy (~10) pero cualquier

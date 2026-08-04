@@ -2,7 +2,37 @@ import { airtable, USE_MOCK, TABLES } from './airtable';
 import { obtenerFechaHoyGuatemala } from "../utils/fechas";
 import { F } from './mappers';
 import { getBancos } from './bancos';
+import { dataSource } from '../config/data-source';
+import { sbCobrosRecords, sbFacturasRecords } from '../supabase/records';
 import type { Payment } from '../types';
+
+/* ===== Rama Supabase (MIGRACIÓN CAPA 2 · Fase 1) ===== */
+
+type RecordLike = { id: string; fields: Record<string, unknown> };
+
+const _lookupFirst = (v: unknown): string => Array.isArray(v) ? String(v[0] ?? '') : '';
+
+/** Cobros cuya factura vinculada tiene este NO.FACTURA (equivale al
+ *  filterByFormula sobre el lookup 'NO.FACTURA (from Factura Cliente)'). */
+async function sbCobrosDeNoFactura(noFactura: string): Promise<RecordLike[]> {
+  const todos = await sbCobrosRecords();
+  return todos.filter(r => _lookupFirst(r.fields[FC_READ.NO_FACTURA]) === noFactura);
+}
+
+/** Líneas de FACTURAS_CLIENTES con este NO.FACTURA (equivale al
+ *  filterByFormula {NO.FACTURA} = "nf"). Respeta el flag de facturas. */
+async function fetchLineasFactura(noFactura: string): Promise<RecordLike[]> {
+  if (dataSource('facturas_clientes') === 'supabase') {
+    const todas = await sbFacturasRecords();
+    return todas.filter(r => String(r.fields[F.NO_FACTURA] ?? '') === noFactura);
+  }
+  if (!airtable) return [];
+  const esc = noFactura.replace(/"/g, '\\"');
+  const records = await airtable(TABLES.FACTURAS)
+    .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
+    .all();
+  return records.map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
+}
 
 const MOCK_PAYMENTS: Payment[] = [];
 
@@ -199,6 +229,29 @@ function consolidarCobros(raws: RawCobro[], bancoNombreById: Map<string, string>
 
 export async function getCobrosPagina(args: { limit?: number; before?: string; mes?: string } = {}): Promise<GetCobrosPaginaResult> {
   const limit = args.limit ?? 50;
+  if (dataSource('cobros_clientes') === 'supabase') {
+    try {
+      const [records, bancos] = await Promise.all([sbCobrosRecords(), getBancos()]);
+      const filtrados = records.filter(r => {
+        const fecha = String(r.fields[FC_READ.FECHA] ?? '').slice(0, 10);
+        if (args.mes && fecha.slice(0, 7) !== args.mes) return false;
+        if (args.before && !(fecha < args.before)) return false;
+        return true;
+      });
+      const bancoNombreById = new Map(bancos.map(b => [b.id, b.nombreCuenta || b.banco || b.id]));
+      const raws = filtrados.map(r => recordToRaw(r));
+      const consolidados = consolidarCobros(raws, bancoNombreById);
+      const page = consolidados.slice(0, limit);
+      return {
+        cobros: page,
+        hayMas: consolidados.length > limit,
+        ultimaFecha: page[page.length - 1]?.fechaCobro ?? null,
+      };
+    } catch (err) {
+      console.error('Error fetching cobros pagina (supabase):', err);
+      return { cobros: [], hayMas: false, ultimaFecha: null };
+    }
+  }
   if (USE_MOCK || !airtable) return { cobros: [], hayMas: false, ultimaFecha: null };
 
   try {
@@ -246,6 +299,18 @@ export async function getCobrosPagina(args: { limit?: number; before?: string; m
  * función es la que hay que usar para datos reales.
  */
 export async function getCobrosCompletos(args: { mes?: string } = {}): Promise<CobroListado[]> {
+  if (dataSource('cobros_clientes') === 'supabase') {
+    try {
+      const [records, bancos] = await Promise.all([sbCobrosRecords(), getBancos()]);
+      const filtrados = records.filter(r =>
+        !args.mes || String(r.fields[FC_READ.FECHA] ?? '').slice(0, 7) === args.mes);
+      const bancoNombreById = new Map(bancos.map(b => [b.id, b.nombreCuenta || b.banco || b.id]));
+      return consolidarCobros(filtrados.map(r => recordToRaw(r)), bancoNombreById);
+    } catch (err) {
+      console.error('Error fetching cobros completos (supabase):', err);
+      return [];
+    }
+  }
   if (USE_MOCK || !airtable) return [];
   try {
     // F-BF-002a: filtro opcional por mes (YYYY-MM) sobre Fecha_Cobro.
@@ -274,16 +339,19 @@ export async function getCobrosCompletos(args: { mes?: string } = {}): Promise<C
 
 /** Cuenta total de cobros consolidados (única (NO.FACTURA, Fecha_Cobro)). */
 export async function getCobrosCountTotal(): Promise<number> {
-  if (USE_MOCK || !airtable) return 0;
+  const src = dataSource('cobros_clientes');
+  if (src !== 'supabase' && (USE_MOCK || !airtable)) return 0;
   try {
     // F-BF-004: sin maxRecords — el conteo silenciosamente devolvía 2000
     // como tope. `.all()` ya pagina.
-    const records = await airtable(TABLES.COBROS)
-      .select({ fields: [FC_READ.FECHA, FC_READ.NO_FACTURA] })
-      .all();
+    const records: ReadonlyArray<RecordLike> = src === 'supabase'
+      ? await sbCobrosRecords()
+      : (await airtable!(TABLES.COBROS)
+          .select({ fields: [FC_READ.FECHA, FC_READ.NO_FACTURA] })
+          .all()).map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
     const claves = new Set<string>();
     for (const r of records) {
-      const f = r.fields as Record<string, unknown>;
+      const f = r.fields;
       const fecha = String(f[FC_READ.FECHA] ?? '');
       const nf = Array.isArray(f[FC_READ.NO_FACTURA]) ? String((f[FC_READ.NO_FACTURA] as unknown[])[0] ?? '') : '';
       if (nf && fecha) claves.add(`${nf}|${fecha}`);
@@ -678,18 +746,21 @@ const FC_FULL = {
 } as const;
 
 export async function getCobrosDeFactura(noFactura: string): Promise<GrupoCobro[]> {
-  if (!airtable) return [];
+  if (!airtable && dataSource('cobros_clientes') !== 'supabase') return [];
   const nf = (noFactura ?? '').trim();
   if (!nf) return [];
   const esc = nf.replace(/"/g, '\\"');
   try {
     const [records, bancos] = await Promise.all([
-      airtable(TABLES.COBROS)
-        .select({
-          filterByFormula: `{${FC_FULL.NO_FACTURA}} = "${esc}"`,
-          sort: [{ field: FC_FULL.FECHA, direction: 'desc' }],
-        })
-        .all(),
+      dataSource('cobros_clientes') === 'supabase'
+        ? sbCobrosDeNoFactura(nf)
+        : airtable!(TABLES.COBROS)
+            .select({
+              filterByFormula: `{${FC_FULL.NO_FACTURA}} = "${esc}"`,
+              sort: [{ field: FC_FULL.FECHA, direction: 'desc' }],
+            })
+            .all()
+            .then(rs => rs.map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }))),
       getBancos(),
     ]);
     const bancoNombreById = new Map(bancos.map(b => [b.id, b.nombreCuenta || b.banco || b.id]));
@@ -776,18 +847,26 @@ export interface SaldoFactura {
 }
 
 export async function getSaldoPendiente(noFactura: string): Promise<SaldoFactura | null> {
-  if (!airtable) return null;
+  const supaCobros   = dataSource('cobros_clientes') === 'supabase';
+  const supaFacturas = dataSource('facturas_clientes') === 'supabase';
+  if (!airtable && !(supaCobros && supaFacturas)) return null;
   const nf = (noFactura ?? '').trim();
   if (!nf) return null;
   const esc = nf.replace(/"/g, '\\"');
   try {
     const [facturaRecords, cobrosRecords] = await Promise.all([
-      airtable(TABLES.FACTURAS)
-        .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
-        .all(),
-      airtable(TABLES.COBROS)
-        .select({ filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`, fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO] })
-        .all(),
+      supaFacturas
+        ? fetchLineasFactura(nf)
+        : airtable!(TABLES.FACTURAS)
+            .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
+            .all()
+            .then(rs => rs.map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }))),
+      supaCobros
+        ? sbCobrosDeNoFactura(nf)
+        : airtable!(TABLES.COBROS)
+            .select({ filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`, fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO] })
+            .all()
+            .then(rs => rs.map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }))),
     ]);
     if (facturaRecords.length === 0) return null;
     const activas = facturaRecords.filter(r => {
@@ -1068,22 +1147,25 @@ export interface CobrosActivosCheck {
 
 export async function contarCobrosActivosDeFactura(noFactura: string): Promise<CobrosActivosCheck> {
   const empty = { numCobrosActivos: 0, numRecordsActivos: 0, montoTotalActivo: 0 };
-  if (!airtable) return empty;
+  const supaCobros = dataSource('cobros_clientes') === 'supabase';
+  if (!airtable && !supaCobros) return empty;
   const nf = (noFactura ?? '').trim();
   if (!nf) return empty;
   try {
     const esc = nf.replace(/"/g, '\\"');
-    const records = await airtable(TABLES.COBROS)
-      .select({
-        filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`,
-        fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO, FC_READ.GRUPO_ID],
-      })
-      .all();
-    const activos = records.filter(r => esCobroActivoFields(r.fields as Record<string, unknown>));
+    const records: ReadonlyArray<RecordLike> = supaCobros
+      ? await sbCobrosDeNoFactura(nf)
+      : (await airtable!(TABLES.COBROS)
+          .select({
+            filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`,
+            fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO, FC_READ.GRUPO_ID],
+          })
+          .all()).map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
+    const activos = records.filter(r => esCobroActivoFields(r.fields));
     const grupos = new Set<string>();
     let monto = 0;
     for (const r of activos) {
-      const f = r.fields as Record<string, unknown>;
+      const f = r.fields;
       const g = String(f[FC_READ.GRUPO_ID] ?? '').trim() || `__legacy__${r.id}`;
       grupos.add(g);
       monto += Number(f[FC_READ.MONTO] ?? 0);

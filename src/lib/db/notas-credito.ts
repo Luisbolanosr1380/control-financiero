@@ -21,6 +21,8 @@
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { F } from './mappers';
+import { dataSource } from '../config/data-source';
+import { sbNotasCreditoRecords } from '../supabase/records';
 import { obtenerFechaHoyGuatemala } from '../utils/fechas';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -153,6 +155,15 @@ function recordToNC(r: { id: string; fields: Record<string, unknown> }): NotaCre
 
 /** Todas las NCs (todas las activas + históricas). Devuelve [] si la tabla no existe. */
 export async function getNotasCredito(): Promise<NotaCredito[]> {
+  if (dataSource('notas_credito') === 'supabase') {
+    try {
+      const records = await sbNotasCreditoRecords();
+      return records.map(r => recordToNC(r));
+    } catch (err) {
+      console.warn('getNotasCredito() (supabase) falló:', err instanceof Error ? err.message : err);
+      return [];
+    }
+  }
   if (USE_MOCK || !airtable) return [];
   try {
     const records = await airtable(TABLES.NOTAS_CREDITO)
@@ -167,6 +178,15 @@ export async function getNotasCredito(): Promise<NotaCredito[]> {
 }
 
 export async function getNotaCreditoPorId(id: string): Promise<NotaCredito | null> {
+  if (dataSource('notas_credito') === 'supabase') {
+    try {
+      const records = await sbNotasCreditoRecords();
+      const r = records.find(x => x.id === id);
+      return r ? recordToNC(r) : null;
+    } catch {
+      return null;
+    }
+  }
   if (!airtable) return null;
   try {
     const r = await airtable(TABLES.NOTAS_CREDITO).find(id);
