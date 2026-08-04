@@ -342,7 +342,11 @@ export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
         'Observaciones:':      s(r.observaciones),
         'Editado_Por':         s(r.editado_por),
         'Fecha_Ultima_Edicion': fechaUltimaEdicion,
-        // 'ADJUNTO ' y 'Historial_Ediciones': gaps conocidos (ver header).
+        // FASE 2.5: adjuntos migrados a Supabase Storage (script 06).
+        'ADJUNTO ':            r.adjunto_url
+          ? [{ url: String(r.adjunto_url), filename: s(r.adjunto_nombre) }]
+          : undefined,
+        // 'Historial_Ediciones': gap conocido (2 filas, ver 03_fase2_gaps.sql).
       }),
     };
   });
@@ -390,8 +394,13 @@ export async function sbCobrosRecords(): Promise<PseudoRecord[]> {
         'Fecha_Anulacion':  s(r.fecha_anulacion),
         'Motivo_Anulacion': s(r.motivo_anulacion),
         'Anulado_Por':      s(r.anulado_por),
-        // Cobro_Grupo_ID / Estado_Cobro / Constancia_Retencion: no existen en
-        // el schema (vacíos en Airtable hoy) — ausencia = grupo legacy/Activo.
+        // FASE 2: columnas creadas por 03/04_fase2 — pobladas por cobros
+        // nacidos en Supabase (los históricos de Airtable venían vacíos).
+        'Cobro_Grupo_ID':   s(r.cobro_grupo_id),
+        'Estado_Cobro':     s(r.estado_cobro),
+        'Constancia_Retencion': r.constancia_url
+          ? [{ url: String(r.constancia_url), filename: s(r.constancia_nombre) }]
+          : undefined,
       }),
     };
   });
@@ -411,7 +420,9 @@ export async function sbPagosRecords(): Promise<PseudoRecord[]> {
       'Deuda':            link(r.deuda),
       'Fecha_Pago':       s(r.fecha_pago),
       // En Airtable Cuenta_Banco de PAGOS es singleSelect (name), no link.
-      'Cuenta_Banco':     (r.banco as { nombre_cuenta?: string } | null)?.nombre_cuenta,
+      // FASE 2: los pagos nacidos en Supabase guardan el nombre elegido en
+      // cuenta_banco_nombre (puede no coincidir con un banco real).
+      'Cuenta_Banco':     s(r.cuenta_banco_nombre) ?? (r.banco as { nombre_cuenta?: string } | null)?.nombre_cuenta,
       'Moneda':           s(r.moneda),
       'Tipo_Cambio':      n(r.tipo_cambio),
       'Monto_Pago':       n(r.monto_pago),
@@ -424,7 +435,9 @@ export async function sbPagosRecords(): Promise<PseudoRecord[]> {
       'Notas':            s(r.notas),
       'Fecha_Anulacion':  s(r.fecha_anulacion),
       'Motivo_Anulacion': s(r.motivo_anulacion),
-      // Estado_Pago: columna inexistente (vacía en Airtable) → Activo.
+      // FASE 2: columnas creadas por 03/04_fase2 (histórico venía vacío).
+      'Estado_Pago':      s(r.estado_pago),
+      'Anulado_Por':      s(r.anulado_por),
     }),
   }));
   return out.sort(porId);
@@ -523,9 +536,12 @@ export async function sbPlanillaRecords(): Promise<PseudoRecord[]> {
       'ESTADO_PAGO':       s(r.estado_pago),
       'NOTAS':             s(r.notas),
       'FECHA_PAGO_REGISTRADA': s(r.fecha_pago_registrada),
+      // FASE 2.5: boleta desde Storage (script 06 migra las históricas).
+      'ADJUNTO ': r.boleta_url
+        ? [{ url: String(r.boleta_url), filename: s(r.boleta_nombre) }]
+        : undefined,
       // DEUDA_VINCULADA / FECHA_DIFERIMIENTO / FECHA_CANCELACION /
-      // MOTIVO_CANCELACION / 'ADJUNTO ' (boleta): gaps de schema — vacíos
-      // en Airtable hoy salvo 2 boletas PDF (ver 03_fase2_gaps.sql).
+      // MOTIVO_CANCELACION: gaps de schema — vacíos en Airtable hoy.
     }),
   }));
   return out.sort(porId);

@@ -2,8 +2,9 @@ import { airtable, USE_MOCK, TABLES } from './airtable';
 import { obtenerFechaHoyGuatemala } from "../utils/fechas";
 import { F } from './mappers';
 import { getBancos } from './bancos';
-import { dataSource } from '../config/data-source';
+import { dataSource, writeSource } from '../config/data-source';
 import { sbCobrosRecords, sbFacturasRecords } from '../supabase/records';
+import { rpc, uuidRequerido, uuidOpcional } from '../supabase/writes';
 import type { Payment } from '../types';
 
 /* ===== Rama Supabase (MIGRACIÓN CAPA 2 · Fase 1) ===== */
@@ -471,7 +472,7 @@ function desgloseVacio(): DesgloseComponentes {
 }
 
 export async function registrarCobro(input: RegistrarCobroInput): Promise<RegistrarCobroResult> {
-  if (!airtable) throw new Error('Airtable no está configurado.');
+  if (!airtable && writeSource('cobros') !== 'supabase') throw new Error('Airtable no está configurado.');
 
   const nf = (input.noFactura ?? '').trim();
   if (!nf)                                    return fail(nf, 'NO.FACTURA es requerido.');
@@ -497,11 +498,8 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
   const tipoCambio = input.tipoCambio ?? 1;
 
   try {
-    // 1) Filas de la factura
-    const esc = nf.replace(/"/g, '\\"');
-    const records = await airtable(TABLES.FACTURAS)
-      .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
-      .all();
+    // 1) Filas de la factura (respeta el flag de LECTURA de facturas).
+    const records = await fetchLineasFactura(nf);
     if (records.length === 0) return fail(nf, `No se encontró la factura ${nf}.`);
 
     // Activas = no anuladas/refacturadas
@@ -535,16 +533,19 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
     // 3) Saldo pendiente actual = totalFactura - suma de Monto_Cobrado de cobros previos
     //    ACTIVOS (F-036). Cobros anulados se excluyen del saldo.
     //    No confiamos en Saldo_Por_Cobrar de Airtable: era buggy en su fórmula.
-    const cobrosPreviosRecords = await airtable(TABLES.COBROS)
-      .select({
-        filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`,
-        fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO],
-      })
-      .all();
+    const esc = nf.replace(/"/g, '\\"');
+    const cobrosPreviosRecords: ReadonlyArray<RecordLike> = dataSource('cobros_clientes') === 'supabase'
+      ? await sbCobrosDeNoFactura(nf)
+      : (await airtable!(TABLES.COBROS)
+          .select({
+            filterByFormula: `{${FC_READ.NO_FACTURA}} = "${esc}"`,
+            fields: [FC_READ.MONTO, FC_READ.ESTADO_COBRO],
+          })
+          .all()).map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
     const cobradoPrevio = round2(
       cobrosPreviosRecords
-        .filter(r => esCobroActivoFields(r.fields as Record<string, unknown>))
-        .reduce((s, r) => s + Number((r.fields as Record<string, unknown>)[FC_READ.MONTO] ?? 0), 0)
+        .filter(r => esCobroActivoFields(r.fields))
+        .reduce((s, r) => s + Number(r.fields[FC_READ.MONTO] ?? 0), 0)
     );
     const saldoAnterior = round2(totalFactura - cobradoPrevio);
     if (saldoAnterior <= SALDO_TOLERANCIA) {
@@ -585,6 +586,91 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
       });
     });
 
+    // ═══ FASE 2.1 — ESCRITURA A SUPABASE (transaccional) ═══
+    // La RPC fase2_registrar_cobro inserta las N líneas de cobro Y
+    // actualiza el ESTADO de las líneas de la factura en UNA transacción:
+    // si algo falla, nada se escribe (adiós rollback manual).
+    if (writeSource('cobros') === 'supabase') {
+      const saldoNuevoSb  = round2(saldoAnterior - sumaComponentes);
+      const liquidaTodoSb = saldoNuevoSb <= SALDO_TOLERANCIA;
+      const estadoNuevoSb: 'COBRADO' | 'COBRADO PARCIAL' = liquidaTodoSb ? 'COBRADO' : 'COBRADO PARCIAL';
+      // Literales EXACTOS del singleSelect legacy (con espacio final) para
+      // mantener consistencia con las filas sincronizadas desde Airtable.
+      const estadoLiteralSb = liquidaTodoSb ? 'COBRADO ' : 'COBRADO PARCIAL ';
+
+      const facturaUuid = new Map<string, string>();
+      for (const l of lineas) {
+        facturaUuid.set(l.id, await uuidRequerido('facturas_clientes', l.id, 'registrarCobro'));
+      }
+      const bancoUuid = new Map<string, string | null>();
+      const cobrosJson = [] as Array<Record<string, unknown>>;
+      for (const p of cobrosPlan) {
+        const c = p.componente;
+        const isRet = esMetodoRetencion(c.metodo);
+        let cuentaBancoId: string | null = null;
+        if (!isRet && c.bancoId) {
+          if (!bancoUuid.has(c.bancoId)) bancoUuid.set(c.bancoId, await uuidOpcional('bancos', c.bancoId));
+          cuentaBancoId = bancoUuid.get(c.bancoId) ?? null;
+        }
+        cobrosJson.push({
+          factura_id:          facturaUuid.get(p.facturaLineId),
+          fecha_cobro:         input.fecha,
+          monto_cobrado:       p.monto,
+          metodo:              c.metodo,
+          moneda,
+          tipo_cambio:         tipoCambio,
+          referencia:          c.referencia?.trim() ?? '',
+          cuenta_banco_id:     cuentaBancoId ?? '',
+          monto_retencion_iva: c.metodo === 'Retención IVA' ? p.monto : 0,
+          monto_retencion_isr: c.metodo === 'Retención ISR' ? p.monto : 0,
+          cobro_grupo_id:      grupoId,
+          estado:              'Pendiente',
+        });
+      }
+
+      const res = await rpc<{ cobros_airtable_ids: string[]; facturas_actualizadas: number }>(
+        'fase2_registrar_cobro',
+        {
+          p_cobros: cobrosJson,
+          p_factura_ids: lineas.map(l => facturaUuid.get(l.id)),
+          p_nuevo_estado: estadoLiteralSb,
+        },
+        ['cobros_clientes'],
+      );
+
+      // Los ids devueltos conservan el orden de cobrosPlan.
+      const creadosIds = res.cobros_airtable_ids ?? [];
+      const componentesRecordIdsSb: string[][] = input.componentes.map(() => []);
+      creadosIds.forEach((id, k) => {
+        const plan = cobrosPlan[k];
+        if (plan) componentesRecordIdsSb[plan.componenteIdx].push(id);
+      });
+
+      const desgloseSb = desgloseVacio();
+      for (const c of input.componentes) {
+        if (c.metodo === 'Transferencia') desgloseSb.transferencia += c.monto;
+        else if (c.metodo === 'Cheque')   desgloseSb.cheque         += c.monto;
+        else if (c.metodo === 'Efectivo') desgloseSb.efectivo       += c.monto;
+        else if (c.metodo === 'Tarjeta')  desgloseSb.tarjeta        += c.monto;
+        else if (c.metodo === 'Retención IVA') desgloseSb.retencionIVA += c.monto;
+        else if (c.metodo === 'Retención ISR') desgloseSb.retencionISR += c.monto;
+      }
+
+      return {
+        ok: true,
+        noFactura: nf,
+        grupoId,
+        totalCobrado: sumaComponentes,
+        saldoAnterior,
+        saldoNuevo: saldoNuevoSb,
+        estadoNuevo: estadoNuevoSb,
+        cobrosCreados: creadosIds.length,
+        recordsActualizados: res.facturas_actualizadas ?? lineas.length,
+        desglose: desgloseSb,
+        componentesRecordIds: componentesRecordIdsSb,
+      };
+    }
+
     // 7) Crear records (batch 10)
     const cobroFields = (p: CobroPlan) => {
       const c = p.componente;
@@ -618,7 +704,7 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
       const lote = payloadCobros.slice(i, i + 10);
       const slicePlan = cobrosPlan.slice(i, i + 10);
       try {
-        const res = await airtable(TABLES.COBROS).create(lote);
+        const res = await airtable!(TABLES.COBROS).create(lote);
         res.forEach((rec, k) => {
           cobrosCreados.push(rec.id);
           componentesRecordIds[slicePlan[k].componenteIdx].push(rec.id);
@@ -647,7 +733,7 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
     for (let i = 0; i < updates.length; i += 10) {
       const lote = updates.slice(i, i + 10);
       try {
-        const res = await airtable(TABLES.FACTURAS).update(lote);
+        const res = await airtable!(TABLES.FACTURAS).update(lote);
         estadoActualizados.push(...res.map(r => r.id));
       } catch (err) {
         console.error('Error actualizando ESTADO:', err);
@@ -935,7 +1021,6 @@ export async function anularCobro(grupoId: string, motivo: string, usuarioEmail:
     saldoAnterior: 0, saldoNuevo: 0, estadoNuevo: '', error,
   });
 
-  if (!airtable) return empty('Airtable no está configurado.');
   if (!grupoId?.trim()) return empty('grupoId requerido.');
   if (!motivo?.trim())  return empty('El motivo de anulación es requerido.');
   if (grupoId.startsWith('__legacy__')) {
@@ -943,6 +1028,76 @@ export async function anularCobro(grupoId: string, motivo: string, usuarioEmail:
     // Caller debe pasar el recordId real, no el alias legacy.
     return empty('Cobro legacy: pasar el recordId concreto en vez del alias __legacy__.');
   }
+
+  // ═══ FASE 2.1 — anulación transaccional en Supabase ═══
+  if (writeSource('cobros') === 'supabase') {
+    try {
+      const todosCobros = await sbCobrosRecords();
+      const grupo = todosCobros.filter(r => String(r.fields[FC_READ.GRUPO_ID] ?? '').trim() === grupoId.trim());
+      if (grupo.length === 0) return empty(`No se encontraron cobros con grupo ${grupoId}.`);
+
+      const noFactura = _lookupFirst(grupo[0].fields[FC_READ.NO_FACTURA]);
+      if (!noFactura) return empty('No se pudo identificar la factura asociada al grupo de cobros.');
+      const yaAnulados = grupo.every(r => !esCobroActivoFields(r.fields));
+      if (yaAnulados) return empty('El cobro ya estaba anulado.');
+
+      const [facturaRecords, cobrosNF] = await Promise.all([
+        fetchLineasFactura(noFactura),
+        sbCobrosDeNoFactura(noFactura),
+      ]);
+      const lineasActivas = facturaRecords.filter(r => {
+        const e = estadoCanon(r.fields[F.ESTADO]);
+        return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
+      });
+
+      const grupoIds = new Set(grupo.map(r => r.id));
+      const totalFactura = round2(lineasActivas.reduce((s, r) => s + Number(r.fields[F.TOTAL] ?? 0), 0));
+      // Cobrado activo DESPUÉS de anular este grupo (se calcula antes,
+      // la RPC aplica ambos cambios en una sola transacción).
+      const cobradoDespues = round2(cobrosNF
+        .filter(r => esCobroActivoFields(r.fields) && !grupoIds.has(r.id))
+        .reduce((s, r) => s + Number(r.fields[FC_READ.MONTO] ?? 0), 0));
+      const montoGrupo = round2(grupo.reduce((s, r) => s + Number(r.fields[FC_READ.MONTO] ?? 0), 0));
+      const saldoNuevo = round2(Math.max(0, totalFactura - cobradoDespues));
+      // Misma semántica que la ruta Airtable: saldo previo = saldo nuevo + monto anulado.
+      const saldoAnterior = round2(saldoNuevo + montoGrupo);
+
+      let estadoNuevo: 'EMITIDA' | 'COBRADO PARCIAL' | 'COBRADO' = 'EMITIDA';
+      let estadoLiteral = 'EMITIDA';
+      if (lineasActivas.length > 0) {
+        if (saldoNuevo <= SALDO_TOLERANCIA)      { estadoNuevo = 'COBRADO';         estadoLiteral = 'COBRADO '; }
+        else if (cobradoDespues > 0)             { estadoNuevo = 'COBRADO PARCIAL'; estadoLiteral = 'COBRADO PARCIAL '; }
+      }
+
+      const facturaUuids: string[] = [];
+      for (const r of lineasActivas) {
+        facturaUuids.push(await uuidRequerido('facturas_clientes', r.id, 'anularCobro'));
+      }
+
+      const res = await rpc<{ cobros_anulados: number }>('fase2_anular_cobros', {
+        p_cobro_airtable_ids: grupo.map(r => r.id),
+        p_fecha: obtenerFechaHoyGuatemala(),
+        p_motivo: motivo.trim(),
+        p_usuario: (usuarioEmail ?? '').trim() || 'sistema',
+        p_factura_ids: facturaUuids,
+        p_nuevo_estado: estadoLiteral,
+      }, ['cobros_clientes']);
+
+      return {
+        ok: true,
+        grupoId,
+        noFactura,
+        cobrosAnulados: res.cobros_anulados ?? grupo.length,
+        saldoAnterior,
+        saldoNuevo,
+        estadoNuevo: lineasActivas.length > 0 ? estadoNuevo : '',
+      };
+    } catch (err) {
+      return empty(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  if (!airtable) return empty('Airtable no está configurado.');
 
   try {
     // 1) Records del grupo
@@ -1066,9 +1221,69 @@ export async function anularCobroLegacy(recordId: string, motivo: string, usuari
     ok: false, grupoId: `__legacy__${recordId}`, noFactura: '', cobrosAnulados: 0,
     saldoAnterior: 0, saldoNuevo: 0, estadoNuevo: '', error,
   });
-  if (!airtable) return empty('Airtable no está configurado.');
   if (!recordId) return empty('recordId requerido.');
   if (!motivo?.trim()) return empty('Motivo requerido.');
+
+  // ═══ FASE 2.1 — anulación legacy transaccional en Supabase ═══
+  if (writeSource('cobros') === 'supabase') {
+    try {
+      const todosCobros = await sbCobrosRecords();
+      const record = todosCobros.find(r => r.id === recordId);
+      if (!record) return empty(`Cobro ${recordId} no encontrado.`);
+      if (!esCobroActivoFields(record.fields)) return empty('El cobro ya estaba anulado.');
+      const noFactura = _lookupFirst(record.fields[FC_READ.NO_FACTURA]);
+      if (!noFactura) return empty('Cobro sin factura asociada.');
+
+      const [facturaRecords, cobrosNF] = await Promise.all([
+        fetchLineasFactura(noFactura),
+        sbCobrosDeNoFactura(noFactura),
+      ]);
+      const lineasActivas = facturaRecords.filter(r => {
+        const e = estadoCanon(r.fields[F.ESTADO]);
+        return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
+      });
+      const totalFactura = round2(lineasActivas.reduce((s, r) => s + Number(r.fields[F.TOTAL] ?? 0), 0));
+      const cobradoDespues = round2(cobrosNF
+        .filter(r => esCobroActivoFields(r.fields) && r.id !== recordId)
+        .reduce((s, r) => s + Number(r.fields[FC_READ.MONTO] ?? 0), 0));
+      const montoAnulado = Number(record.fields[FC_READ.MONTO] ?? 0);
+      const saldoNuevo = round2(Math.max(0, totalFactura - cobradoDespues));
+      const saldoAnterior = round2(saldoNuevo + montoAnulado);
+
+      let estadoNuevo: 'EMITIDA' | 'COBRADO PARCIAL' | 'COBRADO' = 'EMITIDA';
+      let estadoLiteral = 'EMITIDA';
+      if (saldoNuevo <= SALDO_TOLERANCIA)      { estadoNuevo = 'COBRADO';         estadoLiteral = 'COBRADO '; }
+      else if (cobradoDespues > 0)             { estadoNuevo = 'COBRADO PARCIAL'; estadoLiteral = 'COBRADO PARCIAL '; }
+
+      const facturaUuids: string[] = [];
+      for (const r of lineasActivas) {
+        facturaUuids.push(await uuidRequerido('facturas_clientes', r.id, 'anularCobroLegacy'));
+      }
+
+      await rpc('fase2_anular_cobros', {
+        p_cobro_airtable_ids: [recordId],
+        p_fecha: obtenerFechaHoyGuatemala(),
+        p_motivo: motivo.trim(),
+        p_usuario: (usuarioEmail ?? '').trim() || 'sistema',
+        p_factura_ids: facturaUuids,
+        p_nuevo_estado: estadoLiteral,
+      }, ['cobros_clientes']);
+
+      return {
+        ok: true,
+        grupoId: `__legacy__${recordId}`,
+        noFactura,
+        cobrosAnulados: 1,
+        saldoAnterior,
+        saldoNuevo,
+        estadoNuevo,
+      };
+    } catch (err) {
+      return empty(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  if (!airtable) return empty('Airtable no está configurado.');
 
   try {
     const record = await airtable(TABLES.COBROS).find(recordId);
