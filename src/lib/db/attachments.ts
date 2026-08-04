@@ -32,6 +32,34 @@ export async function uploadAttachment(
   contentType: string,
   data: ArrayBuffer | Uint8Array | Buffer,
 ): Promise<void> {
+  // ═══ FASE 2.5 — adjuntos a Supabase Storage ═══
+  // Mismo contrato (recordId + fieldId identifican el destino); el archivo
+  // va al bucket público y la URL se persiste en la columna correspondiente.
+  const { writeSource } = await import('@/lib/config/data-source');
+  if (writeSource('adjuntos') === 'supabase') {
+    const { subirAdjuntoStorage } = await import('@/lib/supabase/storage');
+    const { actualizarPorAppId } = await import('@/lib/supabase/writes');
+    const destinos: Record<string, { carpeta: 'facturas' | 'boletas' | 'constancias'; tabla: string; colUrl: string; colNombre: string }> = {
+      [ADJUNTO_FIELD_ID]:    { carpeta: 'facturas',    tabla: 'facturas_clientes', colUrl: 'adjunto_url',    colNombre: 'adjunto_nombre' },
+      [CONSTANCIA_FIELD_ID]: { carpeta: 'constancias', tabla: 'cobros_clientes',   colUrl: 'constancia_url', colNombre: 'constancia_nombre' },
+      [BOLETA_FIELD_ID]:     { carpeta: 'boletas',     tabla: 'planilla',          colUrl: 'boleta_url',     colNombre: 'boleta_nombre' },
+    };
+    const destino = destinos[fieldId];
+    if (!destino) throw new Error(`uploadAttachment: fieldId ${fieldId} sin destino Supabase mapeado.`);
+    const subida = await subirAdjuntoStorage({
+      carpeta: destino.carpeta,
+      recordAppId: recordId,
+      filename: filename || 'archivo',
+      contentType: contentType || ATTACHMENT_MIME_PDF,
+      data,
+    });
+    await actualizarPorAppId(destino.tabla, recordId, {
+      [destino.colUrl]: subida.url,
+      [destino.colNombre]: subida.nombre,
+    });
+    return;
+  }
+
   const baseId = process.env.AIRTABLE_BASE_ID;
   const apiKey = process.env.AIRTABLE_API_KEY;
   if (!baseId || !apiKey) throw new Error('Airtable no configurado');
