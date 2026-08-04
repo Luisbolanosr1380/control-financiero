@@ -22,8 +22,10 @@ import { airtable, USE_MOCK, TABLES } from './airtable';
 import { getDeudaPorId, type Deuda } from './deudas';
 import { getBancos, type Banco } from './bancos';
 import { obtenerFechaHoyGuatemala } from '../utils/fechas';
-import { dataSource } from '../config/data-source';
+import { dataSource, writeSource } from '../config/data-source';
 import { sbPagosRecords, sbDeudasRecords } from '../supabase/records';
+import { rpc, uuidRequerido, actualizarPorAppId } from '../supabase/writes';
+import { supabase } from '../supabase/client';
 
 export type MetodoPagoDeuda =
   | 'Transferencia'
@@ -171,7 +173,9 @@ function pagoFromRecord(r: { id: string; fields: Record<string, unknown> }): Pag
  *    crea/borra un record en PAGOS_PROVEEDORES vinculado.
  */
 export async function registrarPagoDeuda(input: RegistrarPagoInput): Promise<RegistrarPagoResult> {
-  if (USE_MOCK || !airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if ((USE_MOCK || !airtable) && writeSource('pagos') !== 'supabase') {
+    return { ok: false, error: 'Airtable no está configurado.' };
+  }
 
   // 1) Validaciones básicas de input
   if (!input.deudaId)        return { ok: false, error: 'Deuda es requerida.' };
@@ -217,6 +221,65 @@ export async function registrarPagoDeuda(input: RegistrarPagoInput): Promise<Reg
   // 5) Crear el record en PAGOS_PROVEEDORES
   const moneda     = (input.moneda ?? 'GTQ') as MonedaPago;
   const tipoCambio = input.tipoCambio ?? 1;
+
+  // ═══ FASE 2.2 — ESCRITURA A SUPABASE ═══
+  // Un solo INSERT (atómico). El saldo de la deuda NO se toca: las lecturas
+  // lo recalculan desde los pagos (recomputeFromPagos), igual que hoy.
+  if (writeSource('pagos') === 'supabase') {
+    try {
+      const deudaUuid = await uuidRequerido('deudas', input.deudaId, 'registrarPagoDeuda');
+      // Cuenta_Banco es un NOMBRE (singleSelect legacy). Guardamos el nombre
+      // y, si coincide con un banco real, también la FK.
+      const sb = supabase();
+      let cuentaBancoId: string | null = null;
+      if (sb) {
+        const { data } = await sb.from('bancos').select('id')
+          .eq('nombre_cuenta', input.cuentaBancoName).limit(1);
+        cuentaBancoId = data?.[0]?.id ?? null;
+      }
+      const res = await rpc<{ pago_id: string; pago_airtable_id: string }>('fase2_registrar_pago', {
+        p_pago: {
+          deuda_id:            deudaUuid,
+          fecha_pago:          input.fecha,
+          monto_pago:          capital,
+          monto_interes:       interes,
+          monto_mora:          mora,
+          monto_comision:      comision,
+          metodo:              input.metodo,
+          referencia:          input.referencia?.trim() ?? '',
+          cuenta_banco_id:     cuentaBancoId ?? '',
+          cuenta_banco_nombre: input.cuentaBancoName,
+          moneda,
+          tipo_cambio:         tipoCambio,
+          estado:              'Pendiente',
+          notas:               input.notas?.trim() ?? '',
+        },
+      }, ['pagos_proveedores']);
+
+      const nuevoSaldo  = Math.max(0, deuda.saldoPendiente - capital);
+      const nuevoPagado = deuda.totalPagado + capital;
+      const nuevoPct    = deuda.montoOriginal > 0 ? (nuevoPagado / deuda.montoOriginal) * 100 : 0;
+      const nuevoEstado = nuevoSaldo <= 0.01 ? 'Liquidada' : deuda.estadoDeuda;
+      return {
+        ok: true,
+        pagoId: res.pago_airtable_id,
+        deudaActualizada: {
+          saldoPendiente: nuevoSaldo,
+          totalPagado:    nuevoPagado,
+          pctAvance:      nuevoPct,
+          estadoDeuda:    nuevoEstado,
+        },
+        mensaje: nuevoSaldo <= 0.01
+          ? `Pago de Q${capital.toFixed(2)} registrado. La deuda quedó liquidada.`
+          : `Pago de Q${capital.toFixed(2)} registrado. Nuevo saldo: Q${nuevoSaldo.toFixed(2)}.`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Error registrando pago de deuda (supabase):', msg);
+      return { ok: false, error: `No se pudo registrar el pago en Supabase: ${msg}` };
+    }
+  }
+
   try {
     // El cliente airtable acepta string | number | boolean | array — usamos un cast plano.
     type AField = string | number | boolean | string[] | undefined;
@@ -237,7 +300,7 @@ export async function registrarPagoDeuda(input: RegistrarPagoInput): Promise<Reg
     if (input.referencia?.trim()) fields[FP.REFERENCIA] = input.referencia.trim();
     if (input.notas?.trim())       fields[FP.NOTAS]      = input.notas.trim();
 
-    const created = await airtable(TABLES.PAGOS_PROVEEDORES).create(fields);
+    const created = await airtable!(TABLES.PAGOS_PROVEEDORES).create(fields);
 
     // 6) Calcular nuevos KPIs (Airtable los recalcula solo, devolvemos cifra
     //    estimada para feedback inmediato — la página revalidará el cache).
@@ -268,6 +331,18 @@ export async function registrarPagoDeuda(input: RegistrarPagoInput): Promise<Reg
 
 /** Borra un pago de PAGOS_PROVEEDORES. Para uso de tests / corrección. */
 export async function eliminarPagoDeuda(pagoId: string): Promise<{ ok: boolean; error?: string }> {
+  if (writeSource('pagos') === 'supabase') {
+    try {
+      const sb = supabase();
+      if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+      const { error, data } = await sb.from('pagos_proveedores').delete().eq('airtable_id', pagoId).select('id');
+      if (error) return { ok: false, error: error.message };
+      if (!data || data.length === 0) return { ok: false, error: `Pago ${pagoId} no encontrado.` };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
   if (USE_MOCK || !airtable) return { ok: false, error: 'Airtable no está configurado.' };
   try {
     await airtable(TABLES.PAGOS_PROVEEDORES).destroy([pagoId]);
@@ -463,9 +538,61 @@ export async function anularPagoDeuda(
     saldoAnterior: 0, saldoNuevo: 0, estadoDeuda: '', error,
   });
 
-  if (USE_MOCK || !airtable) return empty('Airtable no está configurado.');
   if (!pagoId) return empty('pagoId requerido.');
   if (!motivo?.trim()) return empty('El motivo de anulación es requerido.');
+
+  // ═══ FASE 2.2 — anulación en Supabase (un UPDATE atómico) ═══
+  if (writeSource('pagos') === 'supabase') {
+    try {
+      const recs = await sbPagosRecords();
+      const record = recs.find(r => r.id === pagoId);
+      if (!record) return empty(`Pago ${pagoId} no encontrado.`);
+      if (!esPagoActivoFields(record.fields)) return empty('El pago ya estaba anulado.');
+      const deudaId = arrFirst(record.fields[FP.DEUDA]);
+      if (!deudaId) return empty('El pago no tiene deuda asociada.');
+
+      const capitalOriginal  = num(record.fields[FP.MONTO_PAGO]);
+      const interesOriginal  = num(record.fields[FP.MONTO_INT]);
+      const moraOriginal     = num(record.fields[FP.MONTO_MORA]);
+      const comisionOriginal = num(record.fields[FP.MONTO_COMI]);
+      const totalOriginal    = capitalOriginal + interesOriginal + moraOriginal + comisionOriginal;
+
+      const deudaAntes = await getDeudaPorId(deudaId);
+      const saldoAnterior = deudaAntes?.saldoPendiente ?? 0;
+
+      const hoy = obtenerFechaHoyGuatemala();
+      const auditoria = `[Anulado ${hoy} · monto original Q${totalOriginal.toFixed(2)} (capital Q${capitalOriginal.toFixed(2)}, interés Q${interesOriginal.toFixed(2)}, mora Q${moraOriginal.toFixed(2)}, comisión Q${comisionOriginal.toFixed(2)})]`;
+
+      // Misma semántica que Airtable: montos a 0 para que el saldo derivado
+      // recalcule solo; Estado_Pago='Anulado' lo distingue.
+      await actualizarPorAppId('pagos_proveedores', pagoId, {
+        estado_pago:      'Anulado',
+        fecha_anulacion:  hoy,
+        motivo_anulacion: `${auditoria}\n${motivo.trim()}`,
+        anulado_por:      (usuarioEmail ?? '').trim() || 'sistema',
+        monto_pago:       0,
+        monto_interes:    0,
+        monto_mora:       0,
+        monto_comision:   0,
+        monto_pago_gtq:   0,
+      });
+
+      const deudaDespues = await getDeudaPorId(deudaId);
+      return {
+        ok: true,
+        pagoId,
+        deudaId,
+        montoAnulado: capitalOriginal,
+        saldoAnterior,
+        saldoNuevo:   deudaDespues?.saldoPendiente ?? saldoAnterior,
+        estadoDeuda:  deudaDespues?.estadoDeuda ?? '',
+      };
+    } catch (err) {
+      return empty(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  if (USE_MOCK || !airtable) return empty('Airtable no está configurado.');
 
   try {
     const record = await airtable(TABLES.PAGOS_PROVEEDORES).find(pagoId);
