@@ -57,3 +57,41 @@ export function dataSource(tabla: TablaMigrable): Backend {
   if (force === 'airtable' || force === 'supabase') return force;
   return DATA_SOURCE[tabla];
 }
+
+/* ════════════════════════════════════════════════════════════════
+ * FASE 2 — flag de ESCRITURA por operación.
+ *
+ * Paralelo al de lectura: cada operación core se migra y valida UNA a
+ * la vez; rollback = volver el valor a 'airtable'. Las escrituras no
+ * cubiertas por estas operaciones (emitir factura, NC, CRUD de
+ * empleados/deudas/acreedores…) siguen en Airtable hasta Fase 3.
+ *
+ * ORDEN DE FLIP SEGURO (acoplamiento lectura/escritura):
+ *  - 'cobros' actualiza el ESTADO de FACTURAS → flipear cobros SOLO
+ *    cuando la LECTURA de facturas_clientes ya esté en 'supabase'
+ *    (Fase 2.5 adjuntos); si no, la UI no reflejaría el cobro.
+ *  - 'adjuntos' (uploads) requiere el bucket de Storage creado
+ *    (scripts 06_migrar_adjuntos_storage.py).
+ * ════════════════════════════════════════════════════════════════ */
+
+export type OperacionEscritura =
+  | 'cobros'      // registrar/anular cobro + estado de factura
+  | 'pagos'       // registrar/anular pago a deuda
+  | 'gastos'      // bandeja facturas_in + aprobar (gasto+asiento+partidas)
+  | 'planilla'    // asiento de planilla (F-056.2)
+  | 'adjuntos';   // subida de PDFs (facturas, boletas, constancias)
+
+export const WRITE_SOURCE: Record<OperacionEscritura, Backend> = {
+  cobros:   'airtable',
+  pagos:    'airtable',
+  gastos:   'airtable',
+  planilla: 'airtable',
+  adjuntos: 'airtable',
+};
+
+/** Backend efectivo de escritura (override WRITE_SOURCE_FORCE para staging). */
+export function writeSource(op: OperacionEscritura): Backend {
+  const force = process.env.WRITE_SOURCE_FORCE;
+  if (force === 'airtable' || force === 'supabase') return force;
+  return WRITE_SOURCE[op];
+}
