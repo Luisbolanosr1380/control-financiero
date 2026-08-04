@@ -47,6 +47,9 @@ import { findRecordById, selectValue } from '@/lib/airtable/find-by-id';
 import { resolverPeriodoContable } from '@/lib/gastos/services/resolver-periodo-contable';
 import { generarAsientoFacturaCompra } from '@/lib/gastos/services/generar-asiento-factura-compra';
 import { composerDescripcion } from '@/lib/gastos/services/composer-descripcion';
+import { writeSource } from '@/lib/config/data-source';
+import { getFacturaInPorId } from '@/lib/db/facturas-in';
+import { sbAprobarGasto, sbCrearMovimientoBancario } from '@/lib/gastos/supabase-gastos';
 
 export interface AprobarFacturaInput {
   facturaInId: string;
@@ -152,7 +155,8 @@ async function leerFacturaIn(facturaInId: string): Promise<FacturaInData> {
 }
 
 export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<AprobarFacturaResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  const escribeSupabase = writeSource('gastos') === 'supabase';
+  if (!airtable && !escribeSupabase) return { ok: false, error: 'Airtable no está configurado.' };
 
   // 1) Validación.
   const errorValid = validarInput(input);
@@ -161,10 +165,28 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
 
-  // 2) Cargar FACTURA_IN.
+  // 2) Cargar FACTURA_IN (del backend activo de la operación).
   let factura: FacturaInData;
   try {
-    factura = await leerFacturaIn(input.facturaInId);
+    if (escribeSupabase) {
+      const fin = await getFacturaInPorId(input.facturaInId);
+      if (!fin) throw new Error(`FACTURA_IN ${input.facturaInId} no encontrada.`);
+      factura = {
+        recordId: fin.id,
+        estatus: fin.estatus,
+        proveedorNombre: fin.proveedorNombre,
+        proveedorNit: fin.proveedorNit,
+        serie: fin.serie,
+        numero: fin.numero,
+        fechaEmision: fin.fechaEmision,
+        base: fin.subtotal,
+        iva: fin.iva,
+        total: fin.total,
+        moneda: (fin.moneda === 'USD' ? 'USD' : 'Q'),
+      };
+    } else {
+      factura = await leerFacturaIn(input.facturaInId);
+    }
   } catch (err) {
     return { ok: false, error: `No se pudo cargar FACTURA_IN: ${err instanceof Error ? err.message : String(err)}` };
   }
@@ -209,14 +231,25 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
   let proveedor;
   try {
     if (input.proveedorId) {
-      // F-050.3: leer por field ID requiere findRecordById (no .find()).
-      const r = await findRecordById(PROVEEDORES_TABLE_ID, input.proveedorId);
-      const nombreFromRec = r ? String(r.fields[PROVEEDORES_FIELDS.nombre] ?? '') : '';
-      proveedor = {
-        recordId: input.proveedorId,
-        nombre: nombreFromRec || datos.proveedorNombre,
-        esNuevo: false,
-      };
+      if (escribeSupabase) {
+        const { fetchAll } = await import('@/lib/supabase/client');
+        const rows = await fetchAll<Record<string, unknown>>('proveedores', { select: 'airtable_id, nombre' });
+        const hit = rows.find(r => String(r.airtable_id) === input.proveedorId);
+        proveedor = {
+          recordId: input.proveedorId,
+          nombre: String(hit?.nombre ?? '') || datos.proveedorNombre,
+          esNuevo: false,
+        };
+      } else {
+        // F-050.3: leer por field ID requiere findRecordById (no .find()).
+        const r = await findRecordById(PROVEEDORES_TABLE_ID, input.proveedorId);
+        const nombreFromRec = r ? String(r.fields[PROVEEDORES_FIELDS.nombre] ?? '') : '';
+        proveedor = {
+          recordId: input.proveedorId,
+          nombre: nombreFromRec || datos.proveedorNombre,
+          esNuevo: false,
+        };
+      }
     } else {
       const datosCrear = input.proveedorDatosParaCrear!;
       proveedor = await buscarOCrearProveedor({
@@ -251,6 +284,82 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
     fechaEmision: datos.fechaEmision,
     periodoNota: periodo.notaAjuste,
   });
+
+  // ═══ FASE 2.3 — APROBACIÓN TRANSACCIONAL EN SUPABASE ═══
+  // Una sola RPC crea ASIENTO + PARTIDAS + GASTO y marca la FACTURA_IN
+  // como Aprobada. Si cualquier parte falla, Postgres revierte TODO.
+  if (escribeSupabase) {
+    try {
+      const resSb = await sbAprobarGasto({
+        facturaInAppId:        factura.recordId,
+        fechaEmision:          datos.fechaEmision,
+        periodo,
+        centroCostoAppId:      input.centroCostoId,
+        proveedorAppId:        proveedor.recordId,
+        proveedorNombre:       proveedor.nombre,
+        proveedorEsInternacional: input.proveedorEsInternacional ?? false,
+        cuentaGastoAppId:      input.categoriaGastoId,
+        baseSinIva:            datos.base,
+        iva:                   datos.iva,
+        total:                 datos.total,
+        moneda:                datos.moneda,
+        tipoCambio:            datos.tipoCambio,
+        metodoPago:            input.metodoPago,
+        bancoAppId:            input.bancoId,
+        fechaPago:             input.fechaPago,
+        fechaVencimiento:      input.fechaVencimiento,
+        referenciaPago:        input.referenciaPago,
+        tipoOperativo:         input.tipoOperativo,
+        serie:                 datos.serie,
+        numero:                datos.numero,
+        descripcion:           descripcionAsiento,
+        aprobadoPor:           email,
+        fechaAprobacion:       obtenerDateTimeHoyGuatemala(),
+      });
+
+      // Movimiento bancario de conciliación (fail-soft, igual que F-050.1).
+      if (input.metodoPago === 'Contado' && input.bancoId && input.fechaPago) {
+        try {
+          await sbCrearMovimientoBancario({
+            bancoAppId: input.bancoId,
+            fecha: input.fechaPago,
+            monto: datos.total,
+            concepto: `Pago factura ${datos.serie}-${datos.numero} a ${proveedor.nombre}`,
+            referencia: input.referenciaPago,
+            periodoNombre: periodo.nombrePeriodo,
+            asientoAppId: resSb.asientoId,
+          });
+        } catch (err) {
+          console.warn(`FASE 2.3: MOVIMIENTO_BANCARIO no creado para gasto ${resSb.gastoId}:`,
+            err instanceof Error ? err.message : err);
+        }
+      }
+
+      // Aprendizaje pasivo F-052/F-052.1 (fail-soft).
+      try {
+        await aprenderCuentaHabitualProveedor({ proveedorId: proveedor.recordId, cuentaId: input.categoriaGastoId });
+      } catch (err) {
+        console.warn('F-052b aprender (no bloquea):', err instanceof Error ? err.message : err);
+      }
+      try {
+        await aprenderCentroHabitualProveedor({ proveedorId: proveedor.recordId, centroCostoId: input.centroCostoId });
+      } catch (err) {
+        console.warn('F-052.1 aprender (no bloquea):', err instanceof Error ? err.message : err);
+      }
+
+      revalidatePath('/gastos');
+      return {
+        ok: true,
+        gastoId: resSb.gastoId,
+        asientoId: resSb.asientoId,
+        asientoRef: resSb.asientoRef,
+        proveedorEsNuevo: proveedor.esNuevo,
+        periodoAjustado: periodo.ajustado,
+      };
+    } catch (err) {
+      return { ok: false, error: `Error aprobando en Supabase (nada se escribió): ${err instanceof Error ? err.message : String(err)}` };
+    }
+  }
 
   let asiento;
   try {
@@ -304,7 +413,7 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
 
   let gastoId: string;
   try {
-    const created = (await (airtable(GASTOS_TABLE_ID).create as unknown as (
+    const created = (await (airtable!(GASTOS_TABLE_ID).create as unknown as (
       records: Array<{ fields: Record<string, AField> }>,
       opts: { typecast: boolean },
     ) => Promise<Array<{ id: string }>>)([{ fields: fieldsGasto }], { typecast: true }));
@@ -313,8 +422,8 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
     // ROLLBACK: borrar asiento + partidas (el asiento ya quedó creado en
     // generarAsientoFacturaCompra y el rollback de partidas allá fue exitoso).
     try {
-      await airtable(PARTIDAS_TABLE_ID).destroy(asiento.partidasIds);
-      await airtable(ASIENTOS_TABLE_ID).destroy([asiento.asientoId]);
+      await airtable!(PARTIDAS_TABLE_ID).destroy(asiento.partidasIds);
+      await airtable!(ASIENTOS_TABLE_ID).destroy([asiento.asientoId]);
     } catch {
       // Si el rollback falla, dejamos asiento huérfano — el error original
       // ya menciona que falló GASTO; Stark tendrá que limpiar manual.
@@ -324,7 +433,7 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
 
   // 8) Actualizar FACTURA_IN.
   try {
-    await airtable(FACTURAS_IN_TABLE_ID).update([{
+    await airtable!(FACTURAS_IN_TABLE_ID).update([{
       id: factura.recordId,
       fields: {
         [FACTURAS_IN_FIELDS.estatus]:      'Aprobada',
@@ -350,7 +459,7 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
   if (input.metodoPago === 'Contado' && input.bancoId && input.fechaPago) {
     const concepto = `Pago factura ${datos.serie}-${datos.numero} a ${proveedor.nombre}`;
     try {
-      await (airtable(MOVIMIENTOS_BANCARIOS_TABLE_ID).create as unknown as (
+      await (airtable!(MOVIMIENTOS_BANCARIOS_TABLE_ID).create as unknown as (
         records: Array<{ fields: Record<string, AField> }>,
         opts: { typecast: boolean },
       ) => Promise<Array<{ id: string }>>)([{

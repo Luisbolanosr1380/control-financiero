@@ -348,8 +348,22 @@ export async function aprenderCuentaHabitualProveedor(args: {
   proveedorId: string;
   cuentaId: string;
 }): Promise<boolean> {
-  if (!airtable) return false;
   if (!args.proveedorId || !args.cuentaId) return false;
+  // FASE 2.3
+  {
+    const { writeSource } = await import('@/lib/config/data-source');
+    if (writeSource('gastos') === 'supabase') {
+      try {
+        const { sbAprenderHabitualProveedor } = await import('@/lib/gastos/supabase-gastos');
+        await sbAprenderHabitualProveedor({ proveedorAppId: args.proveedorId, cuentaAppId: args.cuentaId });
+        return true;
+      } catch (err) {
+        console.warn('F-052 aprender (supabase) falló:', err instanceof Error ? err.message : err);
+        return false;
+      }
+    }
+  }
+  if (!airtable) return false;
   try {
     const actual = await leerCuentaHabitualProveedor(args.proveedorId);
     if (actual === args.cuentaId) return false;

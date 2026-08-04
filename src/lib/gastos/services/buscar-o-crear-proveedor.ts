@@ -11,6 +11,8 @@
 
 import { airtable } from '@/lib/db/airtable';
 import { PROVEEDORES_TABLE_ID, PROVEEDORES_FIELDS } from '@/lib/airtable/proveedores-fields';
+import { writeSource } from '@/lib/config/data-source';
+import { sbBuscarOCrearProveedor, sbBuscarProveedorPorNit } from '@/lib/gastos/supabase-gastos';
 
 export interface ProveedorResolucion {
   recordId: string;
@@ -33,6 +35,7 @@ function normalizarNit(s: string): string {
 export async function buscarOCrearProveedor(
   input: BuscarOCrearProveedorInput,
 ): Promise<ProveedorResolucion> {
+  if (writeSource('gastos') === 'supabase') return sbBuscarOCrearProveedor(input);
   if (!airtable) throw new Error('Airtable no está configurado.');
   const nitNorm = normalizarNit(input.nit);
   if (!nitNorm) throw new Error('NIT vacío — no se puede buscar/crear proveedor.');
@@ -79,6 +82,9 @@ export async function buscarOCrearProveedor(
 
 /** Lectura ligera para la UI: ¿existe ya un proveedor con este NIT? */
 export async function buscarProveedorPorNit(nit: string): Promise<{ existe: boolean; recordId?: string; nombre?: string }> {
+  if (writeSource('gastos') === 'supabase') {
+    try { return await sbBuscarProveedorPorNit(nit); } catch { return { existe: false }; }
+  }
   if (!airtable) return { existe: false };
   const nitNorm = normalizarNit(nit);
   if (!nitNorm) return { existe: false };

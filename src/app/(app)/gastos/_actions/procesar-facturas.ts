@@ -45,6 +45,9 @@ import { extraerFacturaConGemini } from '@/lib/facturas/gemini-extractor';
 import { validarSanidad } from '@/lib/facturas/sanity';
 import { validarConRegex, todosLosMatches } from '@/lib/facturas/validacion-cruzada';
 import { buildDocKey } from '@/lib/facturas/parsers';
+import { writeSource } from '@/lib/config/data-source';
+import { sbCrearFacturaIn, sbActualizarArchivoFacturaIn } from '@/lib/gastos/supabase-gastos';
+import { subirAdjuntoStorage } from '@/lib/supabase/storage';
 
 export interface ResultadoProcesamiento {
   creadas: Array<{
@@ -80,7 +83,8 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
   if (archivos.length === 0) {
     return { ...resultado, errores: [{ nombreArchivo: '—', motivo: 'No se recibieron archivos.' }] };
   }
-  if (!airtable) {
+  const escribeSupabase = writeSource('gastos') === 'supabase';
+  if (!airtable && !escribeSupabase) {
     return { ...resultado, errores: [{ nombreArchivo: '—', motivo: 'Airtable no está configurado en el server.' }] };
   }
 
@@ -180,9 +184,53 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
     };
 
     let recordId: string;
+    if (escribeSupabase) {
+      // ═══ FASE 2.3 — crear la FACTURA_IN en Supabase + PDF a Storage ═══
+      try {
+        const creado = await sbCrearFacturaIn({
+          fuente: 'Sistema',
+          fileHash: hash,
+          docKey,
+          proveedorNombre: extraida.datos.proveedor_nombre,
+          proveedorNit: extraida.datos.proveedor_nit,
+          serie: extraida.datos.serie,
+          numero: extraida.datos.numero,
+          fechaEmision: extraida.datos.fecha_emision,
+          moneda: extraida.datos.moneda,
+          subtotal: extraida.datos.subtotal ?? undefined,
+          iva: extraida.datos.iva ?? undefined,
+          total: extraida.datos.total,
+          pais: 'GT',
+          tipoDoc: extraida.datos.tipo_doc,
+          textoOcr: extraida.texto_ocr_completo.slice(0, MAX_OCR_CHARS_GUARDAR),
+          datosNormalizados: datosNormalizadosBlob,
+          datosNormalizadosOk: normalizado_ok,
+          subidoPor: email,
+          fechaSubida: obtenerDateTimeHoyGuatemala(),
+          confianzaExtraccion: extraida.confianza ?? undefined,
+        });
+        recordId = creado.appId;
+      } catch (err) {
+        resultado.errores.push({
+          nombreArchivo,
+          motivo: `Error al crear la factura en Supabase: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        continue;
+      }
+      // PDF a Supabase Storage (fail-soft, igual que el flujo Airtable).
+      try {
+        const subida = await subirAdjuntoStorage({
+          carpeta: 'facturas-in', recordAppId: recordId,
+          filename: nombreArchivo, contentType: ATTACHMENT_MIME_PDF, data: buf,
+        });
+        await sbActualizarArchivoFacturaIn(recordId, subida.url, subida.nombre);
+      } catch (err) {
+        console.warn(`FASE 2.3: adjunto no persistido para ${nombreArchivo}:`, err instanceof Error ? err.message : err);
+      }
+    } else {
     try {
       // airtable@0.12.2 typing es laxo con la sobrecarga array+opts.
-      const created = (await (airtable(FACTURAS_IN_TABLE_ID).create as unknown as (
+      const created = (await (airtable!(FACTURAS_IN_TABLE_ID).create as unknown as (
         records: Array<{ fields: Record<string, AField> }>,
         opts: { typecast: boolean },
       ) => Promise<Array<{ id: string }>>)([{ fields }], { typecast: true }));
@@ -200,6 +248,7 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
       await uploadAttachment(recordId, FACTURAS_IN_FIELDS.archivo_adjunto, nombreArchivo, ATTACHMENT_MIME_PDF, buf);
     } catch (err) {
       console.warn(`F-049.2: adjunto no persistido para ${nombreArchivo}:`, err instanceof Error ? err.message : err);
+    }
     }
 
     resultado.creadas.push({

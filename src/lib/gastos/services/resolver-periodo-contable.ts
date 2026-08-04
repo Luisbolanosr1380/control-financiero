@@ -38,6 +38,8 @@
  */
 
 import { airtable } from '@/lib/db/airtable';
+import { writeSource } from '@/lib/config/data-source';
+import { sbResolverPeriodoContable } from '@/lib/gastos/supabase-gastos';
 
 const PERIODOS_TABLE_ID = 'tblag6GLysk6erzlU';
 const PERIODOS_FIELDS = {
@@ -139,6 +141,8 @@ async function crearPeriodoAbierto(nombre: string): Promise<PeriodoRow> {
 }
 
 export async function resolverPeriodoContable(fechaEmision: string): Promise<PeriodoResolucion> {
+  // FASE 2.3: en modo Supabase el período vive (y se auto-crea) en Postgres.
+  if (writeSource('gastos') === 'supabase') return sbResolverPeriodoContable(fechaEmision);
   const objetivo = periodoDeFecha(fechaEmision);
 
   // 1) Primer intento de lectura.

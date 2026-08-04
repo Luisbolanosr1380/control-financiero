@@ -21,6 +21,9 @@ import {
 } from '@/lib/airtable/facturas-in-fields';
 import { findRecordById, selectValue } from '@/lib/airtable/find-by-id';
 import { obtenerDateTimeHoyGuatemala } from '@/lib/utils/fechas';
+import { writeSource } from '@/lib/config/data-source';
+import { getFacturaInPorId } from '@/lib/db/facturas-in';
+import { sbAnularFacturaIn } from '@/lib/gastos/supabase-gastos';
 
 export interface AnularFacturaInput {
   facturaInId: string;
@@ -35,7 +38,8 @@ export interface AnularFacturaResult {
 const MIN_MOTIVO_CHARS = 5;
 
 export async function anularFacturaAction(input: AnularFacturaInput): Promise<AnularFacturaResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  const escribeSupabase = writeSource('gastos') === 'supabase';
+  if (!airtable && !escribeSupabase) return { ok: false, error: 'Airtable no está configurado.' };
 
   const motivo = (input.motivo ?? '').trim();
   if (motivo.length < MIN_MOTIVO_CHARS) {
@@ -46,16 +50,24 @@ export async function anularFacturaAction(input: AnularFacturaInput): Promise<An
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
 
-  // F-050.3: `.find()` no acepta returnFieldsByFieldId → estatus leído por
-  // field ID quedaba "". Helper findRecordById usa select+RECORD_ID().
-  // selectValue normaliza singleSelect que puede llegar como string o
-  // como `{id, name, color}` según el endpoint.
-  const r = await findRecordById(FACTURAS_IN_TABLE_ID, input.facturaInId);
-  if (!r) {
-    return { ok: false, error: `No se pudo cargar la factura ${input.facturaInId}.` };
+  // FASE 2.3: leer del backend activo de la operación.
+  let estatusActual: string;
+  let datosPrevios: string;
+  if (escribeSupabase) {
+    const fin = await getFacturaInPorId(input.facturaInId);
+    if (!fin) return { ok: false, error: `No se pudo cargar la factura ${input.facturaInId}.` };
+    estatusActual = fin.estatus;
+    datosPrevios  = fin.datosNormalizados ?? '';
+  } else {
+    // F-050.3: `.find()` no acepta returnFieldsByFieldId → estatus leído por
+    // field ID quedaba "". Helper findRecordById usa select+RECORD_ID().
+    const r = await findRecordById(FACTURAS_IN_TABLE_ID, input.facturaInId);
+    if (!r) {
+      return { ok: false, error: `No se pudo cargar la factura ${input.facturaInId}.` };
+    }
+    estatusActual = selectValue(r.fields[FACTURAS_IN_FIELDS.estatus]);
+    datosPrevios  = String(r.fields[FACTURAS_IN_FIELDS.datos_normalizados] ?? '');
   }
-  const estatusActual = selectValue(r.fields[FACTURAS_IN_FIELDS.estatus]);
-  const datosPrevios  = String(r.fields[FACTURAS_IN_FIELDS.datos_normalizados] ?? '');
 
   if (estatusActual === 'Aprobada') {
     return {
@@ -83,15 +95,19 @@ export async function anularFacturaAction(input: AnularFacturaInput): Promise<An
   };
 
   try {
-    await airtable(FACTURAS_IN_TABLE_ID).update([{
-      id: input.facturaInId,
-      fields: {
-        [FACTURAS_IN_FIELDS.estatus]:            'Anulada',
-        [FACTURAS_IN_FIELDS.datos_normalizados]: JSON.stringify(blobNuevo),
-      },
-    }], { typecast: true });
+    if (escribeSupabase) {
+      await sbAnularFacturaIn(input.facturaInId, JSON.stringify(blobNuevo));
+    } else {
+      await airtable!(FACTURAS_IN_TABLE_ID).update([{
+        id: input.facturaInId,
+        fields: {
+          [FACTURAS_IN_FIELDS.estatus]:            'Anulada',
+          [FACTURAS_IN_FIELDS.datos_normalizados]: JSON.stringify(blobNuevo),
+        },
+      }], { typecast: true });
+    }
   } catch (err) {
-    return { ok: false, error: `Error al actualizar Airtable: ${err instanceof Error ? err.message : String(err)}` };
+    return { ok: false, error: `Error al actualizar: ${err instanceof Error ? err.message : String(err)}` };
   }
 
   revalidatePath('/gastos');

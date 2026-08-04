@@ -17,6 +17,8 @@
 import { createHash } from 'node:crypto';
 import { airtable } from '@/lib/db/airtable';
 import { FACTURAS_IN_TABLE_ID, FACTURAS_IN_FIELDS } from '@/lib/airtable/facturas-in-fields';
+import { writeSource } from '@/lib/config/data-source';
+import { sbCheckDuplicate } from '@/lib/gastos/supabase-gastos';
 
 /** SHA-256 hex del contenido binario. Determinista y rápido (~1ms por MB). */
 export function fileContentHash(buffer: Buffer): string {
@@ -51,9 +53,11 @@ async function buscarPorCampo(fieldId: string, valor: string): Promise<Duplicate
 }
 
 export async function checkDuplicateByHash(hash: string): Promise<DuplicateCheck> {
+  if (writeSource('gastos') === 'supabase') return sbCheckDuplicate('file_hash', hash);
   return buscarPorCampo(FACTURAS_IN_FIELDS.file_hash, hash);
 }
 
 export async function checkDuplicateByDocKey(docKey: string): Promise<DuplicateCheck> {
+  if (writeSource('gastos') === 'supabase') return sbCheckDuplicate('doc_key', docKey);
   return buscarPorCampo(FACTURAS_IN_FIELDS.doc_key, docKey);
 }

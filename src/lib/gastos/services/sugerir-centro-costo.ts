@@ -384,8 +384,25 @@ export async function aprenderCentroHabitualProveedor(args: {
   proveedorId: string;
   centroCostoId: string;
 }): Promise<boolean> {
-  if (!airtable) return false;
   if (!args.proveedorId || !args.centroCostoId) return false;
+  // FASE 2.3
+  {
+    const { writeSource } = await import('@/lib/config/data-source');
+    if (writeSource('gastos') === 'supabase') {
+      try {
+        const centros = await getCentrosCostoActivos();
+        const cc = centros.find(c => c.id === args.centroCostoId);
+        if (cc && esPendiente(cc.nombre)) return false;
+        const { sbAprenderHabitualProveedor } = await import('@/lib/gastos/supabase-gastos');
+        await sbAprenderHabitualProveedor({ proveedorAppId: args.proveedorId, centroCostoAppId: args.centroCostoId });
+        return true;
+      } catch (err) {
+        console.warn('F-052.1 aprender (supabase) falló:', err instanceof Error ? err.message : err);
+        return false;
+      }
+    }
+  }
+  if (!airtable) return false;
   try {
     // No persistimos "Pendiente" como hábito — esa elección NUNCA es
     // intencional como memoria del proveedor.

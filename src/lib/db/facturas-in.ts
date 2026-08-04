@@ -8,6 +8,10 @@
 
 import { airtable, USE_MOCK } from './airtable';
 import { FACTURAS_IN_TABLE_ID, FACTURAS_IN_FIELDS, type FacturaInFieldKey } from '@/lib/airtable/facturas-in-fields';
+// FASE 2.3: la bandeja lee del MISMO backend al que escribe la operación
+// 'gastos' — si no, lo recién subido no aparecería en la lista.
+import { writeSource } from '@/lib/config/data-source';
+import { sbGetFacturasIn, sbGetFacturaInPorId } from '@/lib/gastos/supabase-gastos';
 
 export type EstatusFacturaIn = 'Pendiente' | 'Validada' | 'Anulada' | string;
 
@@ -97,16 +101,20 @@ export interface FacturasInFiltros {
 }
 
 export async function getFacturasIn(filtros: FacturasInFiltros = {}): Promise<FacturaIn[]> {
-  if (USE_MOCK || !airtable) return [];
+  if (writeSource('gastos') !== 'supabase' && (USE_MOCK || !airtable)) return [];
   try {
-    const records = await airtable(FACTURAS_IN_TABLE_ID)
-      .select({
-        returnFieldsByFieldId: true,
-        sort: [{ field: FACTURAS_IN_FIELDS.fecha_subida, direction: 'desc' }],
-      })
-      .all();
-
-    let lista = records.map(r => mapRecord({ id: r.id, fields: r.fields as Record<string, unknown> }));
+    let lista: FacturaIn[];
+    if (writeSource('gastos') === 'supabase') {
+      lista = await sbGetFacturasIn();
+    } else {
+      const records = await airtable!(FACTURAS_IN_TABLE_ID)
+        .select({
+          returnFieldsByFieldId: true,
+          sort: [{ field: FACTURAS_IN_FIELDS.fecha_subida, direction: 'desc' }],
+        })
+        .all();
+      lista = records.map(r => mapRecord({ id: r.id, fields: r.fields as Record<string, unknown> }));
+    }
 
     if (filtros.estatus)   lista = lista.filter(f => f.estatus === filtros.estatus);
     if (filtros.subidoPor) lista = lista.filter(f => f.subidoPor === filtros.subidoPor);
@@ -134,6 +142,9 @@ export async function getFacturasIn(filtros: FacturasInFiltros = {}): Promise<Fa
 }
 
 export async function getFacturaInPorId(id: string): Promise<FacturaIn | null> {
+  if (writeSource('gastos') === 'supabase') {
+    try { return await sbGetFacturaInPorId(id); } catch { return null; }
+  }
   if (!airtable) return null;
   try {
     const records = await airtable(FACTURAS_IN_TABLE_ID)
