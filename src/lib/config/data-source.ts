@@ -45,10 +45,10 @@ export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   empleados:                'supabase',
   planilla:                 'supabase',   // gap menor: 2 boletas PDF (adjuntos) — regenerables
   notas_credito:            'supabase',
-  // Pendientes (ver supabase/03_fase2_gaps.sql):
-  deudas:                   'airtable',   // falta columna fecha_vencimiento (41 filas) — DDL + resync
+  deudas:                   'supabase',   // 03_fase2_gaps.sql corrido + resync — diff limpio 2026-08-04
+  obligaciones_recurrentes: 'supabase',   // enum con 'Otra' + 2 filas corregidas — diff limpio 2026-08-04
+  // Pendiente:
   facturas_clientes:        'airtable',   // ADJUNTO (~1022 PDFs) sin migrar a Storage todavía
-  obligaciones_recurrentes: 'airtable',   // enum sin 'Otra' (2 filas) — ALTER TYPE + resync
 };
 
 /** Backend efectivo para una tabla (respeta el override del diff script). */
