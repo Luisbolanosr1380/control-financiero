@@ -47,8 +47,7 @@ export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   notas_credito:            'supabase',
   deudas:                   'supabase',   // 03_fase2_gaps.sql corrido + resync — diff limpio 2026-08-04
   obligaciones_recurrentes: 'supabase',   // enum con 'Otra' + 2 filas corregidas — diff limpio 2026-08-04
-  // Pendiente:
-  facturas_clientes:        'airtable',   // ADJUNTO (~1022 PDFs) sin migrar a Storage todavía
+  facturas_clientes:        'supabase',   // 14/14 — PDFs en Storage (1022/1022, script 06) + diff limpio
 };
 
 /** Backend efectivo para una tabla (respeta el override del diff script). */
