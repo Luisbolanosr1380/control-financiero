@@ -2,9 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
-import { crearBancoAction, crearCentroCostoAction, crearCuentaContableAction } from '@/app/(app)/admin/catalogos/actions';
+import { crearBancoAction, crearCentroCostoAction } from '@/app/(app)/admin/catalogos/actions';
 import type { CatalogoResumen } from '@/lib/db/catalogos';
 
 interface Props {
@@ -36,12 +37,6 @@ export function AdminCatalogosClient({ catalogos }: Props) {
   const [cObs, setCObs]               = useState('');
   const [cLoading, setCLoading]       = useState(false);
 
-  // ── Cuenta contable ──
-  const [qCodigo, setQCodigo]   = useState('');
-  const [qNombre, setQNombre]   = useState('');
-  const [qDesc, setQDesc]       = useState('');
-  const [qLoading, setQLoading] = useState(false);
-
   const submitBanco = async () => {
     setBLoading(true);
     try {
@@ -72,19 +67,6 @@ export function AdminCatalogosClient({ catalogos }: Props) {
       if (res.ok) { toast.success(res.mensaje); setCNombre(''); setCNaturaleza(''); setCCodigo(''); setCObs(''); router.refresh(); }
       else toast.error(res.error);
     } finally { setCLoading(false); }
-  };
-
-  const submitCuenta = async () => {
-    setQLoading(true);
-    try {
-      const res = await crearCuentaContableAction({
-        codigoPath: qCodigo.trim(),
-        nombre: qNombre.trim(),
-        descripcion: qDesc.trim() || undefined,
-      });
-      if (res.ok) { toast.success(res.mensaje); setQCodigo(''); setQNombre(''); setQDesc(''); router.refresh(); }
-      else toast.error(res.error);
-    } finally { setQLoading(false); }
   };
 
   return (
@@ -212,22 +194,16 @@ export function AdminCatalogosClient({ catalogos }: Props) {
               ))}
               <div style={{ color: 'var(--ink-4)', paddingTop: 4, fontSize: 11.5 }}>… niveles 3-5 ocultos ({catalogos.cuentas.length} en total)</div>
             </div>
+            {/* F-CUENTAS-CREATOR: el alta "a dedo" se reemplazó por el
+                creador guiado (sugiere el código, valida duplicados). */}
             <div style={{ display: 'grid', gap: 10 }}>
-              <div className="field" style={{ margin: 0 }}>
-                <label className="label">Código jerárquico * (el padre debe existir)</label>
-                <input className="input num" placeholder="1-1-1-5" value={qCodigo} onChange={e => setQCodigo(e.target.value)} disabled={qLoading} />
+              <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
+                Las cuentas se crean con el asistente: navegás al grupo donde va,
+                el código correcto se sugiere solo y no permite duplicados.
               </div>
-              <div className="field" style={{ margin: 0 }}>
-                <label className="label">Nombre *</label>
-                <input className="input" placeholder="Banco Nuevo Monetaria" value={qNombre} onChange={e => setQNombre(e.target.value)} disabled={qLoading} />
-              </div>
-              <div className="field" style={{ margin: 0 }}>
-                <label className="label">Descripción</label>
-                <textarea className="input" rows={2} value={qDesc} onChange={e => setQDesc(e.target.value)} disabled={qLoading} />
-              </div>
-              <button className="btn btn-primary" onClick={submitCuenta} disabled={qLoading || !qCodigo.trim() || !qNombre.trim()}>
-                {qLoading ? <><I.Refresh size={13} /> Guardando…</> : <><I.Plus size={13} /> Crear cuenta contable</>}
-              </button>
+              <Link href="/admin/catalogos/cuentas" className="btn btn-primary" style={{ justifyContent: 'center' }}>
+                <I.Plus size={13} /> Abrir el creador de cuentas
+              </Link>
             </div>
           </div>
         </div>

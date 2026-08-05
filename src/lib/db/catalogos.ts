@@ -110,6 +110,10 @@ export async function crearCentroCosto(input: CrearCentroCostoInput): Promise<Re
 
 // ── Cuentas contables ───────────────────────────────────────
 
+// F-CUENTAS-CREATOR: la naturaleza se deriva del primer dígito (lógica
+// pura compartida con el creador de UI en contabilidad/plan-cuentas).
+import { naturalezaDeCodigo } from '../contabilidad/plan-cuentas';
+
 export interface CrearCuentaContableInput {
   codigoPath: string;              // requerido — "1-1-1-5"; el padre ("1-1-1") debe existir
   nombre: string;                  // requerido
@@ -124,6 +128,10 @@ export async function crearCuentaContable(input: CrearCuentaContableInput): Prom
   if (!nombre) return { ok: false, error: 'El nombre de la cuenta es requerido.' };
   if (!/^\d+(-\d+)*$/.test(codigo)) {
     return { ok: false, error: `Código "${codigo}" inválido — formato jerárquico con guiones, ej. 1-1-1-5.` };
+  }
+  const naturaleza = naturalezaDeCodigo(codigo);
+  if (!naturaleza) {
+    return { ok: false, error: `El código debe empezar con una naturaleza del plan: 1 Activo · 2 Pasivo · 3 Patrimonio · 4 Ingresos · 5 Egresos · 6 Gastos.` };
   }
 
   try {
@@ -159,6 +167,11 @@ export async function crearCuentaContable(input: CrearCuentaContableInput): Prom
       parent_path: parentPath,
       parent_id: parentId,
       numero_orden: numeroOrden,
+      // F-CUENTAS-CREATOR: derivadas del primer dígito — los motores ER/BS
+      // las parsean con startsWith('acre') (antes quedaban NULL y caían al
+      // fallback por código; ahora quedan explícitas y coherentes).
+      naturaleza_bs: naturaleza.esAcreedora ? 'Acreedora' : 'Deudora',
+      naturaleza_er: naturaleza.esAcreedora ? 'Acreedora' : 'Deudora',
       descripcion: input.descripcion?.trim() || null,
       activo: true,
     });
