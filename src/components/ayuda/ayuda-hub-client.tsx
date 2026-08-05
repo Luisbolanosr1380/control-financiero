@@ -23,10 +23,14 @@ interface Props {
 const ICONO_CATEGORIA: Record<CategoriaAyuda, string> = {
   'Facturación':            '🧾',
   'Cobros y Retenciones':   '💰',
+  'Clientes':               '🤝',
   'Empleados y Planilla':   '👥',
   'Deudas y Pasivos':       '🏦',
   'Notas de Crédito':       '📝',
+  'Reportes':               '📊',
   'Conceptos contables':    '📚',
+  'Configuración':          '⚙️',
+  'Auros':                  '✨',
 };
 
 function normalizarTexto(s: string): string {

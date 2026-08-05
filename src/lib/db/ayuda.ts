@@ -44,10 +44,14 @@ function rowAyudaToRecord(r: Record<string, unknown>): { id: string; fields: Rec
 export const CATEGORIAS_AYUDA = [
   'Facturación',
   'Cobros y Retenciones',
+  'Clientes',
   'Empleados y Planilla',
   'Deudas y Pasivos',
   'Notas de Crédito',
+  'Reportes',
   'Conceptos contables',
+  'Configuración',
+  'Auros',
 ] as const;
 
 export type CategoriaAyuda = (typeof CATEGORIAS_AYUDA)[number];
