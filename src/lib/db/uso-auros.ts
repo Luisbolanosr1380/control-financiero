@@ -6,6 +6,8 @@
 // pueden correr en instancias distintas.
 // ============================================================
 
+import { writeSource } from '../config/data-source';
+import { insertar } from '../supabase/writes';
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { getRolUsuario, type Role } from '@/lib/auth/allowlist';
 import { mesReferencia } from '@/lib/auth/permissions';
@@ -24,6 +26,26 @@ export interface RegistrarUsoInput {
 
 /** Registra un uso de AI. Silencioso si Airtable falla (no debe romper la consulta). */
 export async function registrarUsoAuros(input: RegistrarUsoInput): Promise<void> {
+  // ═══ FASE 3 — log de uso en Supabase ═══
+  if (writeSource('sistema') === 'supabase') {
+    try {
+      const now = new Date();
+      await insertar('uso_auros', {
+        email: input.email.toLowerCase().trim(),
+        fecha: now.toISOString(),
+        mes_referencia: mesReferencia(now),
+        tipo: input.tipo,
+        tokens_input: Math.round(input.tokensIn),
+        tokens_output: Math.round(input.tokensOut),
+        costo_usd: Number(input.costoUsd.toFixed(6)),
+        duracion_seg: Number(input.durSeg.toFixed(2)),
+        query_preview: input.queryPreview?.slice(0, 100) ?? null,
+      });
+    } catch (err) {
+      console.warn('registrarUsoAuros (supabase) falló (no bloquea):', err instanceof Error ? err.message : err);
+    }
+    return;
+  }
   if (USE_MOCK || !airtable) return;
   try {
     type AField = string | number | undefined;
@@ -50,6 +72,20 @@ export async function registrarUsoAuros(input: RegistrarUsoInput): Promise<void>
  * Las llamadas a analisis_manual/semanal NO cuentan contra el límite de chat.
  */
 export async function getConsumoMensual(email: string, mes?: string): Promise<number> {
+  if (writeSource('sistema') === 'supabase') {
+    try {
+      const { supabase } = await import('../supabase/client');
+      const sb = supabase();
+      if (!sb) return 0;
+      const mesRef = mes ?? mesReferencia(new Date());
+      const { count } = await sb.from('uso_auros').select('id', { count: 'exact', head: true })
+        .eq('email', email.toLowerCase().trim()).eq('mes_referencia', mesRef).eq('tipo', 'chat');
+      return count ?? 0;
+    } catch (err) {
+      console.error('Error obteniendo consumo mensual (supabase):', err);
+      return 0;
+    }
+  }
   if (USE_MOCK || !airtable) return 0;
   try {
     const mesRef = mes ?? mesReferencia(new Date());
@@ -84,16 +120,25 @@ export interface ResumenUsuarioMes {
  * Para la pantalla /admin/usuarios.
  */
 export async function getResumenUsoMensual(mes?: string): Promise<ResumenUsuarioMes[]> {
-  if (USE_MOCK || !airtable) return [];
+  if (writeSource('sistema') !== 'supabase' && (USE_MOCK || !airtable)) return [];
   try {
     const mesRef = mes ?? mesReferencia(new Date());
-    const records = await airtable(TABLES.USO_AUROS)
-      .select({
-        filterByFormula: `{mes_referencia}="${mesRef}"`,
-        fields: ['email', 'fecha', 'tipo', 'tokens_input', 'tokens_output', 'costo_usd'],
-        maxRecords: 10000,
-      })
-      .all();
+    let records: ReadonlyArray<{ fields: Record<string, unknown> }>;
+    if (writeSource('sistema') === 'supabase') {
+      const { fetchAll } = await import('../supabase/client');
+      const rows = await fetchAll<Record<string, unknown>>('uso_auros', {
+        select: 'email, fecha, tipo, tokens_input, tokens_output, costo_usd, mes_referencia',
+      });
+      records = rows.filter(r => String(r.mes_referencia ?? '') === mesRef).map(r => ({ fields: r }));
+    } else {
+      records = await airtable!(TABLES.USO_AUROS)
+        .select({
+          filterByFormula: `{mes_referencia}="${mesRef}"`,
+          fields: ['email', 'fecha', 'tipo', 'tokens_input', 'tokens_output', 'costo_usd'],
+          maxRecords: 10000,
+        })
+        .all();
+    }
 
     const m = new Map<string, ResumenUsuarioMes>();
     for (const r of records) {
@@ -145,17 +190,26 @@ export async function getTotalesMes(mes?: string): Promise<TotalesMes> {
     costoTotalUsd: 0, consultasChat: 0, analisisManual: 0, analisisSemanal: 0,
     diasTranscurridos: 0, diasMes: 0, costoProyectadoUsd: 0,
   };
-  if (USE_MOCK || !airtable) return empty;
+  if (writeSource('sistema') !== 'supabase' && (USE_MOCK || !airtable)) return empty;
   try {
     const now = new Date();
     const mesRef = mes ?? mesReferencia(now);
-    const records = await airtable(TABLES.USO_AUROS)
-      .select({
-        filterByFormula: `{mes_referencia}="${mesRef}"`,
-        fields: ['tipo', 'costo_usd'],
-        maxRecords: 10000,
-      })
-      .all();
+    let records: ReadonlyArray<{ fields: Record<string, unknown> }>;
+    if (writeSource('sistema') === 'supabase') {
+      const { fetchAll } = await import('../supabase/client');
+      const rows = await fetchAll<Record<string, unknown>>('uso_auros', {
+        select: 'tipo, costo_usd, mes_referencia',
+      });
+      records = rows.filter(r => String(r.mes_referencia ?? '') === mesRef).map(r => ({ fields: r }));
+    } else {
+      records = await airtable!(TABLES.USO_AUROS)
+        .select({
+          filterByFormula: `{mes_referencia}="${mesRef}"`,
+          fields: ['tipo', 'costo_usd'],
+          maxRecords: 10000,
+        })
+        .all();
+    }
     let costo = 0, chat = 0, man = 0, sem = 0;
     for (const r of records) {
       const f = r.fields as Record<string, unknown>;

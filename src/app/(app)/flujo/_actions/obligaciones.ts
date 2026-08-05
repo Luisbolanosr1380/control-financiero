@@ -20,6 +20,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { airtable } from '@/lib/db/airtable';
+import { writeSource } from '@/lib/config/data-source';
+import { insertar, actualizarPorAppId, uuidOpcional } from '@/lib/supabase/writes';
 import {
   OBLIGACIONES_RECURRENTES_TABLE_ID,
   OBLIGACIONES_RECURRENTES_FIELDS as FO,
@@ -122,15 +124,47 @@ export async function listarObligaciones(): Promise<ObligacionRecurrente[]> {
   return getObligacionesRecurrentes(false);
 }
 
+async function filaSupabaseDeInput(input: ObligacionInput): Promise<Record<string, unknown>> {
+  return {
+    nombre: input.nombre.trim(),
+    tipo: input.tipo,
+    monto_estimado: input.montoEstimado,
+    dia_pago: input.diaPago,
+    frecuencia: input.frecuencia,
+    prioridad: input.prioridad,
+    activo: input.activo ?? true,
+    por_cuenta_de: input.porCuentaDe ?? POR_CUENTA_DE_DEFAULT,
+    proveedor_id: input.proveedorId ? await uuidOpcional('proveedores', input.proveedorId) : null,
+    acreedor_id: input.acreedorId ? await uuidOpcional('acreedores', input.acreedorId) : null,
+    centro_costo_id: input.centroCostoId ? await uuidOpcional('centros_costo', input.centroCostoId) : null,
+    cuenta_contable_id: input.cuentaContableId ? await uuidOpcional('cuentas', input.cuentaContableId) : null,
+    banco_pago_id: input.bancoPagoId ? await uuidOpcional('bancos', input.bancoPagoId) : null,
+    mes_referencia: input.mesReferencia || null,
+    notas: input.notas?.trim() || null,
+    fecha_inicio: input.fechaInicio || null,
+    fecha_fin: input.fechaFin || null,
+  };
+}
+
 export async function crearObligacion(input: ObligacionInput): Promise<ObligacionResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('obligaciones') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   const err = validarInput(input);
   if (err) return { ok: false, error: err };
+
+  if (writeSource('obligaciones') === 'supabase') {
+    try {
+      const res = await insertar('obligaciones_recurrentes', await filaSupabaseDeInput(input));
+      try { revalidatePath('/flujo'); } catch { /* fuera de request context (validador) */ }
+      return { ok: true, id: res.airtable_id };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
 
   try {
     const fields = fieldsDeInput(input);
     type AField = string | number | boolean | string[] | undefined;
-    const created = (await (airtable(OBLIGACIONES_RECURRENTES_TABLE_ID).create as unknown as (
+    const created = (await (airtable!(OBLIGACIONES_RECURRENTES_TABLE_ID).create as unknown as (
       records: Array<{ fields: Record<string, AField> }>,
       opts: { typecast: boolean },
     ) => Promise<Array<{ id: string }>>)([{ fields: fields as Record<string, AField> }], { typecast: true }));
@@ -142,15 +176,25 @@ export async function crearObligacion(input: ObligacionInput): Promise<Obligacio
 }
 
 export async function actualizarObligacion(id: string, input: ObligacionInput): Promise<ObligacionResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('obligaciones') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!id) return { ok: false, error: 'id requerido.' };
   const err = validarInput(input);
   if (err) return { ok: false, error: err };
 
+  if (writeSource('obligaciones') === 'supabase') {
+    try {
+      await actualizarPorAppId('obligaciones_recurrentes', id, await filaSupabaseDeInput(input));
+      try { revalidatePath('/flujo'); } catch { /* fuera de request context (validador) */ }
+      return { ok: true, id };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }
+
   try {
     const fields = fieldsDeInput(input);
     type AField = string | number | boolean | string[] | undefined;
-    await (airtable(OBLIGACIONES_RECURRENTES_TABLE_ID).update as unknown as (
+    await (airtable!(OBLIGACIONES_RECURRENTES_TABLE_ID).update as unknown as (
       records: Array<{ id: string; fields: Record<string, AField> }>,
       opts: { typecast: boolean },
     ) => Promise<unknown>)([{ id, fields: fields as Record<string, AField> }], { typecast: true });
@@ -162,13 +206,18 @@ export async function actualizarObligacion(id: string, input: ObligacionInput): 
 }
 
 export async function toggleActivoObligacion(id: string): Promise<ObligacionResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('obligaciones') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!id) return { ok: false, error: 'id requerido.' };
   try {
     const todas = await getObligacionesRecurrentes(false);
     const actual = todas.find(o => o.id === id);
     if (!actual) return { ok: false, error: 'No se encontró la obligación.' };
-    await airtable(OBLIGACIONES_RECURRENTES_TABLE_ID).update([
+    if (writeSource('obligaciones') === 'supabase') {
+      await actualizarPorAppId('obligaciones_recurrentes', id, { activo: !actual.activo });
+      try { revalidatePath('/flujo'); } catch { /* fuera de request context (validador) */ }
+      return { ok: true, id };
+    }
+    await airtable!(OBLIGACIONES_RECURRENTES_TABLE_ID).update([
       { id, fields: { [FO.activo]: !actual.activo } },
     ]);
     revalidatePath('/flujo');

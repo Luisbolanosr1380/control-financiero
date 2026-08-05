@@ -21,8 +21,11 @@
  */
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
-import { dataSource } from '../config/data-source';
+import { dataSource, writeSource } from '../config/data-source';
 import { sbPlanillaRecords, sbPeriodosRecords } from '../supabase/records';
+import { insertar, actualizarPorAppId, uuidRequerido, uuidOpcional } from '../supabase/writes';
+import { supabase } from '../supabase/client';
+import { invalidarBridge } from '../supabase/id-bridge';
 import { getEmpleados, crearDeudaSalarioPendiente, type Empleado } from './empleados';
 import { calcularQuincena, type AjustesQuincena, type QuincenaCalculada } from '../calculos/planilla-calc';
 import { obtenerFechaHoyGuatemala, diferenciaDias } from '../utils/fechas';
@@ -361,15 +364,36 @@ export interface CrearPeriodoInput {
 }
 
 export async function crearPeriodo(input: CrearPeriodoInput): Promise<PlanillaMutationResult & { periodoId?: string }> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('planilla') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (input.quincena !== 1 && input.quincena !== 2) return { ok: false, error: 'Quincena debe ser 1 o 2.' };
   if (!(input.mes >= 1 && input.mes <= 12))         return { ok: false, error: 'Mes inválido.' };
   if (!(input.anio >= 2024 && input.anio <= 2099))  return { ok: false, error: 'Año fuera de rango.' };
 
+  // ═══ FASE 3 — PERÍODO EN SUPABASE ═══
+  if (writeSource('planilla') === 'supabase') {
+    try {
+      const nombre = nombrePeriodo(input.quincena, input.mes, input.anio);
+      const existentes = await getPeriodos({ estado: 'todos' });
+      if (existentes.some(pp => pp.nombre === nombre)) {
+        return { ok: false, error: `Ya existe el período ${nombre}.` };
+      }
+      const { inicio, fin } = rangoQuincena(input.quincena, input.mes, input.anio);
+      const res = await insertar('periodos', {
+        periodo: nombre,
+        fecha_inicio: inicio,
+        fecha_fin: fin,
+        estado: 'Borrador',
+      });
+      return { ok: true, periodoId: res.airtable_id, mensaje: `Período ${nombre} creado en Borrador.` };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   try {
     const nombre = nombrePeriodo(input.quincena, input.mes, input.anio);
     // Unicidad: buscamos por texto del campo PERIODO
-    const existentes = await airtable(TABLES.PERIODOS)
+    const existentes = await airtable!(TABLES.PERIODOS)
       .select({ filterByFormula: `{${FP.PERIODO}} = "${nombre}"`, maxRecords: 1 })
       .all();
     if (existentes.length > 0) {
@@ -384,7 +408,7 @@ export async function crearPeriodo(input: CrearPeriodoInput): Promise<PlanillaMu
       [FP.FECHA_FIN]:     fin,
       [FP.ESTADO]:        'Borrador',
     };
-    const created = await airtable(TABLES.PERIODOS).create(fields);
+    const created = await airtable!(TABLES.PERIODOS).create(fields);
     return { ok: true, periodoId: created.id, mensaje: `Período ${nombre} creado en Borrador.` };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -399,7 +423,7 @@ export interface GenerarPlanillaResult {
 }
 
 export async function generarPlanilla(periodoId: string): Promise<GenerarPlanillaResult> {
-  if (!airtable) return { ok: false, cantidadEmpleados: 0, montoTotalProyectado: 0, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('planilla') !== 'supabase') return { ok: false, cantidadEmpleados: 0, montoTotalProyectado: 0, error: 'Airtable no está configurado.' };
   try {
     const datos = await getPeriodoPorId(periodoId);
     if (!datos) return { ok: false, cantidadEmpleados: 0, montoTotalProyectado: 0, error: 'Período no encontrado.' };
@@ -413,6 +437,41 @@ export async function generarPlanilla(periodoId: string): Promise<GenerarPlanill
     const empleados = await getEmpleados({ status: 'ACTIVO' });
     if (empleados.length === 0) {
       return { ok: false, cantidadEmpleados: 0, montoTotalProyectado: 0, error: 'No hay empleados activos.' };
+    }
+
+    // ═══ FASE 3 — LÍNEAS EN SUPABASE (un insert masivo = atómico) ═══
+    if (writeSource('planilla') === 'supabase') {
+      const sb = supabase();
+      if (!sb) return { ok: false, cantidadEmpleados: 0, montoTotalProyectado: 0, error: 'Supabase no está configurado.' };
+      const periodoUuid = await uuidRequerido('periodos', periodoId, 'generarPlanilla');
+      const filas: Array<Record<string, unknown>> = [];
+      let montoTotalSb = 0;
+      for (const emp of empleados) {
+        const calc = calcularQuincena({
+          empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase },
+        });
+        montoTotalSb += calc.netoPagar;
+        filas.push({
+          airtable_id: `sbw${crypto.randomUUID().replace(/-/g, '').slice(0, 14)}`,
+          periodo_id: periodoUuid,
+          empleado_id: await uuidRequerido('empleados', emp.id, 'generarPlanilla'),
+          centro_costo_id: emp.centroCostoId ? await uuidOpcional('centros_costo', emp.centroCostoId) : null,
+          ordinario: calc.ordinario,
+          bonificacion: calc.bonificacion,
+          extraordinario: calc.extraordinario,
+          comisiones: calc.comisiones,
+          otros_ingresos: calc.otrosIngresos,
+          igss: calc.igssLaboral,
+          isr: calc.isr,
+          otros_documentos: calc.otrosDescuentos,
+          neto_pagar: calc.netoPagar,
+          estado_pago: 'Pendiente',
+        });
+      }
+      const { data, error } = await sb.from('planilla').insert(filas).select('id');
+      if (error) return { ok: false, cantidadEmpleados: 0, montoTotalProyectado: 0, error: `Supabase: ${error.message}` };
+      invalidarBridge('planilla');
+      return { ok: true, cantidadEmpleados: data?.length ?? filas.length, montoTotalProyectado: round2(montoTotalSb) };
     }
 
     type AField = string | number | string[] | undefined;
@@ -446,7 +505,7 @@ export async function generarPlanilla(periodoId: string): Promise<GenerarPlanill
     for (let i = 0; i < payloads.length; i += 10) {
       const lote = payloads.slice(i, i + 10);
       try {
-        const res = await airtable(TABLES.PLANILLA).create(lote);
+        const res = await airtable!(TABLES.PLANILLA).create(lote);
         creadas += res.length;
       } catch (err) {
         console.error('Error creando lote de planilla:', err);
@@ -464,6 +523,12 @@ export async function generarPlanilla(periodoId: string): Promise<GenerarPlanill
 }
 
 async function periodoDeLinea(lineaId: string): Promise<{ periodo: Periodo; lineas: LineaPlanilla[] } | null> {
+  if (dataSource('planilla') === 'supabase') {
+    const lineas = await getLineasPorPeriodo(null);
+    const linea = lineas.find(l => l.id === lineaId);
+    if (!linea?.periodoId) return null;
+    return getPeriodoPorId(linea.periodoId);
+  }
   if (!airtable) return null;
   const rec = await airtable(TABLES.PLANILLA).find(lineaId);
   const periodoId = arrFirst((rec.fields as Record<string, unknown>)[FL.PERIODO]);
@@ -472,7 +537,7 @@ async function periodoDeLinea(lineaId: string): Promise<{ periodo: Periodo; line
 }
 
 export async function ajustarLineaPlanilla(lineaId: string, ajustes: AjustesQuincena): Promise<PlanillaMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('planilla') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   try {
     const datos = await periodoDeLinea(lineaId);
     if (!datos) return { ok: false, error: 'No se pudo localizar el período de la línea.' };
@@ -512,7 +577,18 @@ export async function ajustarLineaPlanilla(lineaId: string, ajustes: AjustesQuin
       fields[FL.NOTAS] = `Descuentos: ${detalle}`;
     }
 
-    await airtable(TABLES.PLANILLA).update([{ id: lineaId, fields }]);
+    if (writeSource('planilla') === 'supabase') {
+      await actualizarPorAppId('planilla', lineaId, {
+        ordinario: calc.ordinario, bonificacion: calc.bonificacion,
+        extraordinario: calc.extraordinario, comisiones: calc.comisiones,
+        otros_ingresos: calc.otrosIngresos, igss: calc.igssLaboral,
+        isr: calc.isr, otros_documentos: calc.otrosDescuentos,
+        neto_pagar: calc.netoPagar,
+        ...(fields[FL.NOTAS] !== undefined ? { notas: String(fields[FL.NOTAS]) } : {}),
+      });
+      return { ok: true, lineaId, mensaje: `Línea actualizada — neto Q${calc.netoPagar.toFixed(2)}.` };
+    }
+    await airtable!(TABLES.PLANILLA).update([{ id: lineaId, fields }]);
     return { ok: true, lineaId, mensaje: `Línea actualizada — neto Q${calc.netoPagar.toFixed(2)}.` };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -520,7 +596,7 @@ export async function ajustarLineaPlanilla(lineaId: string, ajustes: AjustesQuin
 }
 
 export async function aprobarPeriodo(periodoId: string, usuarioEmail: string): Promise<PlanillaMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('planilla') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!usuarioEmail?.trim()) return { ok: false, error: 'Usuario requerido para aprobar.' };
   try {
     const datos = await getPeriodoPorId(periodoId);
@@ -533,7 +609,15 @@ export async function aprobarPeriodo(periodoId: string, usuarioEmail: string): P
     }
 
     const hoy = obtenerFechaHoyGuatemala();
-    await airtable(TABLES.PERIODOS).update([{
+    if (writeSource('planilla') === 'supabase') {
+      await actualizarPorAppId('periodos', periodoId, {
+        estado: 'Aprobada',
+        aprobado_por: usuarioEmail.trim(),
+        fecha_aprobacion: hoy,
+      });
+      return { ok: true, periodoId, mensaje: `Período aprobado por ${usuarioEmail}.` };
+    }
+    await airtable!(TABLES.PERIODOS).update([{
       id: periodoId,
       fields: {
         [FP.ESTADO]:           'Aprobada',
@@ -556,7 +640,7 @@ export async function aprobarPeriodo(periodoId: string, usuarioEmail: string): P
  * F-038.4: 'Cancelado' es terminal — el empleado no debe cobrar esta quincena.
  */
 async function recalcularEstadoPeriodo(periodoId: string, usuarioEmail: string): Promise<void> {
-  if (!airtable) return;
+  if (!airtable && writeSource('planilla') !== 'supabase') return;
   const datos = await getPeriodoPorId(periodoId);
   if (!datos) return;
   const total = datos.lineas.length;
@@ -573,19 +657,31 @@ async function recalcularEstadoPeriodo(periodoId: string, usuarioEmail: string):
   if (concluidas === total) {
     // Cerrada
     if (datos.periodo.estado !== 'Cerrada') {
-      const fields: Record<string, AField> = {
-        [FP.ESTADO]:       'Cerrada',
-        [FP.PAGADO_POR]:   usuarioEmail.trim() || 'sistema',
-        [FP.FECHA_CIERRE]: hoy,
-      };
-      await airtable(TABLES.PERIODOS).update([{ id: periodoId, fields }]);
+      if (writeSource('planilla') === 'supabase') {
+        await actualizarPorAppId('periodos', periodoId, {
+          estado: 'Cerrada',
+          pagado_por: usuarioEmail.trim() || 'sistema',
+          fecha_cierre: hoy,
+        });
+      } else {
+        const fields: Record<string, AField> = {
+          [FP.ESTADO]:       'Cerrada',
+          [FP.PAGADO_POR]:   usuarioEmail.trim() || 'sistema',
+          [FP.FECHA_CIERRE]: hoy,
+        };
+        await airtable!(TABLES.PERIODOS).update([{ id: periodoId, fields }]);
+      }
     }
   } else if (concluidas > 0) {
     if (datos.periodo.estado !== 'En pago') {
-      await airtable(TABLES.PERIODOS).update([{
-        id: periodoId,
-        fields: { [FP.ESTADO]: 'En pago' },
-      }]);
+      if (writeSource('planilla') === 'supabase') {
+        await actualizarPorAppId('periodos', periodoId, { estado: 'En pago' });
+      } else {
+        await airtable!(TABLES.PERIODOS).update([{
+          id: periodoId,
+          fields: { [FP.ESTADO]: 'En pago' },
+        }]);
+      }
     }
   }
 }
@@ -599,7 +695,7 @@ export interface RegistrarPagoEmpleadoInput {
 }
 
 export async function registrarPagoEmpleado(input: RegistrarPagoEmpleadoInput): Promise<PlanillaMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('planilla') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!input.fechaPago) return { ok: false, error: 'Fecha de pago requerida.' };
   if (!input.bancoId)   return { ok: false, error: 'Banco requerido.' };
 
@@ -620,6 +716,14 @@ export async function registrarPagoEmpleado(input: RegistrarPagoEmpleadoInput): 
     const notaNueva = notaActual ? `${notaActual} · ${sufijo}` : sufijo;
 
     const hoy = obtenerFechaHoyGuatemala();
+    if (writeSource('planilla') === 'supabase') {
+      await actualizarPorAppId('planilla', input.lineaId, {
+        estado_pago: 'Pagado',
+        fecha_pago: input.fechaPago,
+        fecha_pago_registrada: hoy,
+        notas: notaNueva,
+      });
+    } else {
     type AField = string | number | string[] | undefined;
     const fields: Record<string, AField> = {
       [FL.ESTADO_PAGO]:   'Pagado',
@@ -627,7 +731,8 @@ export async function registrarPagoEmpleado(input: RegistrarPagoEmpleadoInput): 
       [FL.FECHA_PAGO_REG]: hoy,    // F-038.4
       [FL.NOTAS]:         notaNueva,
     };
-    await airtable(TABLES.PLANILLA).update([{ id: input.lineaId, fields }]);
+    await airtable!(TABLES.PLANILLA).update([{ id: input.lineaId, fields }]);
+    }
 
     await recalcularEstadoPeriodo(datos.periodo.id, input.usuarioEmail);
     return { ok: true, lineaId: input.lineaId, mensaje: `Pago registrado para ${linea.empleadoNombre}.` };
@@ -643,7 +748,7 @@ export interface DiferirPagoEmpleadoInput {
 }
 
 export async function diferirPagoEmpleado(input: DiferirPagoEmpleadoInput): Promise<PlanillaMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('planilla') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!input.motivo?.trim()) return { ok: false, error: 'Motivo requerido para diferir.' };
 
   try {
@@ -672,6 +777,14 @@ export async function diferirPagoEmpleado(input: DiferirPagoEmpleadoInput): Prom
     const notaNueva = notaActual ? `${notaActual} · ${sufijo}` : sufijo;
 
     const hoy = obtenerFechaHoyGuatemala();
+    if (writeSource('planilla') === 'supabase') {
+      await actualizarPorAppId('planilla', input.lineaId, {
+        estado_pago: 'Diferido',
+        deuda_vinculada_id: await uuidRequerido('deudas', deudaRes.deudaId, 'diferirPago'),
+        fecha_diferimiento: hoy,
+        notas: notaNueva,
+      });
+    } else {
     type AField = string | number | string[] | undefined;
     const fields: Record<string, AField> = {
       [FL.ESTADO_PAGO]:        'Diferido',
@@ -679,7 +792,8 @@ export async function diferirPagoEmpleado(input: DiferirPagoEmpleadoInput): Prom
       [FL.FECHA_DIFERIMIENTO]: hoy,   // F-038.4
       [FL.NOTAS]:              notaNueva,
     };
-    await airtable(TABLES.PLANILLA).update([{ id: input.lineaId, fields }]);
+    await airtable!(TABLES.PLANILLA).update([{ id: input.lineaId, fields }]);
+    }
 
     await recalcularEstadoPeriodo(datos.periodo.id, input.usuarioEmail);
     return { ok: true, lineaId: input.lineaId, mensaje: `Pago diferido — deuda Q${linea.netoPagar.toFixed(2)} creada.` };
@@ -702,7 +816,7 @@ export interface CancelarPagoEmpleadoInput {
 }
 
 export async function cancelarPagoEmpleado(input: CancelarPagoEmpleadoInput): Promise<PlanillaMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('planilla') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!input.motivo?.trim()) return { ok: false, error: 'Motivo requerido para cancelar.' };
 
   try {
@@ -723,6 +837,14 @@ export async function cancelarPagoEmpleado(input: CancelarPagoEmpleadoInput): Pr
     const sufijo = `Cancelado por ${input.usuarioEmail || 'sistema'}: ${input.motivo.trim()}`;
     const notaNueva = notaActual ? `${notaActual} · ${sufijo}` : sufijo;
 
+    if (writeSource('planilla') === 'supabase') {
+      await actualizarPorAppId('planilla', input.lineaId, {
+        estado_pago: 'Cancelado',
+        fecha_cancelacion: hoy,
+        motivo_cancelacion: motivoCompleto,
+        notas: notaNueva,
+      });
+    } else {
     type AField = string | number | string[] | undefined;
     const fields: Record<string, AField> = {
       [FL.ESTADO_PAGO]:        'Cancelado',
@@ -730,7 +852,8 @@ export async function cancelarPagoEmpleado(input: CancelarPagoEmpleadoInput): Pr
       [FL.MOTIVO_CANCELACION]: motivoCompleto,
       [FL.NOTAS]:              notaNueva,
     };
-    await airtable(TABLES.PLANILLA).update([{ id: input.lineaId, fields }]);
+    await airtable!(TABLES.PLANILLA).update([{ id: input.lineaId, fields }]);
+    }
 
     await recalcularEstadoPeriodo(datos.periodo.id, input.usuarioEmail);
     return { ok: true, lineaId: input.lineaId, mensaje: `Pago cancelado para ${linea.empleadoNombre} (no genera deuda).` };

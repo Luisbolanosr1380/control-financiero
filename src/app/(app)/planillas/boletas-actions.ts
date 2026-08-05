@@ -17,6 +17,9 @@ import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
 import { generarBoletaPago, nombreArchivoBoleta } from '@/lib/boletas/generar-boleta';
 import { airtable, TABLES } from '@/lib/db/airtable';
+import { writeSource } from '@/lib/config/data-source';
+import { supabase } from '@/lib/supabase/client';
+import { actualizarPorAppId } from '@/lib/supabase/writes';
 import {
   uploadAttachment,
   BOLETA_FIELD_ID,
@@ -35,8 +38,16 @@ function revalidar(periodoId?: string, empleadoId?: string) {
 }
 
 async function appendNota(lineaId: string, mensaje: string): Promise<void> {
-  if (!airtable) return;
   try {
+    if (writeSource('planilla') === 'supabase') {
+      const sb = supabase();
+      if (!sb) return;
+      const { data } = await sb.from('planilla').select('notas').eq('airtable_id', lineaId).limit(1);
+      const previo = String((data?.[0] as { notas?: string } | undefined)?.notas ?? '').trim();
+      await actualizarPorAppId('planilla', lineaId, { notas: previo ? `${previo}\n${mensaje}` : mensaje });
+      return;
+    }
+    if (!airtable) return;
     const r = await airtable(TABLES.PLANILLA).find(lineaId);
     const previo = String(r.fields[FL_NOTAS] ?? '').trim();
     const nueva = previo ? `${previo}\n${mensaje}` : mensaje;
@@ -59,7 +70,7 @@ export async function generarBoletaAction(
   lineaId: string,
   opts: { motivoRegeneracion?: string } = {},
 ): Promise<GenerarBoletaActionResult> {
-  if (!airtable) return { ok: false, lineaId, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('planilla') !== 'supabase') return { ok: false, lineaId, error: 'Airtable no está configurado.' };
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
 
@@ -71,12 +82,23 @@ export async function generarBoletaAction(
   let periodoId: string | undefined;
   let empleadoId: string | undefined;
   try {
-    const rec = await airtable(TABLES.PLANILLA).find(lineaId);
-    // F-047.2: nombre real del campo es 'ADJUNTO ' (mayúsculas + espacio).
-    const att = rec.fields['ADJUNTO '] as Array<{ url?: string }> | undefined;
-    yaExistia  = (att?.length ?? 0) > 0;
-    periodoId  = (rec.fields['PERIODO']  as string[] | undefined)?.[0];
-    empleadoId = (rec.fields['EMPLEADO '] as string[] | undefined)?.[0];   // OJO espacio (igual que FL.EMPLEADO)
+    if (writeSource('planilla') === 'supabase') {
+      const sb = supabase();
+      const { data } = await sb!.from('planilla')
+        .select('boleta_url, periodo:periodos(airtable_id), empleado:empleados(airtable_id)')
+        .eq('airtable_id', lineaId).limit(1);
+      const row = data?.[0] as { boleta_url?: string | null; periodo?: { airtable_id?: string } | null; empleado?: { airtable_id?: string } | null } | undefined;
+      yaExistia  = !!row?.boleta_url;
+      periodoId  = row?.periodo?.airtable_id;
+      empleadoId = row?.empleado?.airtable_id;
+    } else {
+      const rec = await airtable!(TABLES.PLANILLA).find(lineaId);
+      // F-047.2: nombre real del campo es 'ADJUNTO ' (mayúsculas + espacio).
+      const att = rec.fields['ADJUNTO '] as Array<{ url?: string }> | undefined;
+      yaExistia  = (att?.length ?? 0) > 0;
+      periodoId  = (rec.fields['PERIODO']  as string[] | undefined)?.[0];
+      empleadoId = (rec.fields['EMPLEADO '] as string[] | undefined)?.[0];   // OJO espacio (igual que FL.EMPLEADO)
+    }
   } catch {
     /* la generación abajo va a fallar igual si no se encuentra */
   }
@@ -94,7 +116,12 @@ export async function generarBoletaAction(
   // regeneraciones ya queda en NOTAS, no perdemos auditoría.
   if (yaExistia) {
     try {
-      await airtable(TABLES.PLANILLA).update([{ id: lineaId, fields: { 'ADJUNTO ': [] } }]);
+      if (writeSource('planilla') === 'supabase') {
+        // En Storage el upload nuevo reemplaza la URL — solo vaciamos las columnas.
+        await actualizarPorAppId('planilla', lineaId, { boleta_url: null, boleta_nombre: null });
+      } else {
+        await airtable!(TABLES.PLANILLA).update([{ id: lineaId, fields: { 'ADJUNTO ': [] } }]);
+      }
     } catch (err) {
       return { ok: false, lineaId, error: `No se pudo limpiar la boleta anterior: ${err instanceof Error ? err.message : String(err)}` };
     }

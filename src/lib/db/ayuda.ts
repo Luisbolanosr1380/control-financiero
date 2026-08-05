@@ -19,6 +19,23 @@
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { obtenerDateTimeHoyGuatemala } from '../utils/fechas';
+import { writeSource } from '../config/data-source';
+import { insertar, actualizarPorAppId } from '../supabase/writes';
+import { fetchAll } from '../supabase/client';
+
+/** Fila Supabase → shape de record Airtable (reutiliza recordToArticulo). */
+function rowAyudaToRecord(r: Record<string, unknown>): { id: string; fields: Record<string, unknown> } {
+  return {
+    id: String(r.airtable_id),
+    fields: {
+      Titulo: r.titulo, Slug: r.slug, Categoria: r.categoria,
+      Descripcion_Corta: r.descripcion_corta, Contenido: r.contenido,
+      Orden: r.orden, Activo: r.activo, Tags_Contextuales: r.tags_contextuales,
+      // fecha_modificacion/modificado_por no tienen columna: created_at como referencia
+      Fecha_Creacion: r.created_at, Fecha_Modificacion: r.updated_at,
+    },
+  };
+}
 
 /* ============================================================
  * Tipos públicos
@@ -126,6 +143,26 @@ function normalizarTexto(s: string): string {
 }
 
 export async function getArticulos(filtros: ArticulosFiltros = {}): Promise<Articulo[]> {
+  if (writeSource('sistema') === 'supabase') {
+    try {
+      const rows = await fetchAll<Record<string, unknown>>('ayuda');
+      let articulos = rows.map(r => recordToArticulo(rowAyudaToRecord(r)));
+      if (filtros.soloActivos !== false) articulos = articulos.filter(a => a.activo);
+      if (filtros.categoria) articulos = articulos.filter(a => a.categoria === filtros.categoria);
+      if (filtros.search?.trim()) {
+        const q = normalizarTexto(filtros.search);
+        articulos = articulos.filter(a =>
+          normalizarTexto(a.titulo).includes(q) ||
+          normalizarTexto(a.descripcionCorta).includes(q) ||
+          normalizarTexto(a.contenido).includes(q));
+      }
+      articulos.sort((a, b) => a.orden - b.orden || a.titulo.localeCompare(b.titulo));
+      return articulos;
+    } catch (err) {
+      console.warn('getArticulos (supabase) falló:', err instanceof Error ? err.message : err);
+      return [];
+    }
+  }
   const soloActivos = filtros.soloActivos !== false;   // default true
   if (USE_MOCK || !airtable) return [];
   try {
@@ -209,6 +246,10 @@ export function generarSlug(titulo: string): string {
 }
 
 async function slugYaExiste(slug: string, excluirId?: string): Promise<boolean> {
+  if (writeSource('sistema') === 'supabase') {
+    const rows = await fetchAll<Record<string, unknown>>('ayuda', { select: 'airtable_id, slug' });
+    return rows.some(r => String(r.slug ?? '').trim() === slug && String(r.airtable_id) !== excluirId);
+  }
   if (!airtable) return false;
   const records = await airtable(TABLES.AYUDA).select().all();
   return records.some(r => {
@@ -218,7 +259,7 @@ async function slugYaExiste(slug: string, excluirId?: string): Promise<boolean> 
 }
 
 export async function crearArticulo(input: CrearArticuloInput, usuarioEmail: string): Promise<ArticuloMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('sistema') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   const titulo = input.titulo?.trim();
   const slug = input.slug?.trim();
   if (!titulo) return { ok: false, error: 'El título es requerido.' };
@@ -250,7 +291,20 @@ export async function crearArticulo(input: CrearArticuloInput, usuarioEmail: str
       [FA.FECHA_MOD]:      ahora,
       [FA.MODIFICADO_POR]: usuarioEmail,
     };
-    const created = await airtable(TABLES.AYUDA).create(fields);
+    if (writeSource('sistema') === 'supabase') {
+      const res = await insertar('ayuda', {
+        titulo: input.titulo.trim(),
+        slug: (input.slug ?? '').trim(),
+        categoria: input.categoria,
+        descripcion_corta: input.descripcionCorta?.trim() ?? null,
+        contenido: input.contenido,
+        orden: input.orden ?? null,
+        activo: true,
+        tags_contextuales: (input.tagsContextuales ?? []).join(', ') || null,
+      });
+      return { ok: true, articuloId: res.airtable_id };
+    }
+    const created = await airtable!(TABLES.AYUDA).create(fields);
     return { ok: true, articuloId: created.id, slug };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -258,7 +312,7 @@ export async function crearArticulo(input: CrearArticuloInput, usuarioEmail: str
 }
 
 export async function editarArticulo(id: string, cambios: EditarArticuloInput, usuarioEmail: string): Promise<ArticuloMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('sistema') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   try {
     if (cambios.slug !== undefined) {
       const slugLimpio = cambios.slug.trim();
@@ -288,7 +342,20 @@ export async function editarArticulo(id: string, cambios: EditarArticuloInput, u
     fields[FA.FECHA_MOD]      = obtenerDateTimeHoyGuatemala();
     fields[FA.MODIFICADO_POR] = usuarioEmail;
 
-    await airtable(TABLES.AYUDA).update([{ id, fields }]);
+    if (writeSource('sistema') === 'supabase') {
+      const cambiosSb: Record<string, unknown> = {};
+      if (cambios.titulo !== undefined)           cambiosSb.titulo = cambios.titulo.trim();
+      if (cambios.slug !== undefined)             cambiosSb.slug = cambios.slug.trim();
+      if (cambios.categoria !== undefined)        cambiosSb.categoria = cambios.categoria;
+      if (cambios.descripcionCorta !== undefined) cambiosSb.descripcion_corta = cambios.descripcionCorta.trim();
+      if (cambios.contenido !== undefined)        cambiosSb.contenido = cambios.contenido;
+      if (cambios.orden !== undefined)            cambiosSb.orden = cambios.orden;
+      if (cambios.activo !== undefined)           cambiosSb.activo = cambios.activo;
+      if (cambios.tagsContextuales !== undefined) cambiosSb.tags_contextuales = cambios.tagsContextuales.join(', ');
+      await actualizarPorAppId('ayuda', id, cambiosSb);
+      return { ok: true, articuloId: id };
+    }
+    await airtable!(TABLES.AYUDA).update([{ id, fields }]);
     return { ok: true, articuloId: id };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
