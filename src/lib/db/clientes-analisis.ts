@@ -181,5 +181,29 @@ export async function getAnalisisClientes(): Promise<AnalisisCliente[]> {
     });
   }
 
+  // FIX-CLIENTES-ALTA: los clientes creados desde la app (id sintético 'sbw…')
+  // todavía no tienen facturas — sin esto serían invisibles en /clientes hasta
+  // su primera factura. Los históricos sin actividad (rec… de Airtable) se
+  // siguen omitiendo a propósito: son ~200 filas muertas que ahogarían la lista.
+  for (const c of clientes) {
+    if (!c.id.startsWith('sbw') || grupos.has(c.id)) continue;
+    out.push({
+      custId: c.id,
+      nombre: c.name || '—',
+      clasificacion: 'nuevo',
+      mesesSinFacturar: 0,
+      intervaloNormal: null,
+      montoPromedio: 0,
+      montoReciente: 0,
+      montoBase: 0,
+      tendencia: 'estable',
+      serieMensual: buckets.map(m => ({ mes: m, monto: 0 })),
+      ultimaFactura: '',
+      naturalezaDominante: 'recurrente',
+      pctRecurrente: 0,
+      contextoComercial: c.contextoComercial || undefined,
+    });
+  }
+
   return out;
 }

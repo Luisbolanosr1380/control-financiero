@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
+import { ModalClienteForm } from '@/components/clientes/modal-cliente-form';
 import type { AnalisisCliente, ClienteClasificacion, Tendencia } from '@/lib/db/clientes-analisis';
 
 const BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
@@ -36,6 +37,7 @@ export function ClientesListClient({ clientes }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('todos');
   const [search, setSearch] = useState('');
+  const [showAlta, setShowAlta] = useState(false);
 
   const enRiesgoSet = new Set<ClienteClasificacion>(['perdido', 'en_riesgo', 'en_declive']);
   const esRiesgoReal = (c: typeof clientes[number]) => enRiesgoSet.has(c.clasificacion) && c.naturalezaDominante !== 'proyecto';
@@ -79,7 +81,12 @@ export function ClientesListClient({ clientes }: Props) {
             <span className="num">{clientes.length}</span> clientes con actividad (12 meses) · análisis de retención
           </div>
         </div>
+        <button className="btn btn-primary" style={{ marginLeft: 'auto', alignSelf: 'flex-start' }} onClick={() => setShowAlta(true)}>
+          <I.Plus size={13} /> Nuevo cliente
+        </button>
       </div>
+
+      {showAlta && <ModalClienteForm onClose={() => setShowAlta(false)} />}
 
       <div className="tabs">
         {(['todos', 'riesgo', 'sanos', 'episodicos'] as const).map(t => (
