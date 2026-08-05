@@ -44,6 +44,7 @@ import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
 import { getTopDeudores } from '@/lib/db/kpis';
 import { getFacturasPendientesCobro, AGING_LABEL, type FacturaPendiente } from '@/lib/db/facturas-pendientes';
+import { getGestionesCobro, getResumenGestiones } from '@/lib/db/gestiones-cobro';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getAnaliticaIngresos, getFacturadoPorRango, type FiltroNaturaleza } from '@/lib/db/analitica';
 import { getProyeccionMesActual } from '@/lib/db/proyecciones';
@@ -361,6 +362,109 @@ export const aiTools = {
           ? { filtro: { minDiasVencidos }, facturasFiltradas: filtradas.length, saldoFiltradoQ: Math.round(filtradas.reduce((s, f) => s + f.saldo, 0) * 100) / 100 }
           : {}),
         facturas: filtradas.slice(0, limite).map(proyectar),
+      };
+    },
+  }),
+
+  // F-COBRANZA: bitácora de gestiones de cobro (misma data que el modal
+  // de /facturacion/pendientes).
+  getGestionesCobro: tool({
+    description:
+      'Bitácora de gestiones de cobro (llamadas/WhatsApp/emails de cobranza) con promesas de pago. ' +
+      'USAR para "¿qué clientes prometieron pagar esta semana?", "¿cuánto tenemos prometido para los próximos N días?", ' +
+      '"¿a quién no hemos llamado?", "¿qué promesas están vencidas?", "historial de gestiones de X". ' +
+      'vista="promesas": promesas de pago en un rango de días. vista="sin_gestion": facturas pendientes cuyo cliente ' +
+      'no tiene gestión reciente. vista="historial": últimas gestiones registradas (todas o de un cliente).',
+    parameters: z.object({
+      vista: z.enum(['promesas', 'sin_gestion', 'historial']),
+      dias: z.number().int().positive().max(90).default(7)
+        .describe('promesas: horizonte en días hacia adelante (7 = "esta semana"). sin_gestion: días sin contacto para considerar "sin gestión reciente".'),
+      incluirVencidas: z.boolean().default(true).describe('promesas: incluir las que ya vencieron sin cumplirse'),
+      nombreCliente: z.string().optional().describe('historial: filtrar por cliente (match parcial)'),
+      limite: z.number().int().positive().max(100).default(30),
+    }),
+    execute: async ({ vista, dias, incluirVencidas, nombreCliente, limite }) => {
+      const hoy = new Date(Date.now() - 6 * 3600_000).toISOString().slice(0, 10);
+
+      if (vista === 'historial') {
+        let gestiones = await getGestionesCobro();
+        const clientes = await getClientes();
+        const nombreById = new Map(clientes.map(c => [c.id, c.name]));
+        if (nombreCliente?.trim()) {
+          const q = nombreCliente.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+          gestiones = gestiones.filter(g => (nombreById.get(g.custId) ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().includes(q));
+        }
+        return {
+          totalGestiones: gestiones.length,
+          gestiones: gestiones.slice(0, limite).map(g => ({
+            fecha: g.fechaGestion,
+            cliente: nombreById.get(g.custId) ?? g.custId,
+            usuario: g.usuario,
+            canal: g.canal,
+            contacto: g.contactoCliente ?? null,
+            comentario: g.comentario,
+            fechaPagoPromesa: g.fechaPagoPromesa ?? null,
+            proximoSeguimiento: g.proximoSeguimiento ?? null,
+            facturas: g.facturas.map(f => f.fechaPromesa ? `${f.noFactura} (${f.fechaPromesa})` : f.noFactura),
+          })),
+        };
+      }
+
+      const [pend, resumen] = await Promise.all([getFacturasPendientesCobro(), getResumenGestiones()]);
+
+      if (vista === 'sin_gestion') {
+        const porCliente = new Map<string, { cliente: string; saldoQ: number; numFacturas: number; maxDiasVencidos: number; ultimaGestion: string | null }>();
+        for (const f of pend.filas) {
+          const g = resumen.porCliente[f.custId];
+          const sinGestion = !g || g.diasDesdeUltima > dias;
+          if (!sinGestion) continue;
+          const agg = porCliente.get(f.custId) ?? { cliente: f.cliente, saldoQ: 0, numFacturas: 0, maxDiasVencidos: 0, ultimaGestion: g?.ultimaGestion ?? null };
+          agg.saldoQ += f.saldo; agg.numFacturas++;
+          agg.maxDiasVencidos = Math.max(agg.maxDiasVencidos, f.diasVencidos);
+          porCliente.set(f.custId, agg);
+        }
+        const lista = [...porCliente.values()].sort((a, b) => b.saldoQ - a.saldoQ);
+        return {
+          criterio: `sin gestión en los últimos ${dias} días (o nunca)`,
+          clientesSinGestion: lista.length,
+          saldoTotalQ: Math.round(lista.reduce((s, c) => s + c.saldoQ, 0) * 100) / 100,
+          clientes: lista.slice(0, limite).map(c => ({ ...c, saldoQ: Math.round(c.saldoQ * 100) / 100 })),
+        };
+      }
+
+      // vista === 'promesas'
+      const hasta = new Date(new Date(`${hoy}T00:00:00`).getTime() + dias * 86_400_000).toISOString().slice(0, 10);
+      const conPromesa: Array<{ cliente: string; fechaPromesa: string; vencida: boolean; saldoPendienteQ: number; numFacturas: number; proximoSeguimiento: string | null }> = [];
+      const saldoPorCliente = new Map<string, { cliente: string; saldo: number; n: number }>();
+      for (const f of pend.filas) {
+        const agg = saldoPorCliente.get(f.custId) ?? { cliente: f.cliente, saldo: 0, n: 0 };
+        agg.saldo += f.saldo; agg.n++;
+        saldoPorCliente.set(f.custId, agg);
+      }
+      for (const [custId, g] of Object.entries(resumen.porCliente)) {
+        if (!g.fechaPagoPromesa) continue;
+        const enRango = g.fechaPagoPromesa >= hoy && g.fechaPagoPromesa <= hasta;
+        const vencida = g.fechaPagoPromesa < hoy;
+        if (!enRango && !(incluirVencidas && vencida)) continue;
+        const s = saldoPorCliente.get(custId);
+        conPromesa.push({
+          cliente: s?.cliente ?? custId,
+          fechaPromesa: g.fechaPagoPromesa,
+          vencida,
+          saldoPendienteQ: Math.round((s?.saldo ?? 0) * 100) / 100,
+          numFacturas: s?.n ?? 0,
+          proximoSeguimiento: g.proximoSeguimiento ?? null,
+        });
+      }
+      conPromesa.sort((a, b) => a.fechaPromesa.localeCompare(b.fechaPromesa));
+      const enRango = conPromesa.filter(p => !p.vencida);
+      return {
+        rango: { desde: hoy, hasta },
+        prometidoEnRangoQ: Math.round(enRango.reduce((s, p) => s + p.saldoPendienteQ, 0) * 100) / 100,
+        clientesEnRango: enRango.length,
+        promesasVencidasQ: Math.round(conPromesa.filter(p => p.vencida).reduce((s, p) => s + p.saldoPendienteQ, 0) * 100) / 100,
+        promesas: conPromesa.slice(0, limite),
+        nota: 'saldoPendienteQ es el saldo TOTAL pendiente del cliente (la promesa puede cubrir solo parte).',
       };
     },
   }),

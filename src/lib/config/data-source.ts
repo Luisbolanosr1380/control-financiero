@@ -38,7 +38,10 @@ export type TablaMigrable =
   | 'gastos'
   | 'activos_fijos'
   | 'mapeo_er'
-  | 'mapeo_bs';
+  | 'mapeo_bs'
+  // F-COBRANZA: bitácora de gestión de cobro — tabla NUEVA, nunca existió
+  // en Airtable (reemplaza un Excel). El flag es solo kill-switch.
+  | 'gestiones_cobro';
 
 export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   // Flipeadas con diff limpio (scripts/diff-datasource.ts, 2026-08-04):
@@ -64,6 +67,7 @@ export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   activos_fijos:            'supabase',
   mapeo_er:                 'supabase',
   mapeo_bs:                 'supabase',
+  gestiones_cobro:          'supabase',   // F-COBRANZA: nace en Supabase
 };
 
 /** Backend efectivo para una tabla (respeta el override del diff script). */
@@ -98,7 +102,8 @@ export type OperacionEscritura =
   | 'empleados'     // CRUD empleados + acreedor vinculado + deuda salarial
   | 'deudas'        // CRUD deudas + crear acreedor
   | 'obligaciones'  // CRUD obligaciones recurrentes
-  | 'sistema';      // uso_auros, ayuda (contenido/logs)
+  | 'sistema'       // uso_auros, ayuda (contenido/logs)
+  | 'cobranza';     // F-COBRANZA: gestiones de cobro (bitácora)
 
 /**
  * FASE 3 — DEPENDENCIA CRÍTICA adjuntos ↔ registro padre:
@@ -129,6 +134,7 @@ export const WRITE_SOURCE: Record<OperacionEscritura, Backend> = {
   deudas:       'supabase',
   obligaciones: 'supabase',
   sistema:      'supabase',
+  cobranza:     'supabase',
 };
 
 /** Backend efectivo de escritura (override WRITE_SOURCE_FORCE para staging). */

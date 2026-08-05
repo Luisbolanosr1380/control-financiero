@@ -6,14 +6,18 @@ import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
 import { AGING_BUCKETS, AGING_LABEL, type PendientesCobro, type FacturaPendiente } from '@/lib/db/facturas-pendientes';
+import { GestionCobroModal } from '@/components/facturas/gestion-cobro-modal';
+import type { ResumenGestiones } from '@/lib/db/gestiones-cobro';
 import type { AgingBucket } from '@/lib/types';
 
 interface Props {
   data: PendientesCobro;
+  gestiones: ResumenGestiones;
 }
 
-type SortKey = 'diasVencidos' | 'saldo' | 'cliente' | 'fechaEmision' | 'fechaVencimiento';
+type SortKey = 'diasVencidos' | 'saldo' | 'cliente' | 'fechaEmision' | 'fechaVencimiento' | 'pagoPrometido';
 type EstatusFiltro = 'todas' | 'vencidas' | 'por_vencer';
+type GestionFiltro = 'todas' | 'sin_gestion' | 'promesa_vencida';
 
 const BUCKET_COLOR: Record<AgingBucket, string> = {
   corriente: 'var(--olive)',
@@ -28,15 +32,28 @@ function csvEscape(v: string | number): string {
   return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export function PendientesCobroClient({ data }: Props) {
+export function PendientesCobroClient({ data, gestiones }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [centro, setCentro] = useState('');
   const [estatus, setEstatus] = useState<EstatusFiltro>('todas');
+  const [gestionF, setGestionF] = useState<GestionFiltro>('todas');
   const [bucket, setBucket] = useState<AgingBucket | ''>('');
   const [mes, setMes] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('diasVencidos');
   const [sortAsc, setSortAsc] = useState(false);
+  const [modalCliente, setModalCliente] = useState<{ custId: string; cliente: string } | null>(null);
+
+  // F-COBRANZA: promesa vigente de una fila — la específica de la factura
+  // pisa a la general del cliente.
+  const promesaDe = (f: FacturaPendiente): { fecha: string; vencida: boolean } | null => {
+    const porFac = gestiones.porFactura[f.id];
+    if (porFac) return { fecha: porFac.fechaPromesa, vencida: porFac.promesaVencida };
+    const porCli = gestiones.porCliente[f.custId];
+    if (porCli?.fechaPagoPromesa) return { fecha: porCli.fechaPagoPromesa, vencida: porCli.promesaVencida };
+    return null;
+  };
+  const ultimaGestionDe = (f: FacturaPendiente) => gestiones.porCliente[f.custId] ?? null;
 
   const centrosDisponibles = useMemo(
     () => [...new Set(data.filas.flatMap(f => f.centros))].sort(),
@@ -57,6 +74,12 @@ export function PendientesCobroClient({ data }: Props) {
     if (bucket)  rows = rows.filter(f => f.bucket === bucket);
     if (estatus === 'vencidas')   rows = rows.filter(f => f.vencida);
     if (estatus === 'por_vencer') rows = rows.filter(f => !f.vencida);
+    // F-COBRANZA: "sin gestión reciente" = nunca contactado o hace más de 7 días.
+    if (gestionF === 'sin_gestion') rows = rows.filter(f => {
+      const g = ultimaGestionDe(f);
+      return !g || g.diasDesdeUltima > 7;
+    });
+    if (gestionF === 'promesa_vencida') rows = rows.filter(f => promesaDe(f)?.vencida);
     if (mes)     rows = rows.filter(f => f.mesEmision === mes);
 
     const dir = sortAsc ? 1 : -1;
@@ -66,16 +89,26 @@ export function PendientesCobroClient({ data }: Props) {
         case 'cliente':          return a.cliente.localeCompare(b.cliente) * dir;
         case 'fechaEmision':     return a.fechaEmision.localeCompare(b.fechaEmision) * dir;
         case 'fechaVencimiento': return a.fechaVencimiento.localeCompare(b.fechaVencimiento) * dir;
+        case 'pagoPrometido': {
+          // Sin promesa al final, independiente de la dirección.
+          const pa = promesaDe(a)?.fecha ?? '';
+          const pb = promesaDe(b)?.fecha ?? '';
+          if (!pa && !pb) return 0;
+          if (!pa) return 1;
+          if (!pb) return -1;
+          return pa.localeCompare(pb) * dir;
+        }
         default:                 return (a.diasVencidos - b.diasVencidos) * dir;
       }
     });
-  }, [data.filas, search, centro, bucket, estatus, mes, sortKey, sortAsc]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.filas, gestiones, search, centro, bucket, estatus, gestionF, mes, sortKey, sortAsc]);
 
   const saldoFiltrado = filas.reduce((s, f) => s + f.saldo, 0);
 
   const onSort = (key: SortKey) => {
     if (key === sortKey) setSortAsc(!sortAsc);
-    else { setSortKey(key); setSortAsc(key === 'cliente'); }
+    else { setSortKey(key); setSortAsc(key === 'cliente' || key === 'pagoPrometido'); }
   };
   const flecha = (key: SortKey) => (sortKey === key ? (sortAsc ? ' ↑' : ' ↓') : '');
 
@@ -83,11 +116,13 @@ export function PendientesCobroClient({ data }: Props) {
     const encabezado = [
       'No. Factura', 'Cliente', 'Fecha emisión', 'Mes', 'Total', 'Saldo por cobrar',
       'Días crédito', 'Fecha vencimiento', 'Días vencidos', 'Estatus', 'Tramo', 'Centro de costo',
+      'Pago prometido', 'Última gestión',
     ];
     const lineas = filas.map(f => [
       f.noFactura, f.cliente, f.fechaEmision, f.mesEmision, f.total.toFixed(2), f.saldo.toFixed(2),
       f.diasCredito, f.fechaVencimiento, f.diasVencidos, f.vencida ? 'VENCIDA' : 'POR VENCER',
       AGING_LABEL[f.bucket], f.centros.join(' + '),
+      promesaDe(f)?.fecha ?? '', ultimaGestionDe(f)?.ultimaGestion ?? '',
     ].map(csvEscape).join(','));
     // BOM para que Excel abra el UTF-8 con acentos bien.
     const blob = new Blob(['﻿' + [encabezado.join(','), ...lineas].join('\n')], { type: 'text/csv;charset=utf-8' });
@@ -169,6 +204,11 @@ export function PendientesCobroClient({ data }: Props) {
           <option value="vencidas">Solo vencidas</option>
           <option value="por_vencer">Solo por vencer</option>
         </select>
+        <select className="input" style={{ width: 'auto' }} value={gestionF} onChange={e => setGestionF(e.target.value as GestionFiltro)}>
+          <option value="todas">Gestión: todas</option>
+          <option value="sin_gestion">Sin gestión reciente</option>
+          <option value="promesa_vencida">Promesa vencida</option>
+        </select>
         <select className="input num" style={{ width: 'auto' }} value={mes} onChange={e => setMes(e.target.value)}>
           <option value="">Todos los meses</option>
           {mesesDisponibles.map(m => <option key={m} value={m}>{m}</option>)}
@@ -190,13 +230,15 @@ export function PendientesCobroClient({ data }: Props) {
               {thSort('fechaVencimiento', 'Vence', true)}
               {thSort('diasVencidos', 'Días venc.', true)}
               <th>Estatus</th>
+              {thSort('pagoPrometido', 'Prometido', true)}
+              <th className="num" style={{ whiteSpace: 'nowrap' }}>Últ. gestión</th>
               <th>Línea</th>
-              <th style={{ width: 60 }}></th>
+              <th style={{ width: 84 }}></th>
             </tr>
           </thead>
           <tbody>
             {filas.length === 0 ? (
-              <tr><td colSpan={10} style={{ height: 140, textAlign: 'center', color: 'var(--ink-4)' }}>
+              <tr><td colSpan={12} style={{ height: 140, textAlign: 'center', color: 'var(--ink-4)' }}>
                 <div style={{ padding: 36, fontSize: 13 }}>Sin facturas pendientes con estos filtros.</div>
               </td></tr>
             ) : filas.map(f => (
@@ -219,6 +261,27 @@ export function PendientesCobroClient({ data }: Props) {
                     {f.vencida ? AGING_LABEL[f.bucket] : 'Por vencer'}
                   </span>
                 </td>
+                <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                  {(() => {
+                    const p = promesaDe(f);
+                    if (!p) return <span style={{ color: 'var(--ink-4)' }}>—</span>;
+                    return (
+                      <span style={{ color: p.vencida ? 'var(--wine)' : 'var(--olive)', fontWeight: p.vencida ? 600 : 400 }}
+                        title={p.vencida ? 'Prometió y no cumplió' : 'Pago prometido'}>
+                        {formatDate(p.fecha)}{p.vencida ? ' ⚠' : ''}
+                      </span>
+                    );
+                  })()}
+                </td>
+                <td className="num" style={{ whiteSpace: 'nowrap' }}>
+                  {(() => {
+                    const g = ultimaGestionDe(f);
+                    if (!g) return <span style={{ color: 'var(--amber)' }} title="Nunca se ha gestionado — candidata a llamar hoy">nunca</span>;
+                    return <span style={{ color: g.diasDesdeUltima > 7 ? 'var(--amber)' : 'var(--ink-3)' }} title={`Último contacto ${g.ultimaGestion} · ${g.numGestiones} gestiones`}>
+                      {g.diasDesdeUltima === 0 ? 'hoy' : `hace ${g.diasDesdeUltima}d`}
+                    </span>;
+                  })()}
+                </td>
                 <td style={{ fontSize: 12, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>{f.centros.join(' + ') || '—'}</td>
                 <td onClick={e => e.stopPropagation()}>
                   <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
@@ -227,6 +290,14 @@ export function PendientesCobroClient({ data }: Props) {
                         <I.Receipt size={13} />
                       </a>
                     )}
+                    <button
+                      className="btn btn-ghost"
+                      title="Bitácora de cobranza — histórico y registrar gestión"
+                      style={{ padding: 4 }}
+                      onClick={() => setModalCliente({ custId: f.custId, cliente: f.cliente })}
+                    >
+                      <I.Clock size={13} />
+                    </button>
                     <Link href={`/facturacion/${f.id}`} className="btn btn-ghost" title="Registrar cobro (en el detalle)" style={{ padding: 4 }}>
                       <I.Coins size={13} />
                     </Link>
@@ -237,6 +308,17 @@ export function PendientesCobroClient({ data }: Props) {
           </tbody>
         </table>
       </div>
+
+      {modalCliente && (
+        <GestionCobroModal
+          custId={modalCliente.custId}
+          cliente={modalCliente.cliente}
+          facturas={data.filas.filter(f => f.custId === modalCliente.custId).map(f => ({
+            id: f.id, noFactura: f.noFactura, saldo: f.saldo, diasVencidos: f.diasVencidos,
+          }))}
+          onClose={() => setModalCliente(null)}
+        />
+      )}
 
       {data.porCentro.length > 0 && (
         <div style={{ marginTop: 10, fontSize: 11.5, color: 'var(--ink-3)' }}>
