@@ -47,3 +47,19 @@ create table if not exists cobros_facturas (
 -- constancias de retención): las URLs de Airtable expiran — la migración
 -- real es descargarlos a Supabase Storage (Fase 2). facturas_clientes se
 -- queda leyendo de Airtable hasta entonces para no perder el link al PDF.
+
+-- ═══ FASE 3 (auditoría de escrituras): tabla ANALISIS_AI faltante ═══
+-- El log del análisis semanal/manual de Auros era el ÚNICO writer vivo a
+-- Airtable que quedaba. Crear la tabla y el código escribe acá.
+create table if not exists analisis_ai (
+    id            uuid primary key default uuid_generate_v4(),
+    airtable_id   text unique,
+    fecha         timestamptz,
+    texto         text,
+    modelo        text,
+    tokens_input  int,
+    tokens_output int,
+    duracion_seg  numeric(10,2),
+    costo_usd     numeric(10,4),
+    created_at    timestamptz default now()
+);

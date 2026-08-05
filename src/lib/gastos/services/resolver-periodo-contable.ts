@@ -114,6 +114,11 @@ async function listarPeriodos(): Promise<PeriodoRow[]> {
  * la auto-crea sin romper.
  */
 async function crearPeriodoAbierto(nombre: string): Promise<PeriodoRow> {
+  // Defensa (auditoría Fase 3): ruta Airtable — en modo Supabase el período
+  // se crea en sbResolverPeriodoContable, nunca acá.
+  if (writeSource('gastos') === 'supabase') {
+    throw new Error('crearPeriodoAbierto es la ruta Airtable — con WRITE_SOURCE.gastos=supabase usar sbResolverPeriodoContable.');
+  }
   if (!airtable) throw new Error('Airtable no está configurado.');
   const [y, m] = nombre.split('-').map(Number);
   if (!Number.isFinite(y) || !Number.isFinite(m)) {

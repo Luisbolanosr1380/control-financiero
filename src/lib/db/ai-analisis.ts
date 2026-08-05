@@ -4,6 +4,21 @@
 // ============================================================
 
 import { airtable, TABLES } from './airtable';
+import { writeSource } from '../config/data-source';
+import { insertar } from '../supabase/writes';
+import { fetchAll } from '../supabase/client';
+
+type RowAI = Record<string, unknown>;
+const rowToAnalisis = (r: RowAI): AnalisisRegistro => ({
+  id:           String(r.airtable_id ?? r.id),
+  fecha:        String(r.fecha ?? ''),
+  texto:        String(r.texto ?? ''),
+  modelo:       String(r.modelo ?? ''),
+  tokensInput:  Number(r.tokens_input ?? 0),
+  tokensOutput: Number(r.tokens_output ?? 0),
+  duracionSeg:  Number(r.duracion_seg ?? 0),
+  costoUSD:     Number(r.costo_usd ?? 0),
+});
 
 /** Precios públicos Gemini 2.5 Flash (uso interactivo, USD por millón de tokens). */
 export const PRECIOS = {
@@ -48,9 +63,33 @@ export interface GuardarAnalisisInput {
 }
 
 export async function guardarAnalisis(input: GuardarAnalisisInput): Promise<AnalisisRegistro> {
-  if (!airtable) throw new Error('Airtable no está configurado.');
   const costoUSD = calcularCostoUSD(input.tokensInput, input.tokensOutput);
   const fecha = new Date().toISOString();
+  // ═══ FASE 3 (auditoría) — era el ÚNICO writer vivo a Airtable ═══
+  if (writeSource('sistema') === 'supabase') {
+    try {
+      const res = await insertar('analisis_ai', {
+        fecha,
+        texto: input.texto,
+        modelo: input.modelo,
+        tokens_input: input.tokensInput,
+        tokens_output: input.tokensOutput,
+        duracion_seg: input.duracionSeg,
+        costo_usd: costoUSD,
+      });
+      return { id: res.airtable_id, fecha, texto: input.texto, modelo: input.modelo,
+        tokensInput: input.tokensInput, tokensOutput: input.tokensOutput,
+        duracionSeg: input.duracionSeg, costoUSD };
+    } catch (err) {
+      // Tabla analisis_ai aún no creada (03_fase2_gaps.sql actualizado):
+      // NO romper el análisis — se pierde solo el log.
+      console.warn('guardarAnalisis (supabase) falló — análisis NO se registra:', err instanceof Error ? err.message : err);
+      return { id: 'sin-log', fecha, texto: input.texto, modelo: input.modelo,
+        tokensInput: input.tokensInput, tokensOutput: input.tokensOutput,
+        duracionSeg: input.duracionSeg, costoUSD };
+    }
+  }
+  if (!airtable) throw new Error('Airtable no está configurado.');
   const [created] = await airtable(TABLES.ANALISIS_AI).create([{
     fields: {
       [FAI.FECHA]:    fecha,
@@ -88,6 +127,12 @@ function recordToAnalisis(r: { id: string; fields: Record<string, unknown> }): A
 }
 
 export async function getUltimoAnalisis(): Promise<AnalisisRegistro | null> {
+  if (writeSource('sistema') === 'supabase') {
+    try {
+      const rows = await fetchAll<RowAI>('analisis_ai', { order: { column: 'fecha', ascending: false } });
+      return rows[0] ? rowToAnalisis(rows[0]) : null;
+    } catch { return null; }
+  }
   if (!airtable) return null;
   try {
     const records = await airtable(TABLES.ANALISIS_AI)
@@ -101,6 +146,12 @@ export async function getUltimoAnalisis(): Promise<AnalisisRegistro | null> {
 }
 
 export async function getHistorialAnalisis(limit = 20): Promise<AnalisisRegistro[]> {
+  if (writeSource('sistema') === 'supabase') {
+    try {
+      const rows = await fetchAll<RowAI>('analisis_ai', { order: { column: 'fecha', ascending: false } });
+      return rows.slice(0, limit).map(rowToAnalisis);
+    } catch { return []; }
+  }
   if (!airtable) return [];
   try {
     const records = await airtable(TABLES.ANALISIS_AI)
@@ -120,6 +171,20 @@ export interface CostoAcumulado {
 }
 
 export async function getCostoAcumulado(): Promise<CostoAcumulado> {
+  if (writeSource('sistema') === 'supabase') {
+    try {
+      const rows = await fetchAll<RowAI>('analisis_ai', { select: 'fecha, costo_usd' });
+      const ahora = new Date();
+      const mesActual = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}`;
+      let totalUSD = 0, esteMesUSD = 0;
+      for (const r of rows) {
+        const costo = Number(r.costo_usd ?? 0);
+        totalUSD += costo;
+        if (String(r.fecha ?? '').startsWith(mesActual)) esteMesUSD += costo;
+      }
+      return { totalUSD, esteMesUSD, cantidad: rows.length };
+    } catch { return { totalUSD: 0, esteMesUSD: 0, cantidad: 0 }; }
+  }
   if (!airtable) return { totalUSD: 0, esteMesUSD: 0, cantidad: 0 };
   try {
     const records = await airtable(TABLES.ANALISIS_AI)

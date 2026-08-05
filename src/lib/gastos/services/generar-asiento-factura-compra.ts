@@ -161,6 +161,12 @@ function fieldsPartida(asientoId: string, p: PartidaInput): Record<string, unkno
 }
 
 export async function generarAsientoFacturaCompra(input: GenerarAsientoInput): Promise<AsientoGenerado> {
+  // Defensa (auditoría Fase 3): esta es la RUTA AIRTABLE. En modo Supabase
+  // la aprobación va por sbAprobarGasto — si alguien llega acá, es un bug.
+  const { writeSource } = await import('@/lib/config/data-source');
+  if (writeSource('gastos') === 'supabase') {
+    throw new Error('generarAsientoFacturaCompra es la ruta Airtable — con WRITE_SOURCE.gastos=supabase usar sbAprobarGasto.');
+  }
   if (!airtable) throw new Error('Airtable no está configurado.');
 
   // 1) Correlativo.
