@@ -43,6 +43,7 @@ import { buscarProveedorPorNit } from '@/lib/gastos/services/buscar-o-crear-prov
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
 import { getTopDeudores } from '@/lib/db/kpis';
+import { getFacturasPendientesCobro, AGING_LABEL, type FacturaPendiente } from '@/lib/db/facturas-pendientes';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getAnaliticaIngresos, getFacturadoPorRango, type FiltroNaturaleza } from '@/lib/db/analitica';
 import { getProyeccionMesActual } from '@/lib/db/proyecciones';
@@ -314,6 +315,52 @@ export const aiTools = {
         tendencia: a.tendencia,
         ultimaFactura: a.ultimaFactura,
         contextoComercial: a.contextoComercial ?? null,
+      };
+    },
+  }),
+
+  // F-CXC-PEND: misma data que la vista /facturacion/pendientes.
+  getPendientesCobro: tool({
+    description:
+      'Cartera completa pendiente de cobro (TODOS los meses juntos) con aging de cobranza: total por cobrar, ' +
+      'tramos Por vencer / 1-30 / 31-60 / 61-90 / +90 días vencidos (cantidad y monto por tramo), y las facturas ' +
+      'más vencidas. USAR para "¿cuánto me deben?", "¿cómo está la cartera?", "¿qué facturas están vencidas +60 días?", ' +
+      '"aging de cobranza". Es STOCK del momento — no depende de período. Para el detalle de UN cliente usar getFacturasPorCliente.',
+    parameters: z.object({
+      minDiasVencidos: z.number().int().optional()
+        .describe('Solo facturas con días vencidos >= este valor (ej. 61 para "+60 días"). Omitir para toda la cartera.'),
+      limite: z.number().int().positive().max(100).default(30).describe('Máximo de facturas en el detalle'),
+    }),
+    execute: async ({ minDiasVencidos, limite }) => {
+      const data = await getFacturasPendientesCobro();
+      const filtradas = minDiasVencidos !== undefined
+        ? data.filas.filter(f => f.diasVencidos >= minDiasVencidos)
+        : data.filas;
+      const proyectar = (f: FacturaPendiente) => ({
+        noFactura: f.noFactura,
+        cliente: f.cliente,
+        fechaEmision: f.fechaEmision,
+        saldoQ: Math.round(f.saldo * 100) / 100,
+        fechaVencimiento: f.fechaVencimiento || null,
+        diasVencidos: f.diasVencidos,
+        tramo: AGING_LABEL[f.bucket],
+        esParcial: f.esParcial,
+        centros: f.centros,
+      });
+      return {
+        totales: {
+          porCobrarQ: Math.round(data.totales.saldoTotalQ * 100) / 100,
+          numFacturas: data.totales.numFacturas,
+          vencidoQ: Math.round(data.totales.saldoVencidoQ * 100) / 100,
+          numVencidas: data.totales.numVencidas,
+          porVencerQ: Math.round(data.totales.saldoPorVencerQ * 100) / 100,
+        },
+        aging: data.aging.map(t => ({ tramo: t.etiqueta, cantidad: t.cantidad, montoQ: Math.round(t.montoQ * 100) / 100 })),
+        porCentroCosto: data.porCentro.map(c => ({ centro: c.centro, saldoQ: Math.round(c.saldoQ * 100) / 100, cantidad: c.cantidad })),
+        ...(minDiasVencidos !== undefined
+          ? { filtro: { minDiasVencidos }, facturasFiltradas: filtradas.length, saldoFiltradoQ: Math.round(filtradas.reduce((s, f) => s + f.saldo, 0) * 100) / 100 }
+          : {}),
+        facturas: filtradas.slice(0, limite).map(proyectar),
       };
     },
   }),

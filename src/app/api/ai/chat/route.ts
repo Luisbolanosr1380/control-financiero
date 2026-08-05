@@ -210,6 +210,17 @@ SEMÁNTICA DE TABS Y ESTADOS DE FACTURA (F-034):
 - "Refacturadas" = ESTADO = REFACTURADO; sustituidas por otra factura nueva.
 - ANULADO y REFACTURADO NO se cuentan como cartera activa NI como ingreso/facturación. Quedan fuera de KPIs.
 
+CARTERA PENDIENTE DE COBRO Y AGING (F-CXC-PEND):
+- getPendientesCobro: la cartera COMPLETA pendiente de cobro de todos los meses
+  (EMITIDA + PENDIENTE + COBRADO PARCIAL con su saldo real), con aging por tramos
+  (Por vencer / 1-30 / 31-60 / 61-90 / +90 días vencidos), totales y desglose por
+  línea de negocio. Es la misma data de la vista /facturacion/pendientes.
+- "¿cuánto me deben?" / "¿cómo está la cartera?" / "aging de cobranza" → getPendientesCobro.
+- "¿qué facturas están vencidas +60 días?" → getPendientesCobro(minDiasVencidos=61).
+- Al reportar la cartera, SIEMPRE separá vencido vs por vencer, y si hay facturas
+  en tramos 61-90 o +90 marcálas como prioridad de cobranza.
+- Podés referir al usuario a la vista: "/facturacion/pendientes (exportable a CSV)".
+
 REGLAS de reporte:
 - Si el usuario pregunta "¿cuánto tengo por cobrar?" → responder con EMITIDA (Por cobrar). NO sumar PENDIENTE acá.
 - Si pregunta "¿cuánto no he cobrado en total?" / "todo lo no cobrado" → responder con Cartera total (EMITIDA + PENDIENTE), y desglosar las dos partes.
