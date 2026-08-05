@@ -255,6 +255,124 @@ async function main() {
     } catch (err) {
       check(String(err).includes('ASIENTO_NO_BALANCEADO'), 'BALANCE: asiento no balanceado rechazado dentro de la transacción');
     }
+
+    /* ════════ FASE 3.1 FACTURACIÓN — emitir + PDF DE UNA + editar + NC + anular ════════ */
+    console.log('\n══ 3.1 facturación (emitir + adjuntar PDF de una + NC) ══');
+    const { createFactura, editarFacturaNoContable, anularFactura, getHistorialEdicionesFactura } = await import('../src/lib/db/facturas');
+    const { uploadAttachment, ADJUNTO_FIELD_ID } = await import('../src/lib/db/attachments');
+    const cc2 = await sb.from('centros_costo').select('airtable_id').limit(2);
+    const marca2 = `${marca}-F3`;
+    const fac3 = await createFactura({
+      noFactura: marca2, custId: `${marca}-cli`, fechaEmision: '2026-08-02',
+      lineas: [
+        { centroCostoId: cc2.data![0].airtable_id, total: 560, iva: 60 },
+        { centroCostoId: cc2.data![1]?.airtable_id ?? cc2.data![0].airtable_id, total: 336, iva: 36 },
+      ],
+    });
+    check(fac3.recordsCreados === 2 && !!fac3.recordIdPrincipal, `createFactura 2 líneas atómico (principal ${fac3.recordIdPrincipal})`);
+    {
+      const { data } = await sb.from('facturas_clientes').select('airtable_id, subtotal, estado').eq('no_factura', marca2);
+      check((data?.length ?? 0) === 2 && data!.every(r => r.estado === 'EMITIDA'), 'líneas EMITIDA con subtotal materializado');
+      for (const r of data ?? []) basura.push(['facturas_clientes', r.airtable_id]);
+    }
+    // DEPENDENCIA CRÍTICA (addendum): factura emitida EN SUPABASE + PDF
+    // adjuntado EN SUPABASE, de una, sin error de backends cruzados.
+    const miniPdf = Buffer.from('%PDF-1.4\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF');
+    await uploadAttachment(fac3.recordIdPrincipal, ADJUNTO_FIELD_ID, 'test-f3.pdf', 'application/pdf', miniPdf);
+    {
+      const { data } = await sb.from('facturas_clientes').select('adjunto_url, adjunto_nombre').eq('airtable_id', fac3.recordIdPrincipal).single();
+      check(!!data?.adjunto_url && String(data.adjunto_url).includes('/adjuntos/'), 'PDF adjuntado DE UNA a la factura recién emitida (Storage, mismo backend)');
+    }
+    const ed = await editarFacturaNoContable(fac3.recordIdPrincipal, { observaciones: 'editada por validador F3' }, 'validador@test');
+    check(ed.ok && ed.auditoriaPersistida, 'edición no-contable + auditoría persistida');
+    {
+      const hist = await getHistorialEdicionesFactura(fac3.recordIdPrincipal);
+      check(hist.length === 1 && hist[0].usuario === 'validador@test', 'historial de ediciones legible desde la columna');
+    }
+    // NC sobre la factura RECIÉN creada (acoplamiento del addendum)
+    const { crearNotaCredito, anularNotaCredito } = await import('../src/lib/db/notas-credito');
+    const nc = await crearNotaCredito({ facturaId: fac3.recordIdPrincipal, fechaEmision: '2026-08-03', monto: 96, motivo: 'Ajuste de cuenta', descripcion: 'NC validador F3' }, 'validador@test');
+    check(nc.ok && nc.estadoInicial === 'Activa', `NC creada sobre factura nacida en Supabase (${nc.numeroNC})`);
+    if (nc.ok && nc.notaCreditoId) {
+      basura.push(['notas_credito', nc.notaCreditoId]);
+      const ncAn = await anularNotaCredito(nc.notaCreditoId, 'prueba', 'validador@test');
+      check(ncAn.ok === true, 'NC anulada y estado de factura recalculado');
+    }
+    const anF = await anularFactura(marca2, 'prueba validador', 'Error en datos');
+    check(anF.ok && anF.recordsActualizados === 2, 'anularFactura marca ambas líneas ANULADO');
+
+    /* ════════ FASE 3.2 EMPLEADOS + DEUDAS + OBLIGACIONES ════════ */
+    console.log('\n══ 3.2 empleados / deudas / obligaciones ══');
+    const { crearEmpleado, editarEmpleado, darDeBajaEmpleado, crearDeudaSalarioPendiente } = await import('../src/lib/db/empleados');
+    const emp = await crearEmpleado({ nombre: `${marca} EMPLEADO`, fechaIngreso: '2026-01-01', salarioBase: 3000, bonificacionIncentivo: 250, departamento: 'TEST' });
+    check(emp.ok, `crearEmpleado (${emp.ok ? emp.empleadoId : emp.error})`);
+    if (emp.ok && emp.empleadoId) {
+      basura.push(['empleados', emp.empleadoId]);
+      {
+        const { data } = await sb.from('empleados').select('salario_mensual').eq('airtable_id', emp.empleadoId).single();
+        check(Number(data?.salario_mensual) === 3250, `salario_mensual materializado 3250 (${data?.salario_mensual})`);
+      }
+      const edE = await editarEmpleado(emp.empleadoId, { salarioBase: 3500 });
+      const { data: d2 } = await sb.from('empleados').select('salario_mensual').eq('airtable_id', emp.empleadoId).single();
+      check(edE.ok && Number(d2?.salario_mensual) === 3750, `editar recalcula salario_mensual (${d2?.salario_mensual})`);
+      const dsp = await crearDeudaSalarioPendiente(emp.empleadoId, 1875, '2026-08-15', 'quincena diferida test');
+      check(dsp.ok === true, `deuda salarial + acreedor auto-creado (${dsp.ok ? dsp.deudaId : dsp.error})`);
+      if (dsp.ok && dsp.deudaId) basura.push(['deudas', dsp.deudaId]);
+      if (dsp.ok && dsp.acreedorId) basura.push(['acreedores', dsp.acreedorId]);
+      const baja = await darDeBajaEmpleado(emp.empleadoId, '2026-08-04', 'fin de prueba', 'INACTIVO');
+      check(baja.ok === true, 'darDeBajaEmpleado');
+    }
+    const { crearDeuda, editarDeuda, eliminarDeuda } = await import('../src/lib/db/deudas');
+    const acr = await sb.from('acreedores').select('airtable_id').limit(1).single();
+    const deu = await crearDeuda({ acreedorId: acr.data!.airtable_id, tipoDocumento: 'Factura', fechaEmision: '2026-08-01', moneda: 'Q', montoOriginal: 750, nombreDeuda: `${marca} deuda F3`, plazoMeses: 1 });
+    check(deu.ok, `crearDeuda (${deu.ok ? deu.deudaId : deu.error})`);
+    if (deu.ok && deu.deudaId) {
+      basura.push(['deudas', deu.deudaId]);
+      {
+        const { data } = await sb.from('deudas').select('fecha_vencimiento, monto_gtq').eq('airtable_id', deu.deudaId).single();
+        check(data?.fecha_vencimiento === '2026-09-01' && Number(data?.monto_gtq) === 750, `vencimiento calculado + monto_gtq (${data?.fecha_vencimiento})`);
+      }
+      const edD = await editarDeuda(deu.deudaId, { montoOriginal: 900 });
+      const { data: d3 } = await sb.from('deudas').select('monto_gtq, saldo_pendiente').eq('airtable_id', deu.deudaId).single();
+      check(edD.ok && Number(d3?.monto_gtq) === 900, `editarDeuda recalcula monto_gtq (${d3?.monto_gtq})`);
+      const del = await eliminarDeuda(deu.deudaId);
+      check(del.ok === true, 'eliminarDeuda');
+    }
+    const { crearObligacion, toggleActivoObligacion } = await import('../src/app/(app)/planillas/../flujo/_actions/obligaciones');
+    const ob = await crearObligacion({ nombre: `${marca} OBLIG`, tipo: 'Servicio', montoEstimado: 100, diaPago: 5, frecuencia: 'Mensual', prioridad: 'Baja', porCuentaDe: 'Otra' });
+    check(ob.ok, `crearObligacion con porCuentaDe='Otra' (${ob.ok ? ob.id : ob.error})`);
+    if (ob.ok) {
+      basura.push(['obligaciones_recurrentes', ob.id]);
+      const tg = await toggleActivoObligacion(ob.id);
+      const { data } = await sb.from('obligaciones_recurrentes').select('activo, por_cuenta_de').eq('airtable_id', ob.id).single();
+      check(tg.ok && data?.activo === false && data?.por_cuenta_de === 'Otra', 'toggle pausa + enum Otra persistido');
+    }
+
+    /* ════════ FASE 3.3 WORKFLOW PLANILLA ════════ */
+    console.log('\n══ 3.3 workflow de planilla (período → aprobar → pagar → cierre) ══');
+    const { crearPeriodo, aprobarPeriodo, registrarPagoEmpleado } = await import('../src/lib/db/planillas');
+    const per = await crearPeriodo({ quincena: 2, mes: 12, anio: 2098 });
+    check(per.ok, `crearPeriodo (${per.ok ? per.periodoId : per.error})`);
+    if (per.ok && per.periodoId) {
+      basura.push(['periodos', per.periodoId]);
+      // línea sintética vinculada al período de prueba
+      const perUuid = (await sb.from('periodos').select('id').eq('airtable_id', per.periodoId).single()).data!.id;
+      const empRow = await sb.from('empleados').select('id').limit(1).single();
+      const lineaIns = await sb.from('planilla').insert({
+        airtable_id: `${marca}-lin`, periodo_id: perUuid, empleado_id: empRow.data!.id,
+        ordinario: 1000, neto_pagar: 1000, estado_pago: 'Pendiente',
+      }).select('id').single();
+      basura.push(['planilla', `${marca}-lin`]);
+      check(!!lineaIns.data, 'línea de planilla sintética creada');
+      invalidarBridge();
+      const ap2 = await aprobarPeriodo(per.periodoId, 'validador@test');
+      check(ap2.ok === true, `aprobarPeriodo (${ap2.ok ? 'ok' : ap2.error})`);
+      const bancoRow = await sb.from('bancos').select('airtable_id').limit(1).single();
+      const pago = await registrarPagoEmpleado({ lineaId: `${marca}-lin`, fechaPago: '2026-08-04', bancoId: bancoRow.data!.airtable_id, usuarioEmail: 'validador@test' });
+      check(pago.ok === true, `registrarPagoEmpleado (${pago.ok ? 'ok' : pago.error})`);
+      const { data: perFin } = await sb.from('periodos').select('estado, pagado_por').eq('airtable_id', per.periodoId).single();
+      check(perFin?.estado === 'Cerrada' && !!perFin?.pagado_por, `período auto-Cerrada al concluir todas las líneas ('${perFin?.estado}')`);
+    }
   } finally {
     /* ════════ cleanup (orden inverso por FKs) ════════ */
     console.log('\n══ limpieza de registros de prueba ══');
