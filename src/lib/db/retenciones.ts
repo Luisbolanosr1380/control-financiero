@@ -8,6 +8,8 @@
  */
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
+import { dataSource } from '../config/data-source';
+import { sbCobrosRecords } from '../supabase/records';
 import { getClientes } from './clientes';
 import type { Customer } from '../types';
 
@@ -72,14 +74,23 @@ export async function getRetencionesAgregadas(anio?: number): Promise<Retencione
     records: [],
   };
 
-  if (USE_MOCK || !airtable) return vacio;
+  if (dataSource('cobros_clientes') !== 'supabase' && (USE_MOCK || !airtable)) return vacio;
 
   try {
     // F-036: excluir cobros anulados (Estado_Cobro != 'Anulado'; vacío = Activo
     // por compat). Las retenciones anuladas NO cuentan como crédito fiscal.
     const filterByFormula = `AND(YEAR({${FCR.FECHA}})=${year},OR({${FCR.RET_IVA}}>0,{${FCR.RET_ISR}}>0),OR({${FCR.ESTADO_COBRO}}='',{${FCR.ESTADO_COBRO}}='Activo'))`;
     const [records, clientes] = await Promise.all([
-      airtable(TABLES.COBROS).select({ filterByFormula, sort: [{ field: FCR.FECHA, direction: 'desc' }] }).all(),
+      dataSource('cobros_clientes') === 'supabase'
+        ? sbCobrosRecords().then(rs => rs.filter(r => {
+            const f = r.fields;
+            const enAnio = String(f[FCR.FECHA] ?? '').slice(0, 4) === String(year);
+            const conRet = Number(f[FCR.RET_IVA] ?? 0) > 0 || Number(f[FCR.RET_ISR] ?? 0) > 0;
+            const estado = String(f[FCR.ESTADO_COBRO] ?? '').trim();
+            return enAnio && conRet && (estado === '' || estado === 'Activo');
+          }))
+        : airtable!(TABLES.COBROS).select({ filterByFormula, sort: [{ field: FCR.FECHA, direction: 'desc' }] }).all()
+            .then(rs => rs.map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }))),
       getClientes(),
     ]);
     const nombreCliente = new Map<string, string>(clientes.map((c: Customer) => [c.id, c.name]));

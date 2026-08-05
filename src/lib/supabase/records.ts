@@ -270,7 +270,7 @@ export async function sbDeudasRecords(opts: { soloIncluidas?: boolean } = {}): P
  * ============================================================ */
 
 interface FacturaRow extends Row {
-  cliente: { airtable_id: string; dias_credito: number | null } | null;
+  cliente: { airtable_id: string; dias_credito: number | null; razon_social: string | null } | null;
   centro: { airtable_id: string } | null;
 }
 
@@ -284,7 +284,7 @@ export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
   const hoy = obtenerFechaHoyGuatemala();
   const [rows, cobros] = await Promise.all([
     fetchAll<FacturaRow>('facturas_clientes', {
-      select: '*, cliente:clientes(airtable_id, dias_credito), centro:centros_costo(airtable_id)',
+      select: '*, cliente:clientes(airtable_id, dias_credito, razon_social), centro:centros_costo(airtable_id)',
       order: { column: 'fecha_emision', ascending: false },
     }),
     fetchAll<Row>('cobros_clientes', { select: 'factura_id, monto_cobrado' }),
@@ -328,6 +328,8 @@ export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
         // exactamente lo mismo.
         'Fecha vencimiento':   fechaVence ?? ERROR_FORMULA,
         'CLIENTE ':            link(r.cliente),
+        // Lookup usado por el flujo (cobros esperados).
+        'Razón social (from CLIENTE )': r.cliente?.razon_social ? [r.cliente.razon_social] : undefined,
         'CENTRO_COSTO':        link(r.centro),
         'SUBTOTAL':            n(r.subtotal),
         'IVA':                 n(r.iva),

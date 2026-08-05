@@ -28,6 +28,11 @@
  */
 
 import { airtable } from '@/lib/db/airtable';
+import { dataSource } from '@/lib/config/data-source';
+import { fetchAll } from '@/lib/supabase/client';
+
+type RowSb = Record<string, unknown>;
+const atId = (rel: unknown): string => String((rel as { airtable_id?: string } | null)?.airtable_id ?? '');
 import { PARTIDAS_TABLE_ID, PARTIDAS_FIELDS, ASIENTOS_TABLE_ID } from '@/lib/airtable/asientos-fields';
 import { MAPEO_ER_TABLE_ID, MAPEO_ER_FIELDS, type SignoLinea, type TipoLineaMapeo } from '@/lib/airtable/mapeo-er-fields';
 import { CUENTAS_TABLE_ID, CUENTAS_FIELDS } from '@/lib/contabilidad/cuentas-sistema';
@@ -172,7 +177,25 @@ interface PartidaCruda {
 }
 
 async function leerPartidasDelPeriodo(periodos: readonly string[]): Promise<PartidaCruda[]> {
-  if (!airtable || periodos.length === 0) return [];
+  if (periodos.length === 0) return [];
+  if (dataSource('partidas') === 'supabase') {
+    const setPeriodos = new Set(periodos);
+    const rows = await fetchAll<RowSb>('partidas', {
+      select: 'airtable_id, debe, haber, periodo, cuenta:cuentas(airtable_id), centro:centros_costo(airtable_id), asiento:asientos(airtable_id)',
+    });
+    return rows
+      .filter(r => setPeriodos.has(String(r.periodo ?? '').trim()))
+      .map(r => ({
+        id: String(r.airtable_id),
+        cuentaId: atId(r.cuenta),
+        centroCostoId: atId(r.centro),
+        debe: Number(r.debe ?? 0),
+        haber: Number(r.haber ?? 0),
+        periodo: String(r.periodo ?? '').trim(),
+        asientoId: atId(r.asiento),
+      }));
+  }
+  if (!airtable) return [];
   try {
     // F-BF-004: sin maxRecords — `.all()` agota la paginación interna.
     // F-050.2: filterByFormula con FIELD ID NO funciona; usamos los
@@ -228,6 +251,17 @@ interface CuentaMeta {
 }
 
 async function leerCuentasMeta(): Promise<Map<string, CuentaMeta>> {
+  if (dataSource('cuentas') === 'supabase') {
+    const rows = await fetchAll<RowSb>('cuentas', { select: 'airtable_id, codigo_path, naturaleza_er' });
+    const m = new Map<string, CuentaMeta>();
+    for (const r of rows) {
+      const id = String(r.airtable_id);
+      const codigo = String(r.codigo_path ?? '').trim();
+      const naturaleza = String(r.naturaleza_er ?? '').trim().toLowerCase();
+      m.set(id, { id, codigo, naturalezaEsAcreedora: naturaleza ? naturaleza.startsWith('acre') : codigo.startsWith('4') });
+    }
+    return m;
+  }
   if (!airtable) return new Map();
   try {
     // F-BF-004 + F-047.2: sin cap, field IDs.
@@ -272,6 +306,26 @@ interface LineaMapeo {
 }
 
 async function leerMapeoER(): Promise<LineaMapeo[]> {
+  if (dataSource('mapeo_er') === 'supabase') {
+    // cuentasLink via tabla puente mapeo_er_cuentas (embed M2M de PostgREST).
+    const rows = await fetchAll<RowSb>('mapeo_er', { select: '*, cuentas(airtable_id)' });
+    const out: LineaMapeo[] = rows.map(r => {
+      const tipoRaw = String(r.tipo ?? '').trim();
+      const signoRaw = String(r.signo ?? '').trim();
+      return {
+        id: String(r.airtable_id),
+        nombre: String(r.linea ?? '').trim(),
+        orden: Number(r.orden ?? 0),
+        tipo: (tipoRaw === 'Calculada' ? 'Calculada' : 'Suma cuentas') as TipoLineaMapeo,
+        signo: (signoRaw === '+' || signoRaw === '–' ? signoRaw : '') as SignoLinea,
+        cuentasLink: Array.isArray(r.cuentas) ? (r.cuentas as Array<{ airtable_id?: string }>).map(c => String(c.airtable_id ?? '')).filter(Boolean) : [],
+        prefijos: String(r.prefijos ?? '').trim(),
+        centroCostoFijo: undefined,   // vacío en los 25 mapeos (verificado)
+      };
+    });
+    out.sort((a, b) => a.orden - b.orden);
+    return out;
+  }
   if (!airtable) return [];
   try {
     const records = await airtable(MAPEO_ER_TABLE_ID)
@@ -308,6 +362,18 @@ async function leerMapeoER(): Promise<LineaMapeo[]> {
  * ========================================================================= */
 
 async function asientosNoOperativos(): Promise<Set<string>> {
+  if (dataSource('gastos') === 'supabase') {
+    const rows = await fetchAll<RowSb>('gastos', {
+      select: 'tipo_operativo, asiento:asientos(airtable_id)',
+    });
+    const set = new Set<string>();
+    for (const r of rows) {
+      if (String(r.tipo_operativo ?? '').trim() !== 'No Operativo') continue;
+      const a = atId(r.asiento);
+      if (a) set.add(a);
+    }
+    return set;
+  }
   if (!airtable) return new Set();
   try {
     const records = await airtable(GASTOS_TABLE_ID)

@@ -30,7 +30,15 @@ export type TablaMigrable =
   | 'empleados'
   | 'planilla'
   | 'obligaciones_recurrentes'
-  | 'notas_credito';
+  | 'notas_credito'
+  // FIX-AUROS: tablas de los motores contables y flujo (nunca tuvieron
+  // flag porque eran "Fase 3 motores"; con Airtable desconectado leían vacío)
+  | 'partidas'
+  | 'asientos'
+  | 'gastos'
+  | 'activos_fijos'
+  | 'mapeo_er'
+  | 'mapeo_bs';
 
 export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   // Flipeadas con diff limpio (scripts/diff-datasource.ts, 2026-08-04):
@@ -48,6 +56,14 @@ export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   deudas:                   'supabase',   // 03_fase2_gaps.sql corrido + resync — diff limpio 2026-08-04
   obligaciones_recurrentes: 'supabase',   // enum con 'Otra' + 2 filas corregidas — diff limpio 2026-08-04
   facturas_clientes:        'supabase',   // 14/14 — PDFs en Storage (1022/1022, script 06) + diff limpio
+  // FIX-AUROS (2026-08-04): estos datos viven/nacen en Supabase; sin flag,
+  // los motores ER/BS/depreciación y el flujo leían Airtable-null → vacío.
+  partidas:                 'supabase',
+  asientos:                 'supabase',
+  gastos:                   'supabase',
+  activos_fijos:            'supabase',
+  mapeo_er:                 'supabase',
+  mapeo_bs:                 'supabase',
 };
 
 /** Backend efectivo para una tabla (respeta el override del diff script). */

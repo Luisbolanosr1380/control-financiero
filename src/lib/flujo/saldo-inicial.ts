@@ -16,6 +16,21 @@ import { getBancosActivos } from '@/lib/db/bancos';
 
 /** Suma SALDO_INICIAL de BANCOS activos. null si nada confiable. */
 export async function getSaldoInicialBancos(): Promise<{ totalQ: number; cuentas: number } | null> {
+  const { dataSource } = await import('@/lib/config/data-source');
+  if (dataSource('bancos') === 'supabase') {
+    const { fetchAll } = await import('@/lib/supabase/client');
+    const rows = await fetchAll<Record<string, unknown>>('bancos', {
+      select: 'saldo_inicial, activo, moneda',
+    });
+    let total = 0, count = 0;
+    for (const r of rows) {
+      if (r.activo !== true) continue;
+      if (String(r.moneda ?? 'GTQ') !== 'GTQ') continue;
+      const saldo = Number(r.saldo_inicial ?? 0);
+      if (Number.isFinite(saldo)) { total += saldo; count++; }
+    }
+    return count === 0 ? null : { totalQ: total, cuentas: count };
+  }
   if (!airtable) return null;
   try {
     const bancos = await getBancosActivos();

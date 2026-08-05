@@ -31,6 +31,11 @@
  */
 
 import { airtable } from '@/lib/db/airtable';
+import { dataSource } from '@/lib/config/data-source';
+import { fetchAll } from '@/lib/supabase/client';
+
+type RowSb = Record<string, unknown>;
+const atIdBS = (rel: unknown): string => String((rel as { airtable_id?: string } | null)?.airtable_id ?? '');
 import { PARTIDAS_TABLE_ID, PARTIDAS_FIELDS } from '@/lib/airtable/asientos-fields';
 import {
   MAPEO_BS_TABLE_ID,
@@ -180,6 +185,25 @@ interface PartidaCruda {
 }
 
 async function leerPartidasHastaPeriodo(periodoCorte: string): Promise<PartidaCruda[]> {
+  if (dataSource('partidas') === 'supabase') {
+    const rows = await fetchAll<RowSb>('partidas', {
+      select: 'airtable_id, debe, haber, periodo, cuenta:cuentas(airtable_id), centro:centros_costo(airtable_id), asiento:asientos(airtable_id)',
+    });
+    return rows
+      .filter(r => {
+        const per = String(r.periodo ?? '').trim();
+        return per !== '' && per <= periodoCorte;
+      })
+      .map(r => ({
+        id: String(r.airtable_id),
+        cuentaId: atIdBS(r.cuenta),
+        centroCostoId: atIdBS(r.centro),
+        debe: Number(r.debe ?? 0),
+        haber: Number(r.haber ?? 0),
+        periodo: String(r.periodo ?? '').trim(),
+        asientoId: atIdBS(r.asiento),
+      }));
+  }
   if (!airtable) return [];
   try {
     // F-BF-004: sin maxRecords. Filtramos en JS por field ID
@@ -223,6 +247,25 @@ interface CuentaMetaBS {
 }
 
 async function leerCuentasMetaBS(): Promise<Map<string, CuentaMetaBS>> {
+  if (dataSource('cuentas') === 'supabase') {
+    const rows = await fetchAll<RowSb>('cuentas', { select: 'airtable_id, codigo_path, nombre, naturaleza_bs' });
+    const m = new Map<string, CuentaMetaBS>();
+    for (const r of rows) {
+      const id = String(r.airtable_id);
+      const codigo = String(r.codigo_path ?? '').trim();
+      const naturaleza = String(r.naturaleza_bs ?? '').trim().toLowerCase();
+      m.set(id, {
+        id,
+        codigo,
+        nombre: String(r.nombre ?? '').trim(),
+        // misma derivación que la ruta Airtable: 1=activo deudora, 2/3 acreedora
+        naturalezaEsAcreedora: naturaleza
+          ? naturaleza.startsWith('acre')
+          : (codigo.startsWith('2') || codigo.startsWith('3')),
+      });
+    }
+    return m;
+  }
   if (!airtable) return new Map();
   try {
     const records = await airtable(CUENTAS_TABLE_ID)
@@ -262,6 +305,24 @@ interface LineaMapeoBS {
 }
 
 async function leerMapeoBS(): Promise<LineaMapeoBS[]> {
+  if (dataSource('mapeo_bs') === 'supabase') {
+    const rows = await fetchAll<RowSb>('mapeo_bs', { select: '*, cuentas(airtable_id)' });
+    const out: LineaMapeoBS[] = rows.map(r => {
+      const tipoRaw = String(r.tipo ?? '').trim();
+      return {
+        id: String(r.airtable_id),
+        nombre: String(r.linea ?? '').replace(/\s+/g, ' ').trim(),
+        orden: Number(r.orden ?? 0),
+        tipo: (tipoRaw === 'Calculada' ? 'Calculada' : 'Suma cuentas') as TipoLineaMapeoBS,
+        signo: normalizarSigno(r.signo),
+        cuentasLink: Array.isArray(r.cuentas) ? (r.cuentas as Array<{ airtable_id?: string }>).map(c => String(c.airtable_id ?? '')).filter(Boolean) : [],
+        prefijos: String(r.prefijos ?? '').trim(),
+        centroCostoFijo: undefined,   // vacío en los 20 mapeos (verificado)
+      };
+    });
+    out.sort((a, b) => a.orden - b.orden);
+    return out;
+  }
   if (!airtable) return [];
   try {
     const records = await airtable(MAPEO_BS_TABLE_ID)

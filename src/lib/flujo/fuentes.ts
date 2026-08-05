@@ -213,13 +213,16 @@ export async function planillaProyectada(fechaDesde: string, fechaHasta: string)
  * ============================================================ */
 
 export async function cobrosEsperados(fechaDesde: string, fechaHasta: string): Promise<EventoFlujo[]> {
-  if (!airtable) return [];
+  const { dataSource } = await import('@/lib/config/data-source');
+  if (dataSource('facturas_clientes') !== 'supabase' && !airtable) return [];
   try {
-    const records = await airtable(TABLES.FACTURAS)
-      .select({
-        fields: [F.NO_FACTURA, F.FECHA_VENCE, F.SALDO, F.TOTAL, F.ESTADO, F.CLIENTE, F.RAZON_SOCIAL],
-      })
-      .all();
+    const records = dataSource('facturas_clientes') === 'supabase'
+      ? await (await import('@/lib/supabase/records')).sbFacturasRecords()
+      : (await airtable!(TABLES.FACTURAS)
+          .select({
+            fields: [F.NO_FACTURA, F.FECHA_VENCE, F.SALDO, F.TOTAL, F.ESTADO, F.CLIENTE, F.RAZON_SOCIAL],
+          })
+          .all()).map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
     const hoy = obtenerFechaHoyGuatemala();
     const out: EventoFlujo[] = [];
     for (const r of records) {

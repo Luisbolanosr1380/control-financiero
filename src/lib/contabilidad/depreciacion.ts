@@ -32,6 +32,11 @@
  */
 
 import { airtable } from '@/lib/db/airtable';
+import { dataSource } from '@/lib/config/data-source';
+import { fetchAll } from '@/lib/supabase/client';
+
+type RowSb = Record<string, unknown>;
+const atIdDep = (rel: unknown): string => String((rel as { airtable_id?: string } | null)?.airtable_id ?? '');
 import {
   ACTIVOS_FIJOS_TABLE_ID,
   ACTIVOS_FIJOS_FIELDS,
@@ -206,6 +211,27 @@ interface ActivoRaw {
 }
 
 async function leerActivos(): Promise<ActivoRaw[]> {
+  if (dataSource('activos_fijos') === 'supabase') {
+    const rows = await fetchAll<RowSb>('activos_fijos', {
+      select: '*, centro:centros_costo(airtable_id), cta_act:cuentas!activos_fijos_cuenta_activo_id_fkey(airtable_id), cta_dep:cuentas!activos_fijos_cuenta_depreciacion_id_fkey(airtable_id)',
+    });
+    return rows.map(r => ({
+      id: String(r.airtable_id),
+      nombre: String(r.nombre_activo ?? '').trim(),
+      categoria: String(r.categoria ?? '').trim(),
+      fechaAdquisicion: String(r.fecha_adquisicion ?? '').slice(0, 10),
+      costo: Number(r.costo ?? 0),
+      valorResidual: Number(r.valor_residual ?? 0),
+      vidaUtilMeses: Number(r.vida_util_meses ?? 0),
+      centroCostoId: atIdDep(r.centro) || undefined,
+      cuentaActivoId: atIdDep(r.cta_act) || undefined,
+      cuentaDepreciacionId: atIdDep(r.cta_dep) || undefined,
+      depreciacionAcumulada: Number(r.depreciacion_acumulada ?? 0),
+      tasaFiscalAnualPct: r.tasa_fiscal_anual === null || r.tasa_fiscal_anual === undefined ? null : Number(r.tasa_fiscal_anual),
+      depreciacionFiscalAcumulada: Number(r.depreciacion_fiscal_acum ?? 0),
+      estado: String(r.estado ?? '').trim(),
+    }));
+  }
   if (!airtable) return [];
   try {
     const records = await airtable(ACTIVOS_FIJOS_TABLE_ID)
@@ -247,6 +273,18 @@ interface CuentaMin {
 }
 
 async function leerCuentas(): Promise<Map<string, CuentaMin>> {
+  if (dataSource('cuentas') === 'supabase') {
+    const rows = await fetchAll<RowSb>('cuentas', { select: 'airtable_id, codigo_path, nombre' });
+    const m = new Map<string, CuentaMin>();
+    for (const r of rows) {
+      m.set(String(r.airtable_id), {
+        id: String(r.airtable_id),
+        codigo: String(r.codigo_path ?? '').trim(),
+        nombre: String(r.nombre ?? '').trim(),
+      });
+    }
+    return m;
+  }
   if (!airtable) return new Map();
   try {
     const records = await airtable(CUENTAS_TABLE_ID)
@@ -276,6 +314,12 @@ async function leerCuentas(): Promise<Map<string, CuentaMin>> {
  * Lee ASIENTOS y filtra en JS por field ID (ORIGEN + PERIODO).
  */
 async function existeAsientoDepreciacionEnPeriodo(periodo: string): Promise<boolean> {
+  if (dataSource('asientos') === 'supabase') {
+    const rows = await fetchAll<RowSb>('asientos', { select: 'origen, fecha_asiento' });
+    return rows.some(r =>
+      String(r.origen ?? '').trim() === ORIGEN_ASIENTO_DEPRECIACION &&
+      String(r.fecha_asiento ?? '').slice(0, 7) === periodo);
+  }
   if (!airtable) return false;
   try {
     const records = await airtable(ASIENTOS_TABLE_ID)
