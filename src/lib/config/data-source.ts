@@ -41,7 +41,10 @@ export type TablaMigrable =
   | 'mapeo_bs'
   // F-COBRANZA: bitácora de gestión de cobro — tabla NUEVA, nunca existió
   // en Airtable (reemplaza un Excel). El flag es solo kill-switch.
-  | 'gestiones_cobro';
+  | 'gestiones_cobro'
+  // F-ROADMAP: tablero de prioridades del dueño (solo admin). Tabla nueva;
+  // sus escrituras gatean por la operación 'sistema'.
+  | 'roadmap_items';
 
 export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   // Flipeadas con diff limpio (scripts/diff-datasource.ts, 2026-08-04):
@@ -68,6 +71,7 @@ export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   mapeo_er:                 'supabase',
   mapeo_bs:                 'supabase',
   gestiones_cobro:          'supabase',   // F-COBRANZA: nace en Supabase
+  roadmap_items:            'supabase',   // F-ROADMAP: nace en Supabase
 };
 
 /** Backend efectivo para una tabla (respeta el override del diff script). */

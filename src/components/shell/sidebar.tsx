@@ -90,6 +90,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
       { href: '/admin/usuarios',     label: 'Usuarios y AI',   icon: 'Users' },
       { href: '/admin/intercompany', label: 'Intercompany',    icon: 'Journal' },   // F-056.1
       { href: '/admin/catalogos',    label: 'Catálogos',       icon: 'Slider' },    // FIX-CLIENTES-ALTA
+      { href: '/admin/roadmap',      label: 'Roadmap',         icon: 'TrendUp' },   // F-ROADMAP
     ]});
   }
 
