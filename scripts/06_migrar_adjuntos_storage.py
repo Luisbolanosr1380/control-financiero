@@ -11,7 +11,7 @@ expiran; al desconectar la base, los PDFs se pierden. Este script:
   3. Guarda la URL nueva en la columna correspondiente.
 
 Idempotente/reanudable: salta filas que ya tienen *_url en Supabase.
-Uso: python3 scripts/06_migrar_adjuntos_storage.py [--solo facturas|planilla|cobros]
+Uso: python3 scripts/06_migrar_adjuntos_storage.py [--solo facturas|planilla|cobros|firmas]
 """
 
 import json
@@ -124,6 +124,10 @@ def main():
     if solo in (None, 'cobros'):
         errores += migrar('COBROS_CLIENTES', 'Constancia_Retencion', 'cobros_clientes',
                           'constancia_url', 'constancia_nombre', 'constancias')
+    if solo in (None, 'firmas'):
+        # FIX-FIRMA: firma digital del empleado (comprobante legal de boletas)
+        errores += migrar('EMPLEADOS', 'Firma_Digital', 'empleados',
+                          'firma_digital_url', 'firma_digital_nombre', 'firmas')
     print(f"\n{'✓ MIGRACIÓN DE ADJUNTOS COMPLETA' if errores == 0 else f'⚠ terminó con {errores} errores — re-correr (es reanudable)'}")
     sys.exit(0 if errores == 0 else 1)
 

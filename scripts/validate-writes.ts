@@ -357,7 +357,12 @@ async function main() {
       basura.push(['periodos', per.periodoId]);
       // línea sintética vinculada al período de prueba
       const perUuid = (await sb.from('periodos').select('id').eq('airtable_id', per.periodoId).single()).data!.id;
-      const empRow = await sb.from('empleados').select('id').limit(1).single();
+      // FIX-FIRMA: la línea usa el empleado TEST para poder probar la boleta
+      // con firma sin tocar empleados reales.
+      const empTestId = emp.ok ? emp.empleadoId! : '';
+      const empRow = empTestId
+        ? await sb.from('empleados').select('id').eq('airtable_id', empTestId).single()
+        : await sb.from('empleados').select('id').limit(1).single();
       const lineaIns = await sb.from('planilla').insert({
         airtable_id: `${marca}-lin`, periodo_id: perUuid, empleado_id: empRow.data!.id,
         ordinario: 1000, neto_pagar: 1000, estado_pago: 'Pendiente',
@@ -372,6 +377,33 @@ async function main() {
       check(pago.ok === true, `registrarPagoEmpleado (${pago.ok ? 'ok' : pago.error})`);
       const { data: perFin } = await sb.from('periodos').select('estado, pagado_por').eq('airtable_id', per.periodoId).single();
       check(perFin?.estado === 'Cerrada' && !!perFin?.pagado_por, `período auto-Cerrada al concluir todas las líneas ('${perFin?.estado}')`);
+
+      /* ════ 3.4 FIX-FIRMA: firma → Storage → boleta CON firma ════ */
+      console.log('\n══ 3.4 FIX-FIRMA (firma digital → Storage → boleta con firma) ══');
+      if (emp.ok) {
+        const { FIRMA_EMPLEADO_FIELD } = await import('../src/lib/db/attachments');
+        // PNG 1×1 válido (para el embedPng de pdf-lib).
+        const png = Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+          'base64');
+        try {
+          await uploadAttachment(emp.empleadoId!, FIRMA_EMPLEADO_FIELD, 'firma-test.png', 'image/png', png);
+          const { data: fRow } = await sb.from('empleados').select('firma_digital_url').eq('airtable_id', emp.empleadoId!).single();
+          const furl = String(fRow?.firma_digital_url ?? '');
+          check(furl.includes('/adjuntos/firmas/'), `firma subida a Storage y URL en columna`);
+          const resp = await fetch(furl);
+          const bytes = Buffer.from(await resp.arrayBuffer());
+          check(resp.ok && bytes[0] === 0x89 && bytes[1] === 0x50, 'la URL pública devuelve el PNG de la firma');
+          const { generarBoletaPago } = await import('../src/lib/boletas/generar-boleta');
+          const gen = await generarBoletaPago(`${marca}-lin`, 'validador@test');
+          check(gen.ok === true && gen.conFirma === true && (gen.pdf?.length ?? 0) > 1000,
+            `boleta generada CON firma embebida desde Supabase (${gen.ok ? `${gen.pdf?.length} bytes, conFirma=${gen.conFirma}` : gen.error})`);
+        } catch (err) {
+          badLog(`FIX-FIRMA: ${err instanceof Error ? err.message : err} — ¿corriste los ALTER de firma_digital_url en 03_fase2_gaps.sql?`);
+        }
+      } else {
+        badLog('FIX-FIRMA: sin empleado TEST (falló 3.2) — no se pudo probar la boleta con firma');
+      }
     }
   } finally {
     /* ════════ cleanup (orden inverso por FKs) ════════ */

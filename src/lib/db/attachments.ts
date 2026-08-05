@@ -38,13 +38,15 @@ export async function uploadAttachment(
   // PDF se adjunte en otro ("id no encontrado" por backends cruzados).
   const { writeSource } = await import('@/lib/config/data-source');
   const destinos: Record<string, {
-    op: 'facturacion' | 'cobros' | 'planilla' | 'gastos';
-    carpeta: 'facturas' | 'boletas' | 'constancias' | 'facturas-in';
+    op: 'facturacion' | 'cobros' | 'planilla' | 'gastos' | 'empleados';
+    carpeta: 'facturas' | 'boletas' | 'constancias' | 'facturas-in' | 'firmas';
     tabla: string; colUrl: string; colNombre: string;
   }> = {
-    [ADJUNTO_FIELD_ID]:    { op: 'facturacion', carpeta: 'facturas',    tabla: 'facturas_clientes', colUrl: 'adjunto_url',    colNombre: 'adjunto_nombre' },
-    [CONSTANCIA_FIELD_ID]: { op: 'cobros',      carpeta: 'constancias', tabla: 'cobros_clientes',   colUrl: 'constancia_url', colNombre: 'constancia_nombre' },
-    [BOLETA_FIELD_ID]:     { op: 'planilla',    carpeta: 'boletas',     tabla: 'planilla',          colUrl: 'boleta_url',     colNombre: 'boleta_nombre' },
+    [ADJUNTO_FIELD_ID]:     { op: 'facturacion', carpeta: 'facturas',    tabla: 'facturas_clientes', colUrl: 'adjunto_url',        colNombre: 'adjunto_nombre' },
+    [CONSTANCIA_FIELD_ID]:  { op: 'cobros',      carpeta: 'constancias', tabla: 'cobros_clientes',   colUrl: 'constancia_url',     colNombre: 'constancia_nombre' },
+    [BOLETA_FIELD_ID]:      { op: 'planilla',    carpeta: 'boletas',     tabla: 'planilla',          colUrl: 'boleta_url',         colNombre: 'boleta_nombre' },
+    // FIX-FIRMA: comprobante legal de las boletas.
+    [FIRMA_EMPLEADO_FIELD]: { op: 'empleados',   carpeta: 'firmas',      tabla: 'empleados',         colUrl: 'firma_digital_url',  colNombre: 'firma_digital_nombre' },
   };
   const destino = destinos[fieldId];
   if (destino && writeSource(destino.op) === 'supabase') {

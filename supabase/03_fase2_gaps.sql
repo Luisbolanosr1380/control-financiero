@@ -63,3 +63,8 @@ create table if not exists analisis_ai (
     costo_usd     numeric(10,4),
     created_at    timestamptz default now()
 );
+
+-- ═══ FIX-FIRMA: firma digital del empleado (comprobante legal en boletas) ═══
+-- Vivía como attachment en EMPLEADOS de Airtable (URLs que expiran).
+alter table empleados add column if not exists firma_digital_url text;
+alter table empleados add column if not exists firma_digital_nombre text;

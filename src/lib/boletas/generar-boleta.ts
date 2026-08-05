@@ -324,10 +324,13 @@ export interface GenerarBoletaResult {
   pdf?: Buffer;
   empleadoNombre?: string;
   periodoNombre?: string;
+  /** FIX-FIRMA: true si la boleta salió con la firma digital embebida. */
+  conFirma?: boolean;
   error?: string;
 }
 
 export async function generarBoletaPago(lineaId: string, generadoPor: string): Promise<GenerarBoletaResult> {
+  let resultadoConFirma = false;
   try {
     // Buscar la línea por ID — getPeriodoPorId no acepta lineaId, así que
     // recorremos: traemos todos los períodos hasta encontrar la línea.
@@ -350,8 +353,9 @@ export async function generarBoletaPago(lineaId: string, generadoPor: string): P
     const empleado = await getEmpleadoPorId(lineaEncontrada.empleadoId);
     if (!empleado) return { ok: false, error: 'Empleado no encontrado.' };
 
-    // Firma digital (opcional, fail-soft).
+    // Firma digital (opcional; el download sigue fail-soft).
     const firmaUrl = await obtenerFirmaUrl(empleado.id);
+    resultadoConFirma = !!firmaUrl;
 
     const doc = await PDFDocument.create();
     const page = doc.addPage([PAGE_W, PAGE_H]);
@@ -377,14 +381,31 @@ export async function generarBoletaPago(lineaId: string, generadoPor: string): P
       pdf: Buffer.from(pdfBytes),
       empleadoNombre: empleado.nombre,
       periodoNombre: periodoEncontrado.nombre,
+      conFirma: resultadoConFirma,
     };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }
 
-/** Lee la URL de la firma digital del empleado desde Airtable, si existe. Fail-soft. */
+/** Lee la URL de la firma digital del empleado. FIX-FIRMA: en modo Supabase
+ *  viene de empleados.firma_digital_url (Storage — URL estable, comprobante
+ *  legal). El fail-soft queda SOLO para el download de la imagen, no para
+ *  la fuente. */
 async function obtenerFirmaUrl(empleadoId: string): Promise<string | undefined> {
+  const { dataSource } = await import('@/lib/config/data-source');
+  if (dataSource('empleados') === 'supabase') {
+    const { supabase } = await import('@/lib/supabase/client');
+    const sb = supabase();
+    if (!sb) return undefined;
+    const { data, error } = await sb.from('empleados')
+      .select('firma_digital_url').eq('airtable_id', empleadoId).limit(1);
+    if (error) {
+      console.warn('FIX-FIRMA: lectura de firma falló:', error.message);
+      return undefined;
+    }
+    return (data?.[0] as { firma_digital_url?: string | null } | undefined)?.firma_digital_url ?? undefined;
+  }
   try {
     const { airtable, TABLES } = await import('@/lib/db/airtable');
     if (!airtable) return undefined;

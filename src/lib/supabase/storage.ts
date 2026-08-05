@@ -19,7 +19,7 @@ function sanitizarNombre(nombre: string): string {
 }
 
 export async function subirAdjuntoStorage(args: {
-  carpeta: 'facturas' | 'facturas-in' | 'boletas' | 'constancias';
+  carpeta: 'facturas' | 'facturas-in' | 'boletas' | 'constancias' | 'firmas';
   recordAppId: string;
   filename: string;
   contentType: string;
