@@ -6,7 +6,9 @@
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { obtenerFechaHoyGuatemala } from '../utils/fechas';
-import { dataSource } from '../config/data-source';
+import { dataSource, writeSource } from '../config/data-source';
+import { insertar, actualizarPorAppId, uuidRequerido, uuidOpcional } from '../supabase/writes';
+import { supabase } from '../supabase/client';
 import {
   sbAcreedoresRecords,
   sbCentrosCostoRecords,
@@ -646,7 +648,7 @@ function calcularFechaVencimiento(args: { fechaEmision: string; plazoMeses?: num
 }
 
 export async function crearDeuda(input: CrearDeudaInput): Promise<CrearDeudaResult> {
-  if (USE_MOCK || !airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if ((USE_MOCK || !airtable) && writeSource('deudas') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
 
   // Validaciones críticas
   if (!input.acreedorId)           return { ok: false, error: 'Acreedor es requerido.' };
@@ -677,6 +679,56 @@ export async function crearDeuda(input: CrearDeudaInput): Promise<CrearDeudaResu
   // Nombre de la deuda: usa el explícito, o construye uno legible
   const nombreDeuda = input.nombreDeuda?.trim() || (input.numeroFactura?.trim() ? `${input.tipoDocumento} ${input.numeroFactura.trim()}` : `${input.tipoDocumento} ${input.fechaEmision}`);
 
+  // ═══ FASE 3 — DEUDA EN SUPABASE ═══
+  if (writeSource('deudas') === 'supabase') {
+    try {
+      const tc = input.tipoCambio ?? 1;
+      const montoGtq = Math.round(input.montoOriginal * tc * 100) / 100;
+      const res = await insertar('deudas', {
+        // la fórmula Clave_Deuda de Airtable era ACREEDOR|FECHA|MONTO
+        clave_deuda: `${(ac.nombre || ac.nombreLegal).toUpperCase()}|${input.fechaEmision || 'SIN-FECHA'}|${input.montoOriginal}`,
+        acreedor_id: await uuidRequerido('acreedores', input.acreedorId, 'crearDeuda'),
+        nombre_deuda: nombreDeuda,
+        tipo_documento: input.tipoDocumento,
+        estado: 'Pendiente',
+        estado_deuda: 'Vigente',
+        fecha_emision: input.fechaEmision,
+        moneda: input.moneda === 'USD' ? 'USD' : 'GTQ',
+        tipo_cambio: tc,
+        monto_original: input.montoOriginal,
+        monto_gtq: montoGtq,
+        saldo_pendiente: montoGtq,
+        no_incluir: false,
+        centro_costo_id: input.centroCostoId ? await uuidOpcional('centros_costo', input.centroCostoId) : null,
+        notas: input.notas?.trim() || null,
+        fecha_vencimiento: fechaVenc,
+        // la fórmula Fecha_Vencimiento_Real caía al vencimiento explícito
+        fecha_vencimiento_real: fechaVenc,
+        plazo_meses: input.plazoMeses ?? null,
+        fecha_primer_cuota: input.fechaPrimerCuota || null,
+        tasa_interes: typeof input.tasaInteresAnual === 'number' ? String(input.tasaInteresAnual) : null,
+        interes_anual_pct: input.tasaInteresAnual ?? null,
+        dia_pago_fijo: input.diaPagoFijo ?? null,
+        tasa_comision_pct: input.tasaComision ?? null,
+        reserva_pct: input.reserva ?? null,
+        con_recurso: input.conRecurso ?? false,
+        // Numero/Serie de Airtable no tienen columna: el nº de factura vive
+        // en referencia_externa (documentado en ROADMAP). IVA_Comision_% se
+        // omite (sin columna, no lo lee nadie).
+        referencia_externa: input.numeroFactura?.trim() || null,
+      });
+      return {
+        ok: true,
+        deudaId: res.airtable_id,
+        mensaje: `Deuda "${nombreDeuda}" creada (saldo inicial Q${input.montoOriginal.toFixed(2)}).`,
+      };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Error creando deuda (supabase):', msg);
+      return { ok: false, error: `No se pudo crear la deuda en Supabase: ${msg}` };
+    }
+  }
+
   try {
     type AField = string | number | boolean | string[] | undefined;
     const fields: Record<string, AField> = {
@@ -703,7 +755,7 @@ export async function crearDeuda(input: CrearDeudaInput): Promise<CrearDeudaResu
     if (typeof input.conRecurso === 'boolean')      fields[FD.CON_RECURSO]   = input.conRecurso;
     if (input.numeroFactura?.trim())                fields[FD.NUMERO]        = input.numeroFactura.trim();
 
-    const created = await airtable(TABLES.DEUDAS).create(fields);
+    const created = await airtable!(TABLES.DEUDAS).create(fields);
     return {
       ok: true,
       deudaId: created.id,
@@ -717,7 +769,7 @@ export async function crearDeuda(input: CrearDeudaInput): Promise<CrearDeudaResu
 }
 
 export async function editarDeuda(deudaId: string, input: EditarDeudaInput): Promise<EditarDeudaResult> {
-  if (USE_MOCK || !airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if ((USE_MOCK || !airtable) && writeSource('deudas') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!deudaId) return { ok: false, error: 'deudaId es requerido.' };
 
   // Cargar la deuda actual para validaciones
@@ -764,6 +816,49 @@ export async function editarDeuda(deudaId: string, input: EditarDeudaInput): Pro
     return { ok: false, error: 'La fecha de vencimiento no puede ser anterior a la emisión.' };
   }
 
+  // ═══ FASE 3 ═══
+  if (writeSource('deudas') === 'supabase') {
+    try {
+      const sb = supabase();
+      if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+      const cambios: Record<string, unknown> = {};
+      if (input.acreedorId)            cambios.acreedor_id = await uuidRequerido('acreedores', input.acreedorId, 'editarDeuda');
+      if (input.nombreDeuda)           cambios.nombre_deuda = input.nombreDeuda.trim();
+      if (input.tipoDocumento)         cambios.tipo_documento = input.tipoDocumento;
+      if (input.centroCostoId)         cambios.centro_costo_id = await uuidRequerido('centros_costo', input.centroCostoId, 'editarDeuda');
+      if (input.fechaEmision)          cambios.fecha_emision = input.fechaEmision;
+      if (input.moneda)                cambios.moneda = input.moneda === 'USD' ? 'USD' : 'GTQ';
+      if (input.tipoCambio !== undefined) cambios.tipo_cambio = input.tipoCambio;
+      if (input.montoOriginal !== undefined) cambios.monto_original = input.montoOriginal;
+      if (input.notas !== undefined)   cambios.notas = input.notas.trim();
+      if (fechaVencFinal !== null)     { cambios.fecha_vencimiento = fechaVencFinal; cambios.fecha_vencimiento_real = fechaVencFinal; }
+      if (input.plazoMeses !== undefined) cambios.plazo_meses = input.plazoMeses;
+      if (input.fechaPrimerCuota)      cambios.fecha_primer_cuota = input.fechaPrimerCuota;
+      if (input.tasaInteresAnual !== undefined) { cambios.tasa_interes = String(input.tasaInteresAnual); cambios.interes_anual_pct = input.tasaInteresAnual; }
+      if (input.diaPagoFijo !== undefined)   cambios.dia_pago_fijo = input.diaPagoFijo;
+      if (input.tasaComision !== undefined)  cambios.tasa_comision_pct = input.tasaComision;
+      if (input.reserva !== undefined)       cambios.reserva_pct = input.reserva;
+      if (input.conRecurso !== undefined)    cambios.con_recurso = input.conRecurso;
+      if (input.numeroFactura !== undefined) cambios.referencia_externa = input.numeroFactura.trim();
+      if (Object.keys(cambios).length === 0) {
+        return { ok: false, error: 'No se especificó ningún campo a editar.' };
+      }
+      // recomputar montos materializados si cambia monto o TC
+      if ('monto_original' in cambios || 'tipo_cambio' in cambios) {
+        const monto = Number(cambios.monto_original ?? deuda.montoOriginal);
+        const tc = Number(cambios.tipo_cambio ?? 1);
+        const montoGtq = Math.round(monto * tc * 100) / 100;
+        cambios.monto_gtq = montoGtq;
+        cambios.saldo_pendiente = Math.max(0, montoGtq - deuda.totalPagado);
+      }
+      await actualizarPorAppId('deudas', deudaId, cambios);
+      return { ok: true, mensaje: 'Deuda actualizada.' };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `No se pudo actualizar la deuda en Supabase: ${msg}` };
+    }
+  }
+
   try {
     type AField = string | number | boolean | string[] | undefined;
     const fields: Record<string, AField> = {};
@@ -794,7 +889,7 @@ export async function editarDeuda(deudaId: string, input: EditarDeudaInput): Pro
       return { ok: false, error: 'No se especificó ningún campo a editar.' };
     }
 
-    await airtable(TABLES.DEUDAS).update(deudaId, fields);
+    await airtable!(TABLES.DEUDAS).update(deudaId, fields);
     return { ok: true, mensaje: 'Deuda actualizada.' };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -805,12 +900,23 @@ export async function editarDeuda(deudaId: string, input: EditarDeudaInput): Pro
 
 /** Borra una deuda (uso administrativo / tests). Bloquea si tiene pagos. */
 export async function eliminarDeuda(deudaId: string): Promise<{ ok: boolean; error?: string }> {
-  if (USE_MOCK || !airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if ((USE_MOCK || !airtable) && writeSource('deudas') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   const deuda = await getDeudaPorId(deudaId);
   if (!deuda) return { ok: false, error: 'No se encontró la deuda.' };
   if (deuda.numPagos > 0) return { ok: false, error: `No se puede borrar: la deuda tiene ${deuda.numPagos} pago(s).` };
+  if (writeSource('deudas') === 'supabase') {
+    try {
+      const sb = supabase();
+      if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+      const { error } = await sb.from('deudas').delete().eq('airtable_id', deudaId);
+      if (error) return { ok: false, error: error.message };
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
   try {
-    await airtable(TABLES.DEUDAS).destroy(deudaId);
+    await airtable!(TABLES.DEUDAS).destroy(deudaId);
     return { ok: true };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };

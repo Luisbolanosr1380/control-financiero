@@ -7,6 +7,8 @@
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { getAcreedores, type Acreedor } from './deudas';
+import { writeSource } from '../config/data-source';
+import { insertar } from '../supabase/writes';
 
 // Opciones del singleSelect Tipo_Acreedor (ACREEDORES). Snapshot de Airtable.
 // F-037: 'Empleado' agregado para vincular ACREEDORES auto-generados a empleados
@@ -89,7 +91,7 @@ export type CrearAcreedorResult =
 const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
 export async function crearAcreedor(input: CrearAcreedorInput): Promise<CrearAcreedorResult> {
-  if (USE_MOCK || !airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if ((USE_MOCK || !airtable) && writeSource('deudas') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
 
   const nombre = (input.nombreAcreedor ?? '').trim();
   if (!nombre)                return { ok: false, error: 'Nombre del acreedor es requerido.' };
@@ -105,7 +107,31 @@ export async function crearAcreedor(input: CrearAcreedorInput): Promise<CrearAcr
   // 2) Si es Socio, forzar Es_Parte_Relacionada=true.
   const esParteRelacionada = input.esParteRelacionada || input.tipoAcreedor === 'Socio';
 
-  // 3) Crear record en ACREEDORES.
+  // ═══ FASE 3 — ACREEDOR EN SUPABASE ═══
+  if (writeSource('deudas') === 'supabase') {
+    try {
+      const legal = input.acreedorNombreLegal?.trim() || nombre;
+      const res = await insertar('acreedores', {
+        // fórmula Nombre_Acreedor de Airtable: `legal — tipoProducto`
+        nombre_acreedor: `${legal} — ${input.tipoProducto ?? ''}`.trim(),
+        nombre_legal: legal,
+        tipo_acreedor: input.tipoAcreedor,
+        tipo_producto: input.tipoProducto ?? null,
+        es_parte_relacionada: esParteRelacionada,
+        moneda: input.moneda === 'USD' ? 'USD' : 'GTQ',
+        estatus: 'Activo',
+        nit: input.nit?.trim() || null,
+        email: input.email?.trim() || null,
+        telefono: input.telefono?.trim() || null,
+        notas: input.notas?.trim() || null,
+      });
+      return { ok: true, acreedorId: res.airtable_id, mensaje: `Acreedor "${nombre}" creado.` };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `No se pudo crear el acreedor en Supabase: ${msg}` };
+    }
+  }
+
   try {
     type AField = string | number | boolean | string[] | undefined;
     const fields: Record<string, AField> = {
@@ -121,7 +147,7 @@ export async function crearAcreedor(input: CrearAcreedorInput): Promise<CrearAcr
     if (input.telefono?.trim())    fields[FA_WRITE.TELEFONO]      = input.telefono.trim();
     if (input.notas?.trim())       fields[FA_WRITE.NOTAS]         = input.notas.trim();
 
-    const created = await airtable(TABLES.ACREEDORES).create(fields);
+    const created = await airtable!(TABLES.ACREEDORES).create(fields);
     return {
       ok: true,
       acreedorId: created.id,

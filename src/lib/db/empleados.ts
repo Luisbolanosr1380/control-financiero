@@ -13,8 +13,10 @@
  */
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
-import { dataSource } from '../config/data-source';
+import { dataSource, writeSource } from '../config/data-source';
 import { sbEmpleadosRecords } from '../supabase/records';
+import { insertar, actualizarPorAppId, uuidRequerido, uuidOpcional } from '../supabase/writes';
+import { supabase } from '../supabase/client';
 import { getCentrosCosto } from './centros';
 import { getBancos } from './bancos';
 import { getDeudas, type Deuda } from './deudas';
@@ -31,6 +33,11 @@ import {
 } from '../empleados/empresa';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+// FASE 3: 'Salario Mensual' era fórmula en Airtable (actual + bonificación
+// + bono variable) — en Supabase se materializa al escribir.
+const salarioMensualDe = (salario: number, bonif: number, bonoVar: number) =>
+  round2((salario || 0) + (bonif || 0) + (bonoVar || 0));
 
 /* ============================================================
  * Tipos públicos
@@ -564,11 +571,38 @@ export type EmpleadoMutationResult =
   | { ok: false; error: string };
 
 export async function crearEmpleado(input: CrearEmpleadoInput): Promise<EmpleadoMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('empleados') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   const nombre = (input.nombre ?? '').trim();
   if (!nombre)              return { ok: false, error: 'Nombre es requerido.' };
   if (!input.fechaIngreso)  return { ok: false, error: 'Fecha de ingreso es requerida.' };
   if (!(input.salarioBase > 0)) return { ok: false, error: 'Salario base debe ser mayor a 0.' };
+
+  // ═══ FASE 3 — EMPLEADO EN SUPABASE ═══
+  if (writeSource('empleados') === 'supabase') {
+    try {
+      const res = await insertar('empleados', {
+        nombre,
+        fecha_ingreso: input.fechaIngreso,
+        status_laborando: 'ACTIVO',
+        salario_actual: input.salarioBase,
+        bonificacion: input.bonificacionIncentivo ?? null,
+        bono_variable: input.bonoVariable ?? null,
+        salario_mensual: salarioMensualDe(input.salarioBase, input.bonificacionIncentivo ?? 0, input.bonoVariable ?? 0),
+        no_documento: input.numeroDocumento?.trim() || null,
+        departamento: input.departamento ?? null,
+        centro_costo_id: input.centroCostoId ? await uuidRequerido('centros_costo', input.centroCostoId, 'crearEmpleado') : null,
+        sede: input.sede ?? null,
+        id_puesto: input.idPuesto ?? null,
+        tipo_contrato: input.tipoContrato ?? null,
+        // el mapper de lectura espera el record-id del banco en este campo
+        banco: input.bancoId ?? null,
+        cuenta_bancaria: input.cuentaBancaria ?? null,
+      });
+      return { ok: true, empleadoId: res.airtable_id, mensaje: `Empleado ${nombre} creado.` };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
 
   try {
     type AField = string | number | string[] | undefined;
@@ -588,7 +622,7 @@ export async function crearEmpleado(input: CrearEmpleadoInput): Promise<Empleado
     if (input.bancoId)                fields[FE.BANCO]        = input.bancoId;
     if (input.cuentaBancaria)         fields[FE.CUENTA]       = input.cuentaBancaria;
 
-    const created = await airtable(TABLES.EMPLEADOS).create(fields);
+    const created = await airtable!(TABLES.EMPLEADOS).create(fields);
     return { ok: true, empleadoId: created.id, mensaje: `Empleado ${nombre} creado.` };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -596,7 +630,49 @@ export async function crearEmpleado(input: CrearEmpleadoInput): Promise<Empleado
 }
 
 export async function editarEmpleado(id: string, input: EditarEmpleadoInput): Promise<EmpleadoMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('empleados') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
+
+  // ═══ FASE 3 ═══
+  if (writeSource('empleados') === 'supabase') {
+    try {
+      const sb = supabase();
+      if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+      const { data: filas } = await sb.from('empleados')
+        .select('salario_actual, bonificacion, bono_variable').eq('airtable_id', id).limit(1);
+      if (!filas || filas.length === 0) return { ok: false, error: 'Empleado no encontrado.' };
+      const actual = filas[0] as { salario_actual: number | null; bonificacion: number | null; bono_variable: number | null };
+
+      const cambios: Record<string, unknown> = {};
+      if (input.nombre?.trim())          cambios.nombre = input.nombre.trim();
+      if (input.fechaIngreso)            cambios.fecha_ingreso = input.fechaIngreso;
+      if (input.status)                  cambios.status_laborando = input.status;
+      if (typeof input.salarioBase === 'number') cambios.salario_actual = input.salarioBase;
+      if (input.numeroDocumento)         cambios.no_documento = input.numeroDocumento.trim();
+      if (input.departamento)            cambios.departamento = input.departamento;
+      if (input.centroCostoId)           cambios.centro_costo_id = await uuidRequerido('centros_costo', input.centroCostoId, 'editarEmpleado');
+      if (input.idPuesto)                cambios.id_puesto = input.idPuesto;
+      if (input.tipoContrato)            cambios.tipo_contrato = input.tipoContrato;
+      if (typeof input.bonificacionIncentivo === 'number') cambios.bonificacion = input.bonificacionIncentivo;
+      if (typeof input.bonoVariable === 'number')           cambios.bono_variable = input.bonoVariable;
+      if (input.bancoId)                 cambios.banco = input.bancoId;
+      if (input.cuentaBancaria)          cambios.cuenta_bancaria = input.cuentaBancaria;
+      if (Object.keys(cambios).length === 0) return { ok: false, error: 'Sin cambios.' };
+
+      // recomputar la fórmula materializada si cambió algún componente
+      if ('salario_actual' in cambios || 'bonificacion' in cambios || 'bono_variable' in cambios) {
+        cambios.salario_mensual = salarioMensualDe(
+          Number(cambios.salario_actual ?? actual.salario_actual ?? 0),
+          Number(cambios.bonificacion ?? actual.bonificacion ?? 0),
+          Number(cambios.bono_variable ?? actual.bono_variable ?? 0),
+        );
+      }
+      await actualizarPorAppId('empleados', id, cambios);
+      return { ok: true, empleadoId: id, mensaje: 'Empleado actualizado.' };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   try {
     type AField = string | number | string[] | undefined;
     const fields: Record<string, AField> = {};
@@ -616,7 +692,7 @@ export async function editarEmpleado(id: string, input: EditarEmpleadoInput): Pr
 
     if (Object.keys(fields).length === 0) return { ok: false, error: 'Sin cambios.' };
 
-    await airtable(TABLES.EMPLEADOS).update([{ id, fields }]);
+    await airtable!(TABLES.EMPLEADOS).update([{ id, fields }]);
     return { ok: true, empleadoId: id, mensaje: 'Empleado actualizado.' };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -635,11 +711,23 @@ export async function darDeBajaEmpleado(
   motivoSalida: string,
   nuevoStatus: StatusEmpleado = 'INACTIVO',
 ): Promise<EmpleadoMutationResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('empleados') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!fechaSalida) return { ok: false, error: 'Fecha de salida es requerida.' };
   if (!motivoSalida?.trim()) return { ok: false, error: 'Motivo de salida es requerido.' };
+  if (writeSource('empleados') === 'supabase') {
+    try {
+      await actualizarPorAppId('empleados', id, {
+        status_laborando: nuevoStatus,
+        fecha_salida: fechaSalida,
+        motivo_salida: motivoSalida.trim(),
+      });
+      return { ok: true, empleadoId: id, mensaje: 'Empleado dado de baja.' };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
   try {
-    await airtable(TABLES.EMPLEADOS).update([{
+    await airtable!(TABLES.EMPLEADOS).update([{
       id,
       fields: {
         [FE.STATUS]:     nuevoStatus,
@@ -662,13 +750,31 @@ export async function darDeBajaEmpleado(
  * Tipo_Acreedor='Empleado' y vincula el ID al empleado (Acreedor_Vinculado).
  */
 export async function obtenerOCrearAcreedorEmpleado(empleadoId: string): Promise<{ ok: true; acreedorId: string; creado: boolean } | { ok: false; error: string }> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('empleados') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   try {
     const empleado = await getEmpleadoPorId(empleadoId);
     if (!empleado) return { ok: false, error: 'Empleado no encontrado.' };
 
     if (empleado.acreedorVinculadoId) {
       return { ok: true, acreedorId: empleado.acreedorVinculadoId, creado: false };
+    }
+
+    // ═══ FASE 3 ═══
+    if (writeSource('empleados') === 'supabase') {
+      const res = await insertar('acreedores', {
+        // la fórmula Nombre_Acreedor de Airtable era `legal — tipoProducto`
+        nombre_acreedor: `${empleado.nombre} —`,
+        nombre_legal: empleado.nombre,
+        tipo_acreedor: 'Empleado',
+        es_parte_relacionada: false,
+        moneda: 'GTQ',
+        estatus: 'Activo',
+        notas: `Acreedor auto-generado para empleado ${empleado.nombre} — F-037.`,
+      });
+      await actualizarPorAppId('empleados', empleadoId, {
+        acreedor_vinculado_id: await uuidRequerido('acreedores', res.airtable_id, 'acreedorEmpleado'),
+      });
+      return { ok: true, acreedorId: res.airtable_id, creado: true };
     }
 
     // Crear acreedor directo en Airtable (saltamos crearAcreedor() porque
@@ -684,11 +790,11 @@ export async function obtenerOCrearAcreedorEmpleado(empleadoId: string): Promise
       'Estatus':               'Activo',
       'Notas':                 `Acreedor auto-generado para empleado ${empleado.nombre} — F-037.`,
     };
-    const createdAc = await airtable(TABLES.ACREEDORES).create(acFields);
+    const createdAc = await airtable!(TABLES.ACREEDORES).create(acFields);
     const acreedorId = createdAc.id;
 
     // Vincular en EMPLEADOS.Acreedor_Vinculado
-    await airtable(TABLES.EMPLEADOS).update([{
+    await airtable!(TABLES.EMPLEADOS).update([{
       id: empleadoId,
       fields: { [FE.ACREEDOR_VIN]: [acreedorId] },
     }]);
@@ -723,7 +829,7 @@ export async function crearDeudaSalarioPendiente(
   fechaQuincena: string,
   notas?: string,
 ): Promise<CrearDeudaSalarialResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('empleados') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!(monto > 0)) return { ok: false, error: 'El monto debe ser mayor a 0.' };
   if (!fechaQuincena) return { ok: false, error: 'Fecha de la quincena requerida.' };
 
@@ -732,6 +838,39 @@ export async function crearDeudaSalarioPendiente(
 
   const empleado = await getEmpleadoPorId(empleadoId);
   if (!empleado) return { ok: false, error: 'Empleado no encontrado.' };
+
+  // ═══ FASE 3 ═══
+  if (writeSource('empleados') === 'supabase') {
+    try {
+      const nombreDeuda = `Quincena diferida ${fechaQuincena} · ${empleado.nombre}`;
+      const res = await insertar('deudas', {
+        clave_deuda: `${empleado.nombre.toUpperCase()} —|${fechaQuincena}|${monto}`,
+        acreedor_id: await uuidRequerido('acreedores', acRes.acreedorId, 'deudaSalarial'),
+        nombre_deuda: nombreDeuda,
+        tipo_documento: 'Salario Pendiente',
+        estado: 'Pendiente',
+        estado_deuda: 'Vigente',
+        fecha_emision: fechaQuincena,
+        moneda: 'GTQ',
+        tipo_cambio: 1,
+        monto_original: monto,
+        monto_gtq: monto,
+        saldo_pendiente: monto,
+        no_incluir: false,
+        centro_costo_id: empleado.centroCostoId ? await uuidOpcional('centros_costo', empleado.centroCostoId) : null,
+        notas: notas?.trim() || null,
+      });
+      return {
+        ok: true,
+        deudaId: res.airtable_id,
+        acreedorId: acRes.acreedorId,
+        acreedorCreado: acRes.creado,
+        mensaje: `Deuda salarial creada (Q${monto.toFixed(2)}) — ${empleado.nombre}.`,
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
 
   try {
     type AField = string | number | boolean | string[] | undefined;
@@ -749,7 +888,7 @@ export async function crearDeudaSalarioPendiente(
     if (empleado.centroCostoId)  fields['Centro_Costo'] = [empleado.centroCostoId];
     if (notas?.trim())           fields['Notas']        = notas.trim();
 
-    const created = await airtable(TABLES.DEUDAS).create(fields);
+    const created = await airtable!(TABLES.DEUDAS).create(fields);
     return {
       ok: true,
       deudaId: created.id,
