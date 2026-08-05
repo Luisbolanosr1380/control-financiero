@@ -74,18 +74,45 @@ export function dataSource(tabla: TablaMigrable): Backend {
  * ════════════════════════════════════════════════════════════════ */
 
 export type OperacionEscritura =
-  | 'cobros'      // registrar/anular cobro + estado de factura
-  | 'pagos'       // registrar/anular pago a deuda
-  | 'gastos'      // bandeja facturas_in + aprobar (gasto+asiento+partidas)
-  | 'planilla'    // asiento de planilla (F-056.2)
-  | 'adjuntos';   // subida de PDFs (facturas, boletas, constancias)
+  | 'cobros'        // registrar/anular cobro + estado de factura
+  | 'pagos'         // registrar/anular pago a deuda
+  | 'gastos'        // bandeja facturas_in + aprobar (gasto+asiento+partidas)
+  | 'planilla'      // asiento F-056.2 + workflow (períodos, líneas, boletas)
+  | 'facturacion'   // emitir/editar/anular factura de venta + notas de crédito
+  | 'empleados'     // CRUD empleados + acreedor vinculado + deuda salarial
+  | 'deudas'        // CRUD deudas + crear acreedor
+  | 'obligaciones'  // CRUD obligaciones recurrentes
+  | 'sistema';      // uso_auros, ayuda (contenido/logs)
 
+/**
+ * FASE 3 — DEPENDENCIA CRÍTICA adjuntos ↔ registro padre:
+ * los adjuntos NO tienen flag propio. `uploadAttachment` usa SIEMPRE el
+ * backend de la operación dueña del registro destino (PDF de factura →
+ * 'facturacion', constancia → 'cobros', boleta → 'planilla', PDF de
+ * factura_in → 'gastos'). Así es IMPOSIBLE el cruce de backends
+ * ("id no encontrado" por crear en uno y adjuntar en otro).
+ *
+ * ACOPLAMIENTO lectura/escritura: con la lectura 14/14 en 'supabase',
+ * una operación que escriba en 'airtable' produce registros INVISIBLES
+ * para la app. Rollback de una operación = volver su WRITE_SOURCE y las
+ * lecturas de sus tablas a 'airtable' EN PAREJA.
+ * Acoplamientos entre operaciones: 'planilla' (diferir) crea deudas vía
+ * 'empleados'/'deudas'; flipear esas tres juntas.
+ */
+// Flipeadas 2026-08-04 con validate-writes.ts 49/49 🟢 (staging real con
+// registros de prueba: atomicidad, idempotencia, balance, adjunto-de-una).
+// El pase final en navegador es el gate humano; rollback por operación =
+// esta línea a 'airtable' + las lecturas de sus tablas en pareja.
 export const WRITE_SOURCE: Record<OperacionEscritura, Backend> = {
-  cobros:   'airtable',
-  pagos:    'airtable',
-  gastos:   'airtable',
-  planilla: 'airtable',
-  adjuntos: 'airtable',
+  cobros:       'supabase',
+  pagos:        'supabase',
+  gastos:       'supabase',
+  planilla:     'supabase',
+  facturacion:  'supabase',
+  empleados:    'supabase',
+  deudas:       'supabase',
+  obligaciones: 'supabase',
+  sistema:      'supabase',
 };
 
 /** Backend efectivo de escritura (override WRITE_SOURCE_FORCE para staging). */

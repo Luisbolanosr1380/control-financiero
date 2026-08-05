@@ -32,20 +32,24 @@ export async function uploadAttachment(
   contentType: string,
   data: ArrayBuffer | Uint8Array | Buffer,
 ): Promise<void> {
-  // ═══ FASE 2.5 — adjuntos a Supabase Storage ═══
-  // Mismo contrato (recordId + fieldId identifican el destino); el archivo
-  // va al bucket público y la URL se persiste en la columna correspondiente.
+  // ═══ FASE 2.5 / FASE 3 — adjuntos SIN flag propio ═══
+  // El backend del adjunto es SIEMPRE el de la operación dueña del registro
+  // destino: así no puede pasar que la factura se emita en un backend y el
+  // PDF se adjunte en otro ("id no encontrado" por backends cruzados).
   const { writeSource } = await import('@/lib/config/data-source');
-  if (writeSource('adjuntos') === 'supabase') {
+  const destinos: Record<string, {
+    op: 'facturacion' | 'cobros' | 'planilla' | 'gastos';
+    carpeta: 'facturas' | 'boletas' | 'constancias' | 'facturas-in';
+    tabla: string; colUrl: string; colNombre: string;
+  }> = {
+    [ADJUNTO_FIELD_ID]:    { op: 'facturacion', carpeta: 'facturas',    tabla: 'facturas_clientes', colUrl: 'adjunto_url',    colNombre: 'adjunto_nombre' },
+    [CONSTANCIA_FIELD_ID]: { op: 'cobros',      carpeta: 'constancias', tabla: 'cobros_clientes',   colUrl: 'constancia_url', colNombre: 'constancia_nombre' },
+    [BOLETA_FIELD_ID]:     { op: 'planilla',    carpeta: 'boletas',     tabla: 'planilla',          colUrl: 'boleta_url',     colNombre: 'boleta_nombre' },
+  };
+  const destino = destinos[fieldId];
+  if (destino && writeSource(destino.op) === 'supabase') {
     const { subirAdjuntoStorage } = await import('@/lib/supabase/storage');
     const { actualizarPorAppId } = await import('@/lib/supabase/writes');
-    const destinos: Record<string, { carpeta: 'facturas' | 'boletas' | 'constancias'; tabla: string; colUrl: string; colNombre: string }> = {
-      [ADJUNTO_FIELD_ID]:    { carpeta: 'facturas',    tabla: 'facturas_clientes', colUrl: 'adjunto_url',    colNombre: 'adjunto_nombre' },
-      [CONSTANCIA_FIELD_ID]: { carpeta: 'constancias', tabla: 'cobros_clientes',   colUrl: 'constancia_url', colNombre: 'constancia_nombre' },
-      [BOLETA_FIELD_ID]:     { carpeta: 'boletas',     tabla: 'planilla',          colUrl: 'boleta_url',     colNombre: 'boleta_nombre' },
-    };
-    const destino = destinos[fieldId];
-    if (!destino) throw new Error(`uploadAttachment: fieldId ${fieldId} sin destino Supabase mapeado.`);
     const subida = await subirAdjuntoStorage({
       carpeta: destino.carpeta,
       recordAppId: recordId,
