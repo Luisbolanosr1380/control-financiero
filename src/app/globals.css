@@ -526,6 +526,15 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
 }
 .table tbody td.num { text-align: right; }
 .table tbody tr:hover td { background: var(--paper-tint); }
+/* FIX-UI-PENDIENTES: columna de acciones pegada a la derecha en tablas
+   anchas con scroll horizontal — nunca se corta fuera del recuadro. */
+.table th.col-acciones, .table td.col-acciones {
+  position: sticky;
+  right: 0;
+  background: var(--paper);
+  box-shadow: -8px 0 8px -8px rgba(0, 0, 0, 0.12);
+}
+.table tbody tr:hover td.col-acciones { background: var(--paper-tint); }
 .table tbody tr:last-child td { border-bottom: none; }
 .table tbody tr.clickable { cursor: pointer; }
 .table tbody tr.selected td { background: var(--bg-2); }

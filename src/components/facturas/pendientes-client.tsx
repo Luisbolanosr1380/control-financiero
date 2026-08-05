@@ -27,6 +27,31 @@ const BUCKET_COLOR: Record<AgingBucket, string> = {
   '90+':     'var(--wine)',
 };
 
+// FIX-UI-PENDIENTES: la línea como badge compacto (nombre completo en tooltip).
+const LINEA_BADGE: Record<string, { abrev: string; color: string; bg: string }> = {
+  'Poligrafia':      { abrev: 'Polí',  color: '#1d4ed8', bg: 'rgba(37, 99, 235, 0.10)' },
+  'Poligrafia Xela': { abrev: 'PolíX', color: '#1d4ed8', bg: 'rgba(37, 99, 235, 0.10)' },
+  'Socioeconomicos': { abrev: 'Socio', color: 'var(--olive)', bg: 'var(--olive-bg)' },
+  'TalentTrackAI':   { abrev: 'TT',    color: '#6d28d9', bg: 'rgba(124, 58, 237, 0.10)' },
+  'Administrativo':  { abrev: 'Admin', color: 'var(--ink-3)', bg: 'var(--bg-2)' },
+};
+
+function LineaBadges({ centros }: { centros: string[] }) {
+  if (centros.length === 0) return <span style={{ color: 'var(--ink-4)' }}>—</span>;
+  return (
+    <span style={{ display: 'inline-flex', gap: 4 }} title={centros.join(' + ')}>
+      {centros.map(c => {
+        const b = LINEA_BADGE[c] ?? { abrev: c.slice(0, 5), color: 'var(--ink-3)', bg: 'var(--bg-2)' };
+        return (
+          <span key={c} className="badge" style={{ color: b.color, background: b.bg, fontSize: 10.5, padding: '2px 7px' }}>
+            {b.abrev}
+          </span>
+        );
+      })}
+    </span>
+  );
+}
+
 function csvEscape(v: string | number): string {
   const s = String(v);
   return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -218,7 +243,7 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
         </div>
       </div>
 
-      <div className="table-wrap" style={{ borderRadius: '0 0 var(--r-3) var(--r-3)', borderTop: 'none' }}>
+      <div className="table-wrap" style={{ borderRadius: '0 0 var(--r-3) var(--r-3)', borderTop: 'none', overflowX: 'auto' }}>
         <table className="table">
           <thead>
             <tr>
@@ -232,8 +257,8 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
               <th>Estatus</th>
               {thSort('pagoPrometido', 'Prometido', true)}
               <th className="num" style={{ whiteSpace: 'nowrap' }}>Últ. gestión</th>
-              <th>Línea</th>
-              <th style={{ width: 84 }}></th>
+              <th style={{ whiteSpace: 'nowrap' }}>Línea</th>
+              <th className="col-acciones" style={{ width: 92, minWidth: 92 }}></th>
             </tr>
           </thead>
           <tbody>
@@ -246,7 +271,7 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
                 <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>
                   {f.noFactura}{f.esParcial && <span className="badge badge-mute" style={{ marginLeft: 6 }}>parcial</span>}
                 </td>
-                <td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.cliente}>
+                <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.cliente}>
                   {f.cliente}
                 </td>
                 <td className="num cell-mute" style={{ whiteSpace: 'nowrap' }} title={`Mes ${f.mesEmision}`}>{formatDate(f.fechaEmision)}</td>
@@ -282,8 +307,8 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
                     </span>;
                   })()}
                 </td>
-                <td style={{ fontSize: 12, color: 'var(--ink-3)', whiteSpace: 'nowrap' }}>{f.centros.join(' + ') || '—'}</td>
-                <td onClick={e => e.stopPropagation()}>
+                <td style={{ whiteSpace: 'nowrap' }}><LineaBadges centros={f.centros} /></td>
+                <td className="col-acciones" onClick={e => e.stopPropagation()}>
                   <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
                     {f.adjuntoUrl && (
                       <a href={f.adjuntoUrl} target="_blank" rel="noreferrer" className="btn btn-ghost" title="Ver PDF" style={{ padding: 4 }}>
