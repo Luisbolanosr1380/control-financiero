@@ -21,8 +21,9 @@
 
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { F } from './mappers';
-import { dataSource } from '../config/data-source';
-import { sbNotasCreditoRecords } from '../supabase/records';
+import { dataSource, writeSource } from '../config/data-source';
+import { sbNotasCreditoRecords, sbFacturasRecords, sbCobrosRecords } from '../supabase/records';
+import { insertar, actualizarPorAppId, uuidRequerido, uuidOpcional } from '../supabase/writes';
 import { obtenerFechaHoyGuatemala } from '../utils/fechas';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -318,6 +319,22 @@ export interface CrearNotaCreditoResult {
 
 /** Trae los records de FACTURAS_CLIENTES de una factura por record-id del principal. */
 async function leerRecordsDeFacturaPorPrincipalId(facturaId: string): Promise<{ records: Array<{ id: string; fields: Record<string, unknown> }>; total: number; estados: string[]; numeroFactura: string }> {
+  if (dataSource('facturas_clientes') === 'supabase') {
+    const todas = await sbFacturasRecords();
+    const principal = todas.find(r => r.id === facturaId);
+    if (!principal) throw new Error(`Factura ${facturaId} no encontrada.`);
+    const noFactura = String(principal.fields[F.NO_FACTURA] ?? '').trim();
+    if (!noFactura) throw new Error('La factura no tiene NO.FACTURA.');
+    const lineas = todas
+      .filter(r => String(r.fields[F.NO_FACTURA] ?? '').trim() === noFactura)
+      .filter(r => {
+        const e = String(r.fields[F.ESTADO] ?? '').toUpperCase().trim();
+        return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
+      });
+    const total = lineas.reduce((s, r) => s + Number(r.fields[F.TOTAL] ?? 0), 0);
+    const estados = lineas.map(r => String(r.fields[F.ESTADO] ?? '').toUpperCase().trim());
+    return { records: lineas, total: round2(total), estados, numeroFactura: noFactura };
+  }
   if (!airtable) throw new Error('Airtable no está configurado.');
   const principal = await airtable(TABLES.FACTURAS).find(facturaId);
   const noFactura = String(principal.fields[F.NO_FACTURA] ?? '').trim();
@@ -339,6 +356,16 @@ async function leerRecordsDeFacturaPorPrincipalId(facturaId: string): Promise<{ 
 
 /** Suma cobros ACTIVOS de una factura (capital). Reusa el mismo predicado que cobros.ts. */
 async function sumarCobrosActivos(noFactura: string): Promise<number> {
+  if (dataSource('cobros_clientes') === 'supabase') {
+    const todos = await sbCobrosRecords();
+    const activos = todos.filter(r => {
+      const lookup = r.fields['NO.FACTURA (from Factura Cliente)'];
+      const nf = Array.isArray(lookup) ? String(lookup[0] ?? '') : '';
+      const estado = String(r.fields['Estado_Cobro'] ?? '').toLowerCase();
+      return nf === noFactura && (estado === '' || estado === 'activo');
+    });
+    return round2(activos.reduce((s, r) => s + Number(r.fields['Monto_Cobro_GTQ'] ?? 0), 0));
+  }
   if (!airtable) return 0;
   const esc = noFactura.replace(/"/g, '\\"');
   const cobros = await airtable(TABLES.COBROS)
@@ -354,7 +381,7 @@ async function sumarCobrosActivos(noFactura: string): Promise<number> {
 
 /** Recalcula ESTADO de las líneas de la factura tras emitir/anular una NC. */
 async function aplicarEstadoTrasSaldo(facturaId: string, motivo: 'nc-activada' | 'nc-anulada'): Promise<boolean> {
-  if (!airtable) return false;
+  if (!airtable && writeSource('facturacion') !== 'supabase') return false;
   try {
     const { records, total, numeroFactura } = await leerRecordsDeFacturaPorPrincipalId(facturaId);
     if (records.length === 0) return false;
@@ -370,9 +397,15 @@ async function aplicarEstadoTrasSaldo(facturaId: string, motivo: 'nc-activada' |
                        : cobrado > 0      ? 'COBRADO PARCIAL'
                        :                    'EMITIDA';
 
+    if (writeSource('facturacion') === 'supabase') {
+      for (const r of records) {
+        await actualizarPorAppId('facturas_clientes', r.id, { estado: nuevoEstado });
+      }
+      return true;
+    }
     const updates = records.map(r => ({ id: r.id, fields: { [F.ESTADO]: nuevoEstado } }));
     for (let i = 0; i < updates.length; i += 10) {
-      await airtable(TABLES.FACTURAS).update(updates.slice(i, i + 10));
+      await airtable!(TABLES.FACTURAS).update(updates.slice(i, i + 10));
     }
     return true;
   } catch (err) {
@@ -382,7 +415,7 @@ async function aplicarEstadoTrasSaldo(facturaId: string, motivo: 'nc-activada' |
 }
 
 export async function crearNotaCredito(input: CrearNotaCreditoInput, usuarioEmail: string): Promise<CrearNotaCreditoResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('facturacion') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!input.facturaId)             return { ok: false, error: 'Falta la factura.' };
   if (!input.fechaEmision)          return { ok: false, error: 'Falta la fecha de emisión.' };
   if (!(input.monto > 0))           return { ok: false, error: 'El monto debe ser mayor a 0.' };
@@ -416,6 +449,34 @@ export async function crearNotaCredito(input: CrearNotaCreditoInput, usuarioEmai
     const requiereAprob = input.monto > UMBRAL_APROBACION_NC;
     const estadoInicial: EstadoNotaCredito = requiereAprob ? 'Pendiente Aprobación' : 'Activa';
 
+    // ═══ FASE 3 — NC EN SUPABASE ═══
+    if (writeSource('facturacion') === 'supabase') {
+      const res = await insertar('notas_credito', {
+        numero_nc:     numeroNC,
+        factura_id:    await uuidRequerido('facturas_clientes', input.facturaId, 'crearNotaCredito'),
+        cliente_id:    clienteId ? await uuidOpcional('clientes', clienteId) : null,
+        fecha_emision: input.fechaEmision,
+        monto:         input.monto,
+        motivo:        input.motivo,
+        descripcion:   input.descripcion.trim(),
+        estado:        estadoInicial,
+        emitida_por:   usuarioEmail,
+        fecha_creacion: new Date().toISOString(),
+      });
+      let facturaActualizadaSb = false;
+      if (estadoInicial === 'Activa') {
+        facturaActualizadaSb = await aplicarEstadoTrasSaldo(input.facturaId, 'nc-activada');
+      }
+      return {
+        ok: true,
+        notaCreditoId: res.airtable_id,
+        numeroNC,
+        estadoInicial,
+        requirioAprobacion: requiereAprob,
+        facturaActualizada: facturaActualizadaSb,
+      };
+    }
+
     type AField = string | number | string[] | undefined;
     const fields: Record<string, AField> = {
       [NF.NUMERO]:      numeroNC,
@@ -429,7 +490,7 @@ export async function crearNotaCredito(input: CrearNotaCreditoInput, usuarioEmai
     };
     if (clienteId) fields[NF.CLIENTE] = [clienteId];
 
-    const created = await airtable(TABLES.NOTAS_CREDITO).create(fields);
+    const created = await airtable!(TABLES.NOTAS_CREDITO).create(fields);
     let facturaActualizada = false;
     if (estadoInicial === 'Activa') {
       facturaActualizada = await aplicarEstadoTrasSaldo(input.facturaId, 'nc-activada');
@@ -455,7 +516,7 @@ export interface AprobarNCResult {
 }
 
 export async function aprobarNotaCredito(ncId: string, usuarioEmail: string, esAdmin: boolean): Promise<AprobarNCResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('facturacion') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!esAdmin)  return { ok: false, error: 'Solo un administrador puede aprobar notas de crédito.' };
   try {
     const nc = await getNotaCreditoPorId(ncId);
@@ -463,7 +524,16 @@ export async function aprobarNotaCredito(ncId: string, usuarioEmail: string, esA
     if (nc.estado !== 'Pendiente Aprobación') {
       return { ok: false, error: `La NC está en estado ${nc.estado} — solo se aprueban las 'Pendiente Aprobación'.` };
     }
-    await airtable(TABLES.NOTAS_CREDITO).update([{
+    if (writeSource('facturacion') === 'supabase') {
+      await actualizarPorAppId('notas_credito', ncId, {
+        estado: 'Activa',
+        aprobada_por: usuarioEmail,
+        fecha_aprobacion: obtenerFechaHoyGuatemala(),
+      });
+      const facturaActualizada = await aplicarEstadoTrasSaldo(nc.facturaId, 'nc-activada');
+      return { ok: true, facturaActualizada };
+    }
+    await airtable!(TABLES.NOTAS_CREDITO).update([{
       id: ncId,
       fields: {
         [NF.ESTADO]:       'Activa',
@@ -485,7 +555,7 @@ export interface AnularNCResult {
 }
 
 export async function anularNotaCredito(ncId: string, motivoAnulacion: string, usuarioEmail: string): Promise<AnularNCResult> {
-  if (!airtable) return { ok: false, error: 'Airtable no está configurado.' };
+  if (!airtable && writeSource('facturacion') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!motivoAnulacion?.trim()) return { ok: false, error: 'El motivo de anulación es requerido.' };
   try {
     const nc = await getNotaCreditoPorId(ncId);
@@ -493,7 +563,17 @@ export async function anularNotaCredito(ncId: string, motivoAnulacion: string, u
     if (nc.estado !== 'Activa' && nc.estado !== 'Aprobada') {
       return { ok: false, error: `La NC está en estado ${nc.estado} — solo se anulan las Activas o Aprobadas.` };
     }
-    await airtable(TABLES.NOTAS_CREDITO).update([{
+    if (writeSource('facturacion') === 'supabase') {
+      await actualizarPorAppId('notas_credito', ncId, {
+        estado: 'Anulada',
+        motivo_anulacion: motivoAnulacion.trim(),
+        fecha_anulacion: obtenerFechaHoyGuatemala(),
+        anulada_por: usuarioEmail,
+      });
+      const facturaActualizada = await aplicarEstadoTrasSaldo(nc.facturaId, 'nc-anulada');
+      return { ok: true, facturaActualizada };
+    }
+    await airtable!(TABLES.NOTAS_CREDITO).update([{
       id: ncId,
       fields: {
         [NF.ESTADO]:      'Anulada',

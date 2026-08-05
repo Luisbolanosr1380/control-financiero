@@ -346,7 +346,7 @@ export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
         'ADJUNTO ':            r.adjunto_url
           ? [{ url: String(r.adjunto_url), filename: s(r.adjunto_nombre) }]
           : undefined,
-        // 'Historial_Ediciones': gap conocido (2 filas, ver 03_fase2_gaps.sql).
+        'Historial_Ediciones': s(r.historial_ediciones),
       }),
     };
   });
@@ -575,6 +575,12 @@ export async function sbNotasCreditoRecords(): Promise<PseudoRecord[]> {
       'Descripcion':   s(r.descripcion),
       'Estado':        s(r.estado),
       'Emitida_Por':   s(r.emitida_por),
+      'Fecha_Creacion': s(r.fecha_creacion),
+      'Aprobada_Por':   s(r.aprobada_por),
+      'Fecha_Aprobacion': s(r.fecha_aprobacion),
+      'Motivo_Anulacion': s(r.motivo_anulacion),
+      'Fecha_Anulacion':  s(r.fecha_anulacion),
+      'Anulada_Por':      s(r.anulada_por),
       // OJO: los lookups 'NO.FACTURA (from Factura)' y 'Razón social (from
       // Cliente)' NO existen hoy en la tabla de Airtable (la lectura recibe
       // '' y la UI muestra vacío). NO los emitimos para mantener el output

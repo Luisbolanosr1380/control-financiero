@@ -2,8 +2,11 @@ import { airtable, USE_MOCK, TABLES } from './airtable';
 import { obtenerFechaHoyGuatemala } from "../utils/fechas";
 import { formatInTimeZone } from 'date-fns-tz';
 import { consolidateRecords, F } from './mappers';
-import { dataSource } from '../config/data-source';
+import { dataSource, writeSource } from '../config/data-source';
 import { sbFacturasRecords } from '../supabase/records';
+import { supabase } from '../supabase/client';
+import { nuevoIdEscritura, uuidRequerido, uuidOpcional, actualizarPorAppId } from '../supabase/writes';
+import { invalidarBridge } from '../supabase/id-bridge';
 import { INVOICES as MOCK_INVOICES } from '../mock-data';
 import type { Invoice, InvoiceEstadoBruto } from '../types';
 import type { FieldSet } from 'airtable';
@@ -479,17 +482,64 @@ export interface CreateFacturaResult {
 }
 
 export async function createFactura(input: NewFacturaInput): Promise<CreateFacturaResult> {
-  if (USE_MOCK || !airtable) {
+  if ((USE_MOCK || !airtable) && writeSource('facturacion') !== 'supabase') {
     throw new Error('createFactura: Airtable no está configurado.');
   }
   if (!input.noFactura?.trim()) throw new Error('NO.FACTURA es requerido.');
   if (!input.custId)            throw new Error('Cliente es requerido.');
   if (!input.lineas?.length)    throw new Error('Se requiere al menos una línea.');
 
+  // ═══ FASE 3 — EMISIÓN EN SUPABASE ═══
+  // Todas las líneas en UN insert masivo (una sentencia = atómico).
+  if (writeSource('facturacion') === 'supabase') {
+    const sb = supabase();
+    if (!sb) throw new Error('Supabase no está configurado.');
+    const nf = input.noFactura.trim();
+    const { data: existentes, error: errDup } = await sb.from('facturas_clientes')
+      .select('id').eq('no_factura', nf).limit(1);
+    if (errDup) throw new Error(errDup.message);
+    if (existentes && existentes.length > 0) {
+      throw new Error(`La factura ${nf} ya existe. No se creó para evitar un duplicado.`);
+    }
+    const clienteUuid = await uuidRequerido('clientes', input.custId, 'createFactura (cliente)');
+    const ccUuid = new Map<string, string>();
+    for (const l of input.lineas) {
+      if (!ccUuid.has(l.centroCostoId)) {
+        ccUuid.set(l.centroCostoId, await uuidRequerido('centros_costo', l.centroCostoId, 'createFactura (CC)'));
+      }
+    }
+    const round2sb = (x: number) => Math.round(x * 100) / 100;
+    const filas = input.lineas.map(l => ({
+      airtable_id: nuevoIdEscritura(),
+      no_factura: nf,
+      cliente_id: clienteUuid,
+      centro_costo_id: ccUuid.get(l.centroCostoId),
+      fecha_emision: input.fechaEmision,
+      total: l.total,
+      iva: l.iva,
+      // SUBTOTAL en Airtable era fórmula (= TOTAL - IVA): se materializa acá.
+      subtotal: round2sb(l.total - l.iva),
+      estado: 'EMITIDA',
+    }));
+    const { data: creadas, error } = await sb.from('facturas_clientes')
+      .insert(filas).select('airtable_id, total');
+    if (error) throw new Error(`createFactura (supabase): ${error.message}`);
+    invalidarBridge('facturas_clientes');
+    let maxIdx = 0;
+    for (let i = 1; i < input.lineas.length; i++) {
+      if (input.lineas[i].total > input.lineas[maxIdx].total) maxIdx = i;
+    }
+    return {
+      noFactura: nf,
+      recordsCreados: creadas?.length ?? filas.length,
+      recordIdPrincipal: filas[maxIdx]?.airtable_id ?? filas[0].airtable_id,
+    };
+  }
+
   try {
     // Evitar duplicado silencioso: ¿ya existe ese NO.FACTURA?
     const noFacturaEsc = input.noFactura.replace(/"/g, '\\"');
-    const existentes = await airtable(TABLES.FACTURAS)
+    const existentes = await airtable!(TABLES.FACTURAS)
       .select({ filterByFormula: `{${F.NO_FACTURA}} = "${noFacturaEsc}"`, maxRecords: 1 })
       .all();
     if (existentes.length > 0) {
@@ -512,7 +562,7 @@ export async function createFactura(input: NewFacturaInput): Promise<CreateFactu
     const createdIds: string[] = [];
     for (let i = 0; i < payload.length; i += 10) {
       const lote = payload.slice(i, i + 10);
-      const res = await airtable(TABLES.FACTURAS).create(lote);
+      const res = await airtable!(TABLES.FACTURAS).create(lote);
       createdIds.push(...res.map(r => r.id));
     }
 
@@ -560,13 +610,71 @@ export async function anularFactura(
   motivo?: string,
   motivoTipo?: MotivoAnulacion,
 ): Promise<AnularFacturaResult> {
-  if (!airtable) throw new Error('Airtable no está configurado.');
+  if (!airtable && writeSource('facturacion') !== 'supabase') throw new Error('Airtable no está configurado.');
   const nf = (noFactura ?? '').trim();
   if (!nf) return { ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: 0, error: 'NO.FACTURA es requerido.' };
 
+  // ═══ FASE 3 — ANULACIÓN EN SUPABASE ═══
+  if (writeSource('facturacion') === 'supabase') {
+    try {
+      const todas = await sbFacturasRecords();
+      const records = todas.filter(r => String(r.fields[F.NO_FACTURA] ?? '') === nf);
+      if (records.length === 0) {
+        return { ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: 0, error: `No se encontró la factura ${nf}.` };
+      }
+      const esRefacturacion = motivoTipo === 'Refacturación';
+      if (!esRefacturacion) {
+        const { contarCobrosActivosDeFactura } = await import('./cobros');
+        const chk = await contarCobrosActivosDeFactura(nf);
+        if (chk.numCobrosActivos > 0) {
+          return {
+            ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: records.length,
+            error: `La factura ${nf} tiene ${chk.numCobrosActivos} cobro(s) activo(s) por Q${chk.montoTotalActivo.toFixed(2)}. Anulá los cobros primero, después podrás anular la factura.`,
+            bloqueadoPorCobros: chk,
+          };
+        }
+      }
+      const estadoTarget = esRefacturacion ? 'REFACTURADO' : 'ANULADO';
+      const verbo = esRefacturacion ? 'Refacturado' : 'Anulado';
+      const fechaAnulacion = obtenerFechaHoyGuatemala();
+      const etiqueta = motivoTipo
+        ? motivo?.trim() ? `${motivoTipo} — ${motivo.trim()}` : motivoTipo
+        : motivo?.trim() ?? '';
+      const nota = etiqueta ? `[${verbo} ${fechaAnulacion}: ${etiqueta}]` : `[${verbo} ${fechaAnulacion}]`;
+
+      const actualizados: string[] = [];
+      const fallidos: string[] = [];
+      for (const r of records) {
+        try {
+          const existing = String(r.fields[F.OBSERVACIONES] ?? '').trim();
+          await actualizarPorAppId('facturas_clientes', r.id, {
+            estado: estadoTarget,
+            observaciones: existing ? `${existing}\n${nota}` : nota,
+          });
+          actualizados.push(r.id);
+        } catch (err) {
+          console.error('Error anulando línea (supabase):', err);
+          fallidos.push(r.id);
+        }
+      }
+      return {
+        ok: fallidos.length === 0,
+        noFactura: nf,
+        recordsActualizados: actualizados.length,
+        recordsTotal: records.length,
+        fallidos: fallidos.length > 0 ? fallidos : undefined,
+        error: fallidos.length > 0
+          ? `Anulación parcial: ${actualizados.length}/${records.length} líneas. Revisá Supabase.`
+          : undefined,
+      };
+    } catch (err) {
+      return { ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: 0, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
   try {
     const esc = nf.replace(/"/g, '\\"');
-    const records = await airtable(TABLES.FACTURAS)
+    const records = await airtable!(TABLES.FACTURAS)
       .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
       .all();
 
@@ -622,7 +730,7 @@ export async function anularFactura(
     for (let i = 0; i < payloads.length; i += 10) {
       const lote = payloads.slice(i, i + 10);
       try {
-        const res = await airtable(TABLES.FACTURAS).update(lote);
+        const res = await airtable!(TABLES.FACTURAS).update(lote);
         actualizados.push(...res.map(r => r.id));
       } catch (err) {
         console.error('Error en lote de anulación:', err);
@@ -726,6 +834,87 @@ export async function editarFacturaNoContable(
     return { ok: false, facturaId, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: 'No hay cambios para guardar.' };
   }
 
+  // ═══ FASE 3 — EDICIÓN NO-CONTABLE EN SUPABASE ═══
+  if (writeSource('facturacion') === 'supabase') {
+    try {
+      const todas = await sbFacturasRecords();
+      const principal = todas.find(r => r.id === facturaId);
+      if (!principal) {
+        return { ok: false, facturaId, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: 'Factura no encontrada.' };
+      }
+      const numeroAnterior = String(principal.fields[F.NO_FACTURA] ?? '').trim();
+      const fechaAnterior = String(principal.fields[F.FECHA_EMISION] ?? '').slice(0, 10);
+      const obsAnteriores = String(principal.fields[F.OBSERVACIONES] ?? '');
+      const estadoP = String(principal.fields[F.ESTADO] ?? '').toUpperCase().trim();
+      if (estadoP === 'ANULADO' || estadoP === 'ANULADA' || estadoP === 'REFACTURADO' || estadoP === 'REFACTURADA') {
+        return { ok: false, facturaId, numeroAnterior, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: `No se puede editar una factura ${estadoP.toLowerCase()}.` };
+      }
+      const esActiva = (r: { fields: Record<string, unknown> }) => {
+        const e = String(r.fields[F.ESTADO] ?? '').toUpperCase().trim();
+        return e !== 'ANULADO' && e !== 'ANULADA' && e !== 'REFACTURADO' && e !== 'REFACTURADA';
+      };
+      const records = todas.filter(r => String(r.fields[F.NO_FACTURA] ?? '').trim() === numeroAnterior && esActiva(r));
+      if (records.length === 0) {
+        return { ok: false, facturaId, numeroAnterior, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: `No se encontraron líneas activas para la factura ${numeroAnterior}.` };
+      }
+      const numeroNuevo = cambios.numeroFactura?.trim();
+      if (numeroNuevo && numeroNuevo !== numeroAnterior) {
+        const colision = todas.find(r => String(r.fields[F.NO_FACTURA] ?? '').trim() === numeroNuevo && esActiva(r));
+        if (colision) {
+          return {
+            ok: false, facturaId, numeroAnterior, numeroNuevo,
+            recordsActualizados: 0, recordsTotal: records.length, auditoriaPersistida: false,
+            error: `El número ${numeroNuevo} ya está en uso por otra factura activa. Solo podés reutilizarlo si la otra está anulada o refacturada.`,
+            duplicado: { noFactura: numeroNuevo, facturaId: colision.id, estadoBruto: 'emitida' },
+          };
+        }
+      }
+      const patch: Record<string, unknown> = {};
+      if (numeroNuevo && numeroNuevo !== numeroAnterior)                 patch.no_factura = numeroNuevo;
+      if (cambios.fechaEmision && cambios.fechaEmision !== fechaAnterior) patch.fecha_emision = cambios.fechaEmision;
+      if (cambios.observaciones !== undefined && cambios.observaciones !== obsAnteriores) patch.observaciones = cambios.observaciones;
+      if (Object.keys(patch).length === 0) {
+        return { ok: false, facturaId, numeroAnterior, recordsActualizados: 0, recordsTotal: records.length, auditoriaPersistida: false, error: 'Los valores enviados son idénticos a los actuales.' };
+      }
+      const actualizados: string[] = [];
+      for (const r of records) {
+        await actualizarPorAppId('facturas_clientes', r.id, patch);
+        actualizados.push(r.id);
+      }
+      // Auditoría en el principal (columna historial_ediciones — Fase 3
+      // cierra el gap de Fase 1).
+      const cambiosLog: Array<{ campo: string; antes: string; despues: string }> = [];
+      if (numeroNuevo && numeroNuevo !== numeroAnterior)                       cambiosLog.push({ campo: 'numeroFactura',  antes: numeroAnterior, despues: numeroNuevo });
+      if (cambios.fechaEmision && cambios.fechaEmision !== fechaAnterior)      cambiosLog.push({ campo: 'fechaEmision',   antes: fechaAnterior,  despues: cambios.fechaEmision });
+      if (cambios.observaciones !== undefined && cambios.observaciones !== obsAnteriores) cambiosLog.push({ campo: 'observaciones', antes: obsAnteriores.slice(0, 40) + (obsAnteriores.length > 40 ? '…' : ''), despues: cambios.observaciones.slice(0, 40) + (cambios.observaciones.length > 40 ? '…' : '') });
+      const historialAnterior = String(principal.fields[F.HISTORIAL_EDIT] ?? '');
+      const nuevaEntrada = formatearEntradaHistorial(usuarioEmail, cambiosLog);
+      let auditoriaPersistida = false;
+      try {
+        await actualizarPorAppId('facturas_clientes', principal.id, {
+          editado_por: usuarioEmail,
+          fecha_ultima_edicion: new Date().toISOString(),
+          historial_ediciones: historialAnterior ? `${historialAnterior}\n${nuevaEntrada}` : nuevaEntrada,
+        });
+        auditoriaPersistida = true;
+      } catch (err) {
+        console.warn('FASE 3: auditoría no persistida:', err instanceof Error ? err.message : err);
+      }
+      return {
+        ok: true, facturaId, numeroAnterior,
+        numeroNuevo: numeroNuevo && numeroNuevo !== numeroAnterior ? numeroNuevo : numeroAnterior,
+        recordsActualizados: actualizados.length,
+        recordsTotal: records.length,
+        auditoriaPersistida,
+      };
+    } catch (err) {
+      return { ok: false, facturaId, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  if (!airtable) {
+    return { ok: false, facturaId, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: 'Airtable no está configurado.' };
+  }
   try {
     // 1) Cargar el record principal para descubrir NO.FACTURA actual + bucket.
     const principalRec = await airtable(TABLES.FACTURAS).find(facturaId).catch(() => null);
@@ -869,10 +1058,17 @@ export function parsearHistorialEdiciones(raw: string | undefined): EntradaHisto
 
 export async function getHistorialEdicionesFactura(facturaId: string): Promise<EntradaHistorialEdicion[]> {
   if (dataSource('facturas_clientes') === 'supabase') {
-    // GAP conocido: Historial_Ediciones no existe en el schema Postgres
-    // (2 facturas lo tienen en Airtable). Se agrega en Fase 2 — ver
-    // supabase/03_fase2_gaps.sql.
-    return [];
+    // FASE 3: la columna historial_ediciones ya existe (03_fase2_gaps.sql)
+    // y la edición en Supabase la escribe.
+    try {
+      const sb = supabase();
+      if (!sb) return [];
+      const { data } = await sb.from('facturas_clientes')
+        .select('historial_ediciones').eq('airtable_id', facturaId).limit(1);
+      return parsearHistorialEdiciones(String((data?.[0] as { historial_ediciones?: string } | undefined)?.historial_ediciones ?? ''));
+    } catch {
+      return [];
+    }
   }
   if (!airtable) return [];
   try {
