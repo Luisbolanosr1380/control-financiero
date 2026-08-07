@@ -9,6 +9,10 @@
  *     cuadre contra agregados SQL directos de Supabase:
  *     total histórico, un cliente, un centro de costo, un trimestre, y
  *     la coherencia interna de las 4 agrupaciones.
+ * (3) Valida el EXPORT (resumen + detalle en un archivo): paginación
+ *     fetchAll sin tope de 1,000, estructura de bloques, filtros
+ *     reflejados, y que los totales del pie del detalle cuadren con el
+ *     resumen de arriba.
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -181,6 +185,97 @@ Podés pedirle el reporte al asistente directamente: *"¿cuánto le facturamos a
     const { filtradas: trim } = filtrarReporte(facturas, { desde, hasta });
     const totTrim = totalesReporte(trim);
     ok(aprox(totTrim.totalQ, sqlTrim), `trimestre ${desde} → ${hasta}: motor ${totTrim.totalQ.toFixed(2)} = SQL ${sqlTrim.toFixed(2)}`);
+  }
+
+  /* ── 4. Export: resumen + detalle en un solo archivo ─────────── */
+  console.log('4. Export CSV (resumen + detalle)');
+  const { construirCsvReporte, nombreArchivoExport } = await import('../src/lib/facturacion/reporte-csv');
+
+  // Paginación: la tabla completa (con anuladas) supera las 1,000 filas —
+  // si esto pasa, fetchAll NO trunca (un .select() directo devolvería 1000).
+  ok(crudas.length > 1000, `fetchAll paginado: ${crudas.length} filas leídas (> 1000 — sin tope silencioso)`);
+
+  const nombresCli = new Map((mapaCli ?? []).map(c => [String(c.airtable_id), String(c.nombre_empresa ?? '')]));
+  const nombresCC = new Map((mapaCC ?? []).map(c => [String(c.airtable_id), String(c.nombre ?? '')]));
+  const ctxNombres = {
+    nomCliente: (id: string) => nombresCli.get(id) ?? (id || 'Sin cliente'),
+    nomCentro: (id: string) => nombresCC.get(id) ?? (id || 'Sin centro'),
+  };
+
+  // 4a. Export SIN filtros: 820 facturas consolidadas, total = SQL.
+  const csvTodo = construirCsvReporte(filtradas, {
+    etiquetaPeriodo: 'Histórico completo', filtrosHumanos: 'Todos los clientes y líneas',
+    ...ctxNombres, centroCostoIds: [], numAnuladas: 0,
+  });
+  const lineasTodo = csvTodo.split('\n');
+  const idxDetalle = lineasTodo.indexOf('DETALLE POR FACTURA');
+  const filasDetalle = lineasTodo.slice(idxDetalle + 2, -1);   // sin header ni fila TOTALES
+  ok(idxDetalle > 0 && lineasTodo[0] === 'Reporte de facturación emitida', 'estructura: encabezado + bloque DETALLE presentes');
+  ok(csvTodo.includes('RESUMEN POR CLIENTE') && csvTodo.includes('RESUMEN POR CENTRO DE COSTO'), 'estructura: resúmenes por cliente y por CC arriba del detalle');
+  ok(filasDetalle.length === tot.numFacturas, `detalle sin filtros: ${filasDetalle.length} filas = ${tot.numFacturas} facturas consolidadas`);
+  const filaTotales = lineasTodo[lineasTodo.length - 1];
+  ok(filaTotales.startsWith('TOTALES') && filaTotales.includes(tot.totalQ.toFixed(2)), `fila TOTALES del detalle cuadra con el resumen (${tot.totalQ.toFixed(2)})`);
+  ok(csvTodo.includes(`Total facturado Q,${tot.totalQ.toFixed(2)}`), 'resumen: total facturado presente');
+  ok(csvTodo.includes('Período:'), 'acentos UTF-8 intactos ("Período:")');
+
+  // 4b. Export CON filtros (cliente top + trimestre): refleja los filtros de pantalla.
+  if (top && ultimoMes) {
+    const y = Number(ultimoMes.slice(0, 4));
+    const q0 = Math.floor((Number(ultimoMes.slice(5, 7)) - 1) / 3) * 3 + 1;
+    const desde = `${y}-${String(q0).padStart(2, '0')}-01`;
+    const mFin = q0 + 2;
+    const hasta = `${y}-${String(mFin).padStart(2, '0')}-${new Date(y, mFin, 0).getDate()}`;
+    const rFiltro = filtrarReporte(facturas, { desde, hasta, clienteIds: [top.key] });
+    const totFiltro = totalesReporte(rFiltro.filtradas);
+    const nombreTop = ctxNombres.nomCliente(top.key);
+    const csvFiltro = construirCsvReporte(rFiltro.filtradas, {
+      etiquetaPeriodo: `${desde} — ${hasta}`, filtrosHumanos: nombreTop,
+      ...ctxNombres, centroCostoIds: [], numAnuladas: rFiltro.numAnuladas,
+    });
+    const lf = csvFiltro.split('\n');
+    const idxD = lf.indexOf('DETALLE POR FACTURA');
+    const filasD = lf.slice(idxD + 2, -1);
+    const todasDelCliente = filasD.every(l => l.includes(nombreTop));
+    ok(filasD.length === totFiltro.numFacturas && todasDelCliente,
+      `export filtrado (${nombreTop} · ${desde}→${hasta}): ${filasD.length} filas, todas del cliente`);
+    ok(lf[lf.length - 1].includes(totFiltro.totalQ.toFixed(2)),
+      `export filtrado: TOTALES cuadra (${totFiltro.totalQ.toFixed(2)})`);
+    ok(nombreArchivoExport({ clienteSlugs: [nombreTop], centroSlugs: [], desde, hasta })
+      .startsWith('facturacion_'), `nombre de archivo: ${nombreArchivoExport({ clienteSlugs: [nombreTop], centroSlugs: [], desde, hasta })}`);
+  }
+
+  /* ── 5. Seed del ajuste (roadmap + refresh del artículo) ─────── */
+  console.log('5. Seed del ajuste export');
+  const TITULO_AJUSTE = 'Reporte de facturación: export con resumen + detalle por factura';
+  const items2 = await getRoadmapItems();
+  if (items2.some(i => i.titulo === TITULO_AJUSTE)) {
+    ok(true, 'ítem de roadmap del ajuste ya existe (idempotente)');
+  } else {
+    const r = await crearRoadmapItem({
+      titulo: TITULO_AJUSTE,
+      categoria: 'Facturación/Cobros',
+      estado: 'Hecho',
+      orden: 111,
+      impacto: 'El CSV exportado ya es el informe entregable: carátula + totales + resumen por cliente/línea arriba, y el detalle factura por factura con fila de totales abajo.',
+      notas: 'Función pura compartida UI/validador (facturacion/reporte-csv.ts). fetchAll paginado — nunca .select() directo (trunca en 1,000 filas).',
+    });
+    ok(r.ok, r.ok ? 'ítem de roadmap del ajuste creado' : `falló: ${'error' in r ? r.error : ''}`);
+  }
+
+  const { editarArticulo } = await import('../src/lib/db/ayuda');
+  const arts = await getArticulos({ soloActivos: false });
+  const articulo = arts.find(a => a.slug === SLUG_ARTICULO);
+  if (!articulo) {
+    ok(false, 'artículo de ayuda no encontrado para actualizar');
+  } else if (articulo.contenido.includes('dos bloques')) {
+    ok(true, 'artículo de ayuda ya describe el export resumen+detalle (idempotente)');
+  } else {
+    const contenidoNuevo = articulo.contenido.replace(
+      /- \*\*Exportar CSV\*\* descarga la vista activa con los filtros aplicados, lista para abrir en Excel \(acentos incluidos\)\./,
+      '- **Exportar CSV** descarga un solo archivo con dos bloques, listo para abrir en Excel (acentos incluidos): arriba el RESUMEN (período y filtros aplicados, totales, resumen por cliente y por línea) y abajo el DETALLE factura por factura (No., fecha, cliente, línea, subtotal, IVA, total, estado) con una fila de totales al pie que cuadra con el resumen. Siempre respeta los filtros que tengas puestos en pantalla.',
+    );
+    const r = await editarArticulo(articulo.id, { contenido: contenidoNuevo }, 'sistema@controlfinanciero');
+    ok(r.ok && contenidoNuevo.includes('dos bloques'), r.ok ? 'artículo de ayuda actualizado con el nuevo export' : `falló: ${r.error}`);
   }
 
   console.log(`\n${fail === 0 ? '✅' : '❌'} ${pass} pass · ${fail} fail`);

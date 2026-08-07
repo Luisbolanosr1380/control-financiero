@@ -27,6 +27,7 @@ import {
   filtrarReporte, totalesReporte, reportePorCliente, reportePorCentroCosto,
   reportePorMes, rangoAnterior, type EstadoFiltroReporte,
 } from '@/lib/facturacion/reporte';
+import { construirCsvReporte, nombreArchivoExport } from '@/lib/facturacion/reporte-csv';
 
 interface Props {
   facturas: FacturaReporte[];
@@ -109,11 +110,6 @@ function fechaHumana(iso: string): string {
   if (!iso) return '—';
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
-}
-
-function csvEscape(v: string | number): string {
-  const s = String(v);
-  return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
 export function FacturacionReporteClient({ facturas, clientes, centros }: Props) {
@@ -215,37 +211,29 @@ export function FacturacionReporteClient({ facturas, clientes, centros }: Props)
       b.f.fecha.localeCompare(a.f.fecha) || b.f.noFactura.localeCompare(a.f.noFactura)),
   [filtradas]);
 
-  /* ── Export CSV de la vista activa (BOM para Excel) ────────────── */
+  /* ── Export: resumen + detalle en un solo archivo ───────────────
+   * El dataset viene de getFacturasReporte() → fetchAll PAGINADO —
+   * jamás armar esto con un .select() directo (trunca en 1,000 filas). */
   const exportarCsv = () => {
-    let encabezado: string[];
-    let lineas: string[];
-    if (vista === 'cliente') {
-      encabezado = ['Cliente', 'No. facturas', 'Total Q', '% del total'];
-      lineas = porCliente.map(g =>
-        [nomCli(g.key), g.numFacturas, g.montoQ.toFixed(2), g.pct.toFixed(1)].map(csvEscape).join(','));
-    } else if (vista === 'linea') {
-      encabezado = ['Centro de costo', 'No. facturas', 'Total Q', '% del total'];
-      lineas = porCC.map(g =>
-        [nomCC(g.key), g.numFacturas, g.montoQ.toFixed(2), g.pct.toFixed(1)].map(csvEscape).join(','));
-    } else if (vista === 'mes') {
-      encabezado = ['Mes', 'No. facturas', 'Total Q'];
-      lineas = porMes.map(g =>
-        [g.key || 'Sin fecha', g.numFacturas, g.montoQ.toFixed(2)].map(csvEscape).join(','));
-    } else {
-      encabezado = ['No. factura', 'Fecha emisión', 'Cliente', 'Centro de costo', 'Subtotal Q', 'IVA Q', 'Total Q', 'Estado'];
-      lineas = detalle.map(x => [
-        x.f.noFactura, x.f.fecha, nomCli(x.f.custId),
-        [...new Set(x.f.lineasCC.filter(l => ccIds.length === 0 || ccIds.includes(l.ccId)).map(l => nomCC(l.ccId)))].join(' + '),
-        x.subtotalQ.toFixed(2), x.ivaQ.toFixed(2), x.totalQ.toFixed(2),
-        ESTADO_BADGE[x.f.estadoBruto]?.text ?? x.f.estadoBruto,
-      ].map(csvEscape).join(','));
-    }
+    const csv = construirCsvReporte(filtradas, {
+      etiquetaPeriodo: etiquetaPeriodo,
+      filtrosHumanos: filtrosHumanos,
+      nomCliente: nomCli,
+      nomCentro: nomCC,
+      centroCostoIds: ccIds,
+      numAnuladas,
+    });
     // BOM para que Excel abra el UTF-8 con acentos bien.
-    const blob = new Blob(['﻿' + [encabezado.join(','), ...lineas].join('\n')], { type: 'text/csv;charset=utf-8' });
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `reporte-facturacion-${vista}-${desde || 'inicio'}-a-${hasta || 'hoy'}.csv`;
+    a.download = nombreArchivoExport({
+      clienteSlugs: clienteIds.map(nomCli),
+      centroSlugs: ccIds.map(nomCC),
+      desde: desde || undefined,
+      hasta: hasta || undefined,
+    });
     a.click();
     URL.revokeObjectURL(url);
   };
