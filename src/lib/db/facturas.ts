@@ -254,6 +254,124 @@ export async function getFacturasLiviano(args: { mes?: string; desde?: string; h
   }
 }
 
+/* ===== F-REPORTE-FACTURACION: dataset para el reporte de facturación emitida ===== */
+
+/** Porción de una factura atribuible a un centro de costo (una fila cruda = una línea/CC). */
+export interface LineaCCReporte {
+  ccId: string;      // record-id del CENTRO_COSTO ('' si la línea no tiene)
+  total: number;
+  subtotal: number;
+  iva: number;
+}
+
+/**
+ * Factura consolidada con lo necesario para el reporte de facturación
+ * emitida: fecha, montos con desglose subtotal/IVA y la porción por
+ * centro de costo (para filtrar por línea sin sobre-atribuir el TOTAL,
+ * mismo criterio que InvoiceLiviano.montoPorCC pero con subtotal/IVA).
+ * Incluye TODOS los estados — el caller decide qué excluir (el reporte
+ * excluye anuladas/refacturadas y las cuenta aparte).
+ */
+export interface FacturaReporte {
+  id: string;
+  noFactura: string;
+  custId: string;
+  /** YYYY-MM-DD del principal ('' si la factura no tiene fecha — existe 1 fila basura). */
+  fecha: string;
+  estadoBruto: InvoiceEstadoBruto;
+  total: number;
+  subtotal: number;
+  iva: number;
+  lineasCC: LineaCCReporte[];
+  numLineas: number;
+}
+
+/**
+ * Trae TODAS las facturas consolidadas (sin filtro de fecha — ~1100 líneas,
+ * volumen chico) con los campos del reporte. Misma regla de bucket que
+ * getFacturasLiviano/consolidateRecords: anuladas y refacturadas quedan
+ * como rows individuales, no se consolidan con las activas.
+ */
+export async function getFacturasReporte(): Promise<FacturaReporte[]> {
+  if ((USE_MOCK || !airtable) && dataSource('facturas_clientes') !== 'supabase') {
+    return MOCK_INVOICES.map(i => ({
+      id: i.id,
+      noFactura: i.noFactura,
+      custId: i.custId,
+      fecha: (i.fechaEmision ?? '').slice(0, 10),
+      estadoBruto: i.estadoBruto,
+      total: i.total,
+      subtotal: i.total,
+      iva: 0,
+      lineasCC: [{ ccId: '', total: i.total, subtotal: i.total, iva: 0 }],
+      numLineas: i.lineas?.length ?? 1,
+    }));
+  }
+  try {
+    const FIELDS = [F.NO_FACTURA, F.FECHA_EMISION, F.CLIENTE, F.CENTRO_COSTO, F.SUBTOTAL, F.IVA, F.TOTAL, F.ESTADO];
+    const records: ReadonlyArray<{ id: string; fields: FieldSet | Record<string, unknown> }> =
+      dataSource('facturas_clientes') === 'supabase'
+        ? await sbFacturasRecords()
+        : await airtable!(TABLES.FACTURAS).select({ fields: FIELDS }).all();
+
+    type Row = { id: string; fields: Record<string, unknown> };
+    const buckets = new Map<string, { records: Row[]; brutos: InvoiceEstadoBruto[] }>();
+    for (const r of records) {
+      const row: Row = { id: r.id, fields: r.fields as Record<string, unknown> };
+      const bruto = brutoFromEstado(row.fields[F.ESTADO]);
+      const nf = String(row.fields[F.NO_FACTURA] ?? row.id);
+      const key = bruto === 'anulado' || bruto === 'refacturado'
+        ? `${nf}__${bruto}__${row.id}`
+        : nf;
+      const b = buckets.get(key) ?? { records: [] as Row[], brutos: [] };
+      b.records.push(row);
+      b.brutos.push(bruto);
+      buckets.set(key, b);
+    }
+
+    const PRIO: Record<InvoiceEstadoBruto, number> = {
+      cobrado_parcial: 6, pendiente: 5, emitida: 4, cobrado: 3, anulado: 1, refacturado: 0, otro: 0,
+    };
+    const out: FacturaReporte[] = [];
+    for (const [, bucket] of buckets) {
+      const principal = bucket.records.reduce((a, b) =>
+        Number(b.fields[F.TOTAL] ?? 0) > Number(a.fields[F.TOTAL] ?? 0) ? b : a,
+      );
+      const brutoDominante = bucket.brutos.reduce((acc, b) =>
+        PRIO[b] > PRIO[acc] ? b : acc, bucket.brutos[0],
+      );
+      const lineasCC: LineaCCReporte[] = bucket.records.map(r => {
+        const total = Number(r.fields[F.TOTAL] ?? 0);
+        const iva = Number(r.fields[F.IVA] ?? 0);
+        // SUBTOTAL en Airtable era fórmula (= TOTAL - IVA); si falta, se deriva.
+        const subtotalRaw = Number(r.fields[F.SUBTOTAL] ?? NaN);
+        const subtotal = Number.isFinite(subtotalRaw) ? subtotalRaw : total - iva;
+        const ccArr = r.fields[F.CENTRO_COSTO] as string[] | undefined;
+        return {
+          ccId: Array.isArray(ccArr) && ccArr.length > 0 ? String(ccArr[0]) : '',
+          total, subtotal, iva,
+        };
+      });
+      out.push({
+        id: principal.id,
+        noFactura: String(principal.fields[F.NO_FACTURA] ?? principal.id),
+        custId: String((principal.fields[F.CLIENTE] as string[] | undefined)?.[0] ?? ''),
+        fecha: String(principal.fields[F.FECHA_EMISION] ?? '').slice(0, 10),
+        estadoBruto: brutoDominante,
+        total: lineasCC.reduce((s, l) => s + l.total, 0),
+        subtotal: lineasCC.reduce((s, l) => s + l.subtotal, 0),
+        iva: lineasCC.reduce((s, l) => s + l.iva, 0),
+        lineasCC,
+        numLineas: bucket.records.length,
+      });
+    }
+    return out;
+  } catch (err) {
+    console.error('Error fetching facturas reporte:', err);
+    return [];
+  }
+}
+
 /* ===== F-BF-002b/c: Top clientes — agregación reutilizable =====
  * La lógica vive en src/lib/facturacion/top-clientes.ts (una sola
  * fuente de verdad para la card UI y para las Auros tools). Acá

@@ -48,6 +48,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
       { href: '/dashboard',    label: 'Dashboard',    icon: 'Dashboard' },
       { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: facturasBadge },
       { href: '/facturacion/pendientes', label: 'Pendientes de cobro', icon: 'Clock' },   // F-CXC-PEND
+      { href: '/reportes/facturacion', label: 'Reporte Facturación', icon: 'TrendUp' },   // F-REPORTE-FACTURACION
       { href: '/notas-credito',label: 'Notas de Crédito', icon: 'Receipt', badge: ncsBadge },   // F-045
       { href: '/cobros',       label: 'Cobros',       icon: 'Coins' },
       { href: '/cobros/identificar', label: 'Identificar pago', icon: 'Search' },

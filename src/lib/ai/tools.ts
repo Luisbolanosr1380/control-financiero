@@ -12,7 +12,7 @@
  */
 import { tool } from 'ai';
 import { z } from 'zod';
-import { getFacturas, getHistorialEdicionesFactura, getFacturasLiviano, computeTopClientesDelMes } from '@/lib/db/facturas';
+import { getFacturas, getHistorialEdicionesFactura, getFacturasLiviano, getFacturasReporte, computeTopClientesDelMes } from '@/lib/db/facturas';
 import { etiquetaMes } from '@/lib/utils/mes-activo';
 import {
   computeTopClientesRango,
@@ -20,6 +20,13 @@ import {
   resumenFacturadoCliente,
   resolverLineasNegocio,
 } from '@/lib/facturacion/top-clientes';
+import {
+  filtrarReporte,
+  totalesReporte,
+  reportePorCliente,
+  reportePorCentroCosto,
+  reportePorMes,
+} from '@/lib/facturacion/reporte';
 import { getCentrosCosto } from '@/lib/db/centros';
 import { generarEstadoResultados } from '@/lib/contabilidad/estado-resultados';
 import { generarBalanceGeneral } from '@/lib/contabilidad/balance-general';
@@ -166,6 +173,99 @@ export const aiTools = {
       const m = meta(input);
       const r = await getFacturadoPorRango(m.fecha_desde, m.fecha_hasta);
       return { metadata: m, ...r };
+    },
+  }),
+
+  getReporteFacturacion: tool({
+    description:
+      'F-REPORTE-FACTURACION: reporte de facturación EMITIDA (ventas) de un período, con desglose por cliente, ' +
+      'por línea de negocio y por mes. Es el mismo motor de /reportes/facturacion. Universo = todas las facturas ' +
+      'MENOS anuladas y refacturadas (se cuentan aparte en num_anuladas); cada factura cuenta por su TOTAL en su ' +
+      'mes de emisión. NO es cobranza: para saldos pendientes/vencidos usar getFacturasPendientesCobro. ' +
+      '\n\n`cliente` opcional (nombre, match parcial) filtra a un cliente — "¿cuánto le facturamos a Génesis en el Q2?". ' +
+      '`lineas` opcional filtra por líneas de negocio — "¿cuánto facturó TalentTrack este año?". Combinables. ' +
+      'USAR para informes de ventas: "cuánto facturamos en X período", rankings de clientes, mezcla de líneas, evolución mensual.',
+    parameters: periodoParams.extend({
+      cliente: z.string().optional()
+        .describe('Nombre del cliente (match parcial, ej: "genesis"). Si es ambiguo, la tool devuelve candidatos.'),
+      lineas: z.array(z.string()).optional()
+        .describe('Líneas de negocio, ej: ["poligrafia"], ["talenttrack", "socioeconomicos"].'),
+    }),
+    execute: async ({ periodo, desde, hasta, cliente, lineas }) => {
+      const m = meta({ periodo, desde, hasta });
+
+      let clienteIds: string[] = [];
+      let clienteResuelto: { id: string; nombre: string } | null = null;
+      if (cliente?.trim()) {
+        const rc = await resolverClienteId(cliente);
+        if (!rc.id) {
+          return {
+            ok: false,
+            error: `Cliente "${cliente}" no encontrado o ambiguo.`,
+            candidatos: rc.candidatos.map(c => c.name),
+          };
+        }
+        clienteIds = [rc.id];
+        clienteResuelto = { id: rc.id, nombre: rc.nombreEncontrado ?? cliente };
+      }
+
+      const centros = await getCentrosCosto();
+      let centroCostoIds: string[] = [];
+      let lineasNoResueltas: Array<{ input: string; candidatos: string[] }> = [];
+      if (lineas && lineas.length > 0) {
+        const rl = resolverLineasNegocio(lineas, centros);
+        centroCostoIds = rl.centroCostoIds;
+        lineasNoResueltas = rl.porInput
+          .filter(p => !p.ok)
+          .map(p => ({ input: p.input, candidatos: (p.candidatos ?? []).map(c => c.nombre) }));
+        if (centroCostoIds.length === 0) {
+          return {
+            ok: false,
+            error: `Ninguna línea de "${lineas.join(', ')}" se pudo resolver.`,
+            lineas_disponibles: centros.filter(c => c.activo).map(c => c.nombre),
+          };
+        }
+      }
+
+      const [facturas, clientes] = await Promise.all([getFacturasReporte(), getClientes()]);
+      const nombreCli = new Map(clientes.map(c => [c.id, c.name]));
+      const nombreCC = new Map(centros.map(c => [c.id, c.nombre]));
+
+      const { filtradas, numAnuladas } = filtrarReporte(facturas, {
+        desde: m.fecha_desde, hasta: m.fecha_hasta, clienteIds, centroCostoIds,
+      });
+      const tot = totalesReporte(filtradas);
+
+      return {
+        ok: true,
+        metadata: m,
+        cliente: clienteResuelto,
+        lineas_filtradas: centroCostoIds.map(id => nombreCC.get(id) ?? id),
+        lineas_no_resueltas: lineasNoResueltas,
+        total_facturado_Q: Math.round(tot.totalQ),
+        subtotal_Q:        Math.round(tot.subtotalQ),
+        iva_Q:             Math.round(tot.ivaQ),
+        num_facturas:      tot.numFacturas,
+        ticket_promedio_Q: Math.round(tot.ticketPromedioQ),
+        num_anuladas:      numAnuladas,
+        por_cliente: reportePorCliente(filtradas).slice(0, 10).map(g => ({
+          cliente: nombreCli.get(g.key) ?? (g.key || 'Sin cliente'),
+          monto_Q: Math.round(g.montoQ),
+          num_facturas: g.numFacturas,
+          pct: Number(g.pct.toFixed(1)),
+        })),
+        por_linea: reportePorCentroCosto(filtradas, centroCostoIds).map(g => ({
+          linea: nombreCC.get(g.key) ?? (g.key || 'Sin centro'),
+          monto_Q: Math.round(g.montoQ),
+          num_facturas: g.numFacturas,
+          pct: Number(g.pct.toFixed(1)),
+        })),
+        por_mes: reportePorMes(filtradas).map(g => ({
+          mes: g.key || 'sin_fecha',
+          monto_Q: Math.round(g.montoQ),
+          num_facturas: g.numFacturas,
+        })),
+      };
     },
   }),
 
