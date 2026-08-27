@@ -69,25 +69,30 @@ const SEMILLA: Semilla[] = [
 
   const { crearRoadmapItem, editarRoadmapItem, getRoadmapItems } = await import('../src/lib/db/roadmap');
 
-  // 1. Semilla (idempotente por título)
+  // 1. Semilla — SOLO si la tabla está vacía. Si el dueño ya cargó sus
+  // ítems (p.ej. vía SQL con otros títulos), sembrar encima crearía
+  // casi-duplicados (pasó el 2026-08-27: 11 duplicados barridos a mano).
   console.log('1. Semilla');
   const existentes = await getRoadmapItems();
-  const titulos = new Set(existentes.map(i => i.titulo));
   let sembrados = 0;
-  for (const s of SEMILLA) {
-    if (titulos.has(s.titulo)) continue;
-    const r = await crearRoadmapItem({
-      titulo: s.titulo, categoria: s.categoria, estado: s.estado,
-      prioridad: s.prioridad ?? 'Media', impacto: s.impacto, notas: s.notas, orden: s.orden,
-    });
-    if (r.ok) sembrados++;
-    else console.log(`  🔴 semilla "${s.titulo}": ${r.error}`);
+  if (existentes.length === 0) {
+    for (const s of SEMILLA) {
+      const r = await crearRoadmapItem({
+        titulo: s.titulo, categoria: s.categoria, estado: s.estado,
+        prioridad: s.prioridad ?? 'Media', impacto: s.impacto, notas: s.notas, orden: s.orden,
+      });
+      if (r.ok) sembrados++;
+      else console.log(`  🔴 semilla "${s.titulo}": ${r.error}`);
+    }
+  } else {
+    console.log(`  · tabla con ${existentes.length} ítems — semilla omitida (solo siembra en vacío)`);
   }
   const trasSemilla = await getRoadmapItems();
-  ok(trasSemilla.length >= SEMILLA.length, `semilla cargada: ${sembrados} nuevos, ${trasSemilla.length} totales (${SEMILLA.length} esperados mínimo)`);
-  ok(trasSemilla.filter(i => i.estado === 'Hecho').every(i => !!i.fechaHecho), 'los Hecho de la semilla tienen fecha_hecho sellada');
+  ok(trasSemilla.length >= Math.min(SEMILLA.length, existentes.length || SEMILLA.length), `${sembrados} sembrados, ${trasSemilla.length} totales`);
+  ok(trasSemilla.filter(i => i.estado === 'Hecho').every(i => !!i.fechaHecho), 'todos los Hecho tienen fecha_hecho sellada');
+  ok(trasSemilla.every(i => !!i.id), 'todos los ítems tienen id de app (edición desde la UI funciona)');
   const altas = trasSemilla.filter(i => i.prioridad === 'Alta' && i.estado === 'Pendiente');
-  ok(altas.length >= 3, `alta prioridad pendiente: ${altas.length} (financiero ×2 + reunión contador)`);
+  ok(altas.length >= 3, `alta prioridad pendiente: ${altas.length}`);
 
   // 2. CRUD con ítem TEST
   console.log('2. CRUD');

@@ -28,6 +28,8 @@ import {
   reportePorMes, rangoAnterior, type EstadoFiltroReporte,
 } from '@/lib/facturacion/reporte';
 import { construirCsvReporte, nombreArchivoExport } from '@/lib/facturacion/reporte-csv';
+// F-EXPORT-CONFIG: selector de período compartido con el export de cobros.
+import { PeriodoSelector, rangoDePreset, type PresetPeriodo, type RangoPeriodo } from '@/components/common/periodo-selector';
 
 interface Props {
   facturas: FacturaReporte[];
@@ -36,16 +38,7 @@ interface Props {
 }
 
 type Vista = 'cliente' | 'linea' | 'mes' | 'detalle';
-type Preset = 'este_mes' | 'mes_anterior' | 'trimestre' | 'este_anio' | 'anio_anterior' | 'historico';
-
-const PRESETS: Array<{ key: Preset; label: string }> = [
-  { key: 'este_mes',      label: 'Este mes' },
-  { key: 'mes_anterior',  label: 'Mes anterior' },
-  { key: 'trimestre',     label: 'Este trimestre' },
-  { key: 'este_anio',     label: 'Este año' },
-  { key: 'anio_anterior', label: 'Año anterior' },
-  { key: 'historico',     label: 'Histórico' },
-];
+type Preset = PresetPeriodo;
 
 const VISTAS: Array<{ key: Vista; label: string }> = [
   { key: 'cliente', label: 'Por cliente' },
@@ -76,28 +69,6 @@ const DETALLE_MAX = 300;
 const pad2 = (n: number) => String(n).padStart(2, '0');
 const ultimoDia = (y: number, m1: number) => new Date(y, m1, 0).getDate();
 
-function rangoDePreset(preset: Preset): { desde: string; hasta: string } {
-  const mesActual = mesActualGT();
-  const y = Number(mesActual.slice(0, 4));
-  const m = Number(mesActual.slice(5, 7));
-  switch (preset) {
-    case 'este_mes':
-      return { desde: `${y}-${pad2(m)}-01`, hasta: `${y}-${pad2(m)}-${pad2(ultimoDia(y, m))}` };
-    case 'mes_anterior': {
-      const py = m === 1 ? y - 1 : y;
-      const pm = m === 1 ? 12 : m - 1;
-      return { desde: `${py}-${pad2(pm)}-01`, hasta: `${py}-${pad2(pm)}-${pad2(ultimoDia(py, pm))}` };
-    }
-    case 'trimestre': {
-      const q0 = Math.floor((m - 1) / 3) * 3 + 1;
-      return { desde: `${y}-${pad2(q0)}-01`, hasta: `${y}-${pad2(q0 + 2)}-${pad2(ultimoDia(y, q0 + 2))}` };
-    }
-    case 'este_anio':     return { desde: `${y}-01-01`,     hasta: `${y}-12-31` };
-    case 'anio_anterior': return { desde: `${y - 1}-01-01`, hasta: `${y - 1}-12-31` };
-    case 'historico':
-    default:              return { desde: '', hasta: '' };
-  }
-}
 
 function labelMes(ym: string): string {
   if (!ym) return '—';
@@ -113,10 +84,8 @@ function fechaHumana(iso: string): string {
 }
 
 export function FacturacionReporteClient({ facturas, clientes, centros }: Props) {
-  const [preset, setPreset] = useState<Preset | null>('este_anio');
-  const inicial = rangoDePreset('este_anio');
-  const [desde, setDesde] = useState(inicial.desde);
-  const [hasta, setHasta] = useState(inicial.hasta);
+  const [rango, setRango] = useState<RangoPeriodo>(() => ({ preset: 'este_anio' as Preset, ...rangoDePreset('este_anio') }));
+  const { desde, hasta } = rango;
   const [clienteIds, setClienteIds] = useState<string[]>([]);
   const [ccIds, setCcIds] = useState<string[]>([]);
   const [estado, setEstado] = useState<EstadoFiltroReporte>('todas');
@@ -138,21 +107,6 @@ export function FacturacionReporteClient({ facturas, clientes, centros }: Props)
       .sort((a, b) => b[1] - a[1])
       .map(([id]) => id);
   }, [facturas]);
-
-  const aplicarPreset = (p: Preset) => {
-    const r = rangoDePreset(p);
-    setPreset(p);
-    setDesde(r.desde);
-    setHasta(r.hasta);
-  };
-
-  const setMes = (ym: string) => {
-    if (!ym) return;
-    const [y, m] = ym.split('-').map(Number);
-    setPreset(null);
-    setDesde(`${y}-${pad2(m)}-01`);
-    setHasta(`${y}-${pad2(m)}-${pad2(ultimoDia(y, m))}`);
-  };
 
   const filtros = useMemo(() => ({
     desde: desde || undefined,
@@ -264,33 +218,7 @@ export function FacturacionReporteClient({ facturas, clientes, centros }: Props)
       {/* ── Filtros ─────────────────────────────────────────────── */}
       {/* overflow visible: .card recorta con overflow hidden y el dropdown de clientes se abre hacia abajo */}
       <div className="card card-pad" style={{ marginBottom: 16, display: 'flex', flexDirection: 'column', gap: 10, overflow: 'visible' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
-          {PRESETS.map(p => (
-            <button
-              key={p.key}
-              className="chip"
-              onClick={() => aplicarPreset(p.key)}
-              style={preset === p.key ? { background: 'var(--ink)', color: 'var(--paper)', borderColor: 'var(--ink)' } : undefined}
-            >
-              {p.label}
-            </button>
-          ))}
-          <span style={{ width: 1, height: 20, background: 'var(--line)', margin: '0 4px' }} />
-          <input
-            type="month"
-            className="input"
-            value={desde && desde.slice(0, 7) === hasta.slice(0, 7) ? desde.slice(0, 7) : ''}
-            onChange={e => setMes(e.target.value)}
-            title="Un mes específico"
-            style={{ width: 150 }}
-          />
-          <span style={{ fontSize: 11.5, color: 'var(--ink-4)' }}>o rango</span>
-          <input type="date" className="input" value={desde} max={hasta || undefined}
-            onChange={e => { setPreset(null); setDesde(e.target.value); }} style={{ width: 140 }} />
-          <span style={{ fontSize: 11.5, color: 'var(--ink-4)' }}>—</span>
-          <input type="date" className="input" value={hasta} min={desde || undefined}
-            onChange={e => { setPreset(null); setHasta(e.target.value); }} style={{ width: 140 }} />
-        </div>
+        <PeriodoSelector value={rango} onChange={setRango} />
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
           <MultiSelectClientes
             clientes={clientes}

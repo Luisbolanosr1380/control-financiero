@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { I } from '@/components/common/icons';
 import { Q, formatDateDDMMYYYY } from '@/lib/utils';
 import { cargarMasCobrosAction } from '@/app/(app)/cobros/actions';
+import { ExportarCobrosModal } from '@/components/cobros/exportar-cobros-modal';
 import type { CobroListado } from '@/lib/db/cobros';
 import type { Customer } from '@/lib/types';
 
@@ -19,6 +20,7 @@ interface Props {
 }
 
 export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFecha, cobrosCompletos, clientes, mesActivo }: Props) {
+  const [showExport, setShowExport] = useState(false);
   const [cobros, setCobros] = useState<CobroListado[]>(initialCobros);
   const [hayMas, setHayMas] = useState(initialHayMas);
   const [ultimaFecha, setUltimaFecha] = useState<string | null>(initialUltimaFecha);
@@ -87,12 +89,15 @@ export function CobrosListClient({ initialCobros, initialHayMas, initialUltimaFe
           </div>
         </div>
         <div className="page-actions">
-          <button className="btn btn-secondary"><I.Download size={13} /> Exportar</button>
+          {/* F-EXPORT-CONFIG: antes era un botón muerto — ahora abre el export por período. */}
+          <button className="btn btn-secondary" onClick={() => setShowExport(true)}><I.Download size={13} /> Exportar</button>
           <Link href="/facturacion?tab=por_cobrar" className="btn btn-primary">
             <I.Plus size={13} /> Registrar cobro
           </Link>
         </div>
       </div>
+
+      {showExport && <ExportarCobrosModal clientes={clientes} onClose={() => setShowExport(false)} />}
 
       {/* Aviso: cómo se registra un cobro */}
       <div className="card" style={{ marginBottom: 18, background: 'var(--paper-2)' }}>
