@@ -282,12 +282,13 @@ function sumarISO(fechaISO: string, dias: number): string {
 
 export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
   const hoy = obtenerFechaHoyGuatemala();
-  const [rows, cobros] = await Promise.all([
+  const [rows, cobros, ncs] = await Promise.all([
     fetchAll<FacturaRow>('facturas_clientes', {
       select: '*, cliente:clientes(airtable_id, dias_credito, razon_social), centro:centros_costo(airtable_id)',
       order: { column: 'fecha_emision', ascending: false },
     }),
     fetchAll<Row>('cobros_clientes', { select: 'factura_id, monto_cobrado' }),
+    fetchAll<Row>('notas_credito', { select: 'factura_id, monto, estado' }),
   ]);
   // Cobrado por línea de factura (para Saldo_Por_Cobrar de COBRADO PARCIAL).
   const cobradoPorFactura = new Map<string, number>();
@@ -295,6 +296,16 @@ export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
     const fid = c.factura_id as string | null;
     if (!fid) continue;
     cobradoPorFactura.set(fid, (cobradoPorFactura.get(fid) ?? 0) + (n(c.monto_cobrado) ?? 0));
+  }
+  // FIX-NC-PENDIENTES: las NC ACTIVAS también reducen el saldo por cobrar
+  // (F-045: solo 'Activa' resta — Borrador/Pendiente Aprobación/Anulada no).
+  // saldo = TOTAL − cobros − NC activas. Este es EL cálculo del saldo: todo
+  // lo que muestra saldos (pendientes, aging, Auros, flujo) lee este campo.
+  const acreditadoPorFactura = new Map<string, number>();
+  for (const nc of ncs) {
+    const fid = nc.factura_id as string | null;
+    if (!fid || String(nc.estado ?? '').trim() !== 'Activa') continue;
+    acreditadoPorFactura.set(fid, (acreditadoPorFactura.get(fid) ?? 0) + (n(nc.monto) ?? 0));
   }
 
   // Orden Airtable: FECHA_EMISION desc, desempate por createdTime.
@@ -314,6 +325,7 @@ export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
       : diferenciaDias(fechaVence, hoy);
     const total = n(r.total) ?? 0;
     const cobrado = cobradoPorFactura.get(String(r.id)) ?? 0;
+    const acreditado = acreditadoPorFactura.get(String(r.id)) ?? 0;
     const fechaUltimaEdicion = r.fecha_ultima_edicion
       ? new Date(String(r.fecha_ultima_edicion)).toISOString()
       : undefined;
@@ -334,7 +346,7 @@ export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
         'SUBTOTAL':            n(r.subtotal),
         'IVA':                 n(r.iva),
         'TOTAL':               n(r.total),
-        'Saldo_Por_Cobrar':    round2(Math.max(0, total - cobrado)),
+        'Saldo_Por_Cobrar':    round2(Math.max(0, total - cobrado - acreditado)),
         'ESTADO':              s(r.estado),
         'Estatus_Cobranza':    diasVencidos !== undefined && diasVencidos > 0 ? 'VENCIDA' : 'POR VENCER',
         'Dias vencidos':       diasVencidos,

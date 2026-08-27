@@ -142,19 +142,22 @@ function recordToRaw(record: { id: string; fields: FieldSet }): RawRow {
   const estatusCobranza = String(f[F.ESTATUS_COBRANZA] ?? '').toUpperCase().trim();
   const vencida = (estadoBruto === 'emitida' || estadoBruto === 'pendiente') && estatusCobranza === 'VENCIDA';
 
-  // F-035: balance derivado del estado.
-  // - EMITIDA/PENDIENTE: sin cobros → balance = TOTAL.
-  // - COBRADO PARCIAL: hubo cobros previos → balance = Saldo_Por_Cobrar de Airtable
-  //   (fórmula = TOTAL - sum(Monto_Cobro_GTQ from COBROS_CLIENTES)).
+  // F-035 + FIX-NC-PENDIENTES: balance derivado del estado.
+  // - EMITIDA/PENDIENTE/COBRADO PARCIAL: balance = Saldo_Por_Cobrar cuando el
+  //   campo viene en el record. La ruta Supabase (sbFacturasRecords) lo emite
+  //   SIEMPRE con el cálculo canónico: TOTAL − cobros − NC ACTIVAS — antes las
+  //   emitidas usaban TOTAL a secas y las facturas con nota de crédito
+  //   sobre-reportaban su saldo en pendientes/aging/Auros.
   // - COBRADO/ANULADO/REFACTURADO: 0.
-  // El campo Saldo_Por_Cobrar antes era buggy para emitidas/pendientes, por eso
-  // se ignoraba globalmente. Para COBRADO PARCIAL la fórmula es la única fuente
-  // de verdad disponible al mapear; el detalle puede confirmar con getSaldoPendiente.
-  const saldoLookup = Number(f[F.SALDO] ?? 0);
+  // Fallback a TOTAL solo si el campo no viene (rama Airtable dormida, cuyo
+  // Saldo_Por_Cobrar era buggy para emitidas — por eso se ignoraba).
+  const saldoRaw = f[F.SALDO];
+  const saldoEmitido: number | null =
+    saldoRaw === undefined || saldoRaw === null || !Number.isFinite(Number(saldoRaw)) ? null : Number(saldoRaw);
   const balance =
-    estadoBruto === 'emitida' || estadoBruto === 'pendiente'  ? totalRaw
-  : estadoBruto === 'cobrado_parcial'                         ? (saldoLookup > 0 ? saldoLookup : totalRaw)
-  : 0;
+    estadoBruto === 'emitida' || estadoBruto === 'pendiente' || estadoBruto === 'cobrado_parcial'
+      ? (saldoEmitido ?? totalRaw)
+      : 0;
 
   const adjunto = (f[F.ADJUNTO] as Array<{ url?: string; filename?: string }> | undefined)?.[0];
   const ccId = String((f[F.CENTRO_COSTO] as string[] | undefined)?.[0] ?? '');
