@@ -50,6 +50,7 @@ import { buscarProveedorPorNit } from '@/lib/gastos/services/buscar-o-crear-prov
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
 import { getTopDeudores } from '@/lib/db/kpis';
+import { EMPRESA_EMPLEADORA_DEFAULT } from '@/lib/empleados/empresa';
 import { getFacturasPendientesCobro, AGING_LABEL, type FacturaPendiente } from '@/lib/db/facturas-pendientes';
 import { getGestionesCobro, getResumenGestiones } from '@/lib/db/gestiones-cobro';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
@@ -1982,7 +1983,7 @@ export const aiTools = {
           empresa,
           cantidad: v.cantidad,
           mensual_Q: Math.round(v.mensual_Q),
-          es_intercompany: empresa !== 'Golden Talent' && empresa !== 'Otra',
+          es_intercompany: empresa !== EMPRESA_EMPLEADORA_DEFAULT && empresa !== 'Otra',
         }))
         .sort((a, b) => b.mensual_Q - a.mensual_Q);
 

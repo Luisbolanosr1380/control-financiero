@@ -9,7 +9,7 @@ import { HelpButton } from '@/components/ayuda/help-button';
 import { ModalEmpleadoForm } from './modal-empleado-form';
 import {
   EMPRESAS_EMPLEADORAS,
-  EMPRESA_BADGE_COLOR,
+  badgeColorEmpresa,
   esGolden,
   type EmpresaEmpleadora,
 } from '@/lib/empleados/empresa';
@@ -26,6 +26,9 @@ interface Props {
   centros: Array<{ id: string; nombre: string }>;
   planillaPorCC: PlanillaPorCentroCosto;
   resumenPendientes: ResumenSalariosPendientesConsolidado;
+  /** MULTI-EMPRESA: opciones del catálogo empresas_relacionadas (la página
+   *  las pasa desde el server); fallback = labels legacy. */
+  opcionesEmpresas?: readonly string[];
 }
 
 // F-042 paleta para barras CC — alineada con tokens del sistema.
@@ -39,7 +42,7 @@ const CC_COLORS = ['var(--olive)', 'var(--wine)', 'var(--amber)', 'var(--indigo)
 type DonutModo = 'departamento' | 'centro_costo';
 const DONUT_KEY = 'fc.empleados.donut-modo';
 
-export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, resumenPendientes }: Props) {
+export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, resumenPendientes, opcionesEmpresas = EMPRESAS_EMPLEADORAS }: Props) {
   const router = useRouter();
   const [statusFiltro, setStatusFiltro]   = useState<'todos' | 'ACTIVO' | 'INACTIVO'>('todos');
   const [departamento, setDepartamento]   = useState('');
@@ -105,7 +108,7 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
   const conteosPorEmpresa = useMemo(() => {
     const m = new Map<EmpresaEmpleadora, number>();
     for (const e of empleados) m.set(e.empresaEmpleadora, (m.get(e.empresaEmpleadora) ?? 0) + 1);
-    return EMPRESAS_EMPLEADORAS.map(emp => ({ empresa: emp, cantidad: m.get(emp) ?? 0 }))
+    return opcionesEmpresas.map(emp => ({ empresa: emp, cantidad: m.get(emp) ?? 0 }))
       .filter(x => x.cantidad > 0);
   }, [empleados]);
 
@@ -204,7 +207,7 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
           </select>
           <select value={empresaFiltro} onChange={(e) => setEmpresaFiltro(e.target.value as EmpresaEmpleadora | 'todas')} style={selectStyle}>
             <option value="todas">Empresa (todas)</option>
-            {EMPRESAS_EMPLEADORAS.map(emp => <option key={emp} value={emp}>{emp}</option>)}
+            {opcionesEmpresas.map(emp => <option key={emp} value={emp}>{emp}</option>)}
           </select>
           <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--ink-3)' }}>
             <input type="checkbox" checked={soloConPendientes} onChange={(e) => setSoloPend(e.target.checked)} />
@@ -267,8 +270,8 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
                         fontSize: 10,
                         fontWeight: 500,
                         letterSpacing: '0.04em',
-                        color: EMPRESA_BADGE_COLOR[e.empresaEmpleadora].fg,
-                        background: EMPRESA_BADGE_COLOR[e.empresaEmpleadora].bg,
+                        color: badgeColorEmpresa(e.empresaEmpleadora).fg,
+                        background: badgeColorEmpresa(e.empresaEmpleadora).bg,
                         borderRadius: 4,
                         verticalAlign: 'middle',
                       }} title={`Empresa empleadora: ${e.empresaEmpleadora}`}>

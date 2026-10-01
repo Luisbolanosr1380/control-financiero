@@ -28,6 +28,7 @@
  *  · Reportes de saldos vivos de CxC intercompany.
  */
 
+import { EMPRESA_EMPLEADORA_DEFAULT } from '@/lib/empleados/empresa';
 import {
   CXC_INTERCOMPANY,
   type EmpresaIntercompany,
@@ -102,7 +103,7 @@ export function cuentaCxCDeEmpresa(empresa: EmpresaEmpleadora): {
   codigo: string;
   empresa: EmpresaIntercompany;
 } | undefined {
-  if (empresa === 'Golden Talent') return undefined;
+  if (empresa === EMPRESA_EMPLEADORA_DEFAULT) return undefined;
   const conf = (CXC_INTERCOMPANY as Record<string, typeof CXC_INTERCOMPANY[EmpresaIntercompany]>)[empresa];
   return conf ? { recordId: conf.recordId, codigo: conf.codigo, empresa: conf.empresa } : undefined;
 }
@@ -116,7 +117,7 @@ export function proyectarAsientoPlanilla(input: ProyectarAsientoInput): AsientoP
   const agg = new Map<EmpresaEmpleadora, { totalQ: number; numEmpleados: number }>();
   let totalNetoQ = 0;
   for (const l of input.lineas) {
-    const emp = empresaPorEmpleado.get(l.empleadoId) ?? 'Golden Talent';
+    const emp = empresaPorEmpleado.get(l.empleadoId) ?? EMPRESA_EMPLEADORA_DEFAULT;
     const b = agg.get(emp) ?? { totalQ: 0, numEmpleados: 0 };
     b.totalQ      += l.netoPagar;
     b.numEmpleados += 1;

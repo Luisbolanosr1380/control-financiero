@@ -27,6 +27,8 @@ interface Props {
   obligacion: ObligacionRecurrente | null;
   onCerrar: () => void;
   onGuardado: () => void;
+  /** MULTI-EMPRESA: catálogo empresas_relacionadas (fallback legacy). */
+  opcionesEmpresas?: readonly string[];
 }
 
 const PRIORIDAD_DOT: Record<PrioridadObligacion, string> = {
@@ -36,7 +38,7 @@ const PRIORIDAD_DOT: Record<PrioridadObligacion, string> = {
   'Baja':    'var(--ink-5)',
 };
 
-export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props) {
+export function ModalObligacionForm({ obligacion, onCerrar, onGuardado, opcionesEmpresas = POR_CUENTA_DE_OPCIONES }: Props) {
   const editando = !!obligacion;
   const [nombre, setNombre]               = useState(obligacion?.nombre ?? '');
   const [tipo, setTipo]                   = useState<TipoObligacion>(obligacion?.tipo ?? 'Renta');
@@ -204,7 +206,7 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado }: Props)
               onChange={(e) => setPorCuentaDe(e.target.value as PorCuentaDe)}
               style={inputStyle}
             >
-              {POR_CUENTA_DE_OPCIONES.map(p => <option key={p} value={p}>{p}</option>)}
+              {opcionesEmpresas.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
           </Field>
 

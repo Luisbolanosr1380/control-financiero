@@ -1,3 +1,4 @@
+import { getOpcionesEmpresas } from '@/lib/db/empresas-relacionadas';
 import {
   getEmpleados,
   getKPIsPlanilla,
@@ -18,10 +19,12 @@ export default async function EmpleadosPage() {
     getResumenSalariosPendientesConsolidado(),
   ]);
   const centrosUI = centros.map(c => ({ id: c.id, nombre: c.nombre }));
+  const opcionesEmpresas = await getOpcionesEmpresas();
   return (
     <EmpleadosListClient
       empleados={empleados}
       kpis={kpis}
+      opcionesEmpresas={opcionesEmpresas}
       centros={centrosUI}
       planillaPorCC={planillaPorCC}
       resumenPendientes={resumenPendientes}
