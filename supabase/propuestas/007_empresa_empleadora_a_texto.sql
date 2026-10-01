@@ -18,10 +18,28 @@
 --   4. Se elimina el tipo enum (ya sin dependientes).
 --
 -- Validada contra una base efímera con datos estilo Golden (ver
--- MULTIEMPRESA_PROPUESTAS.md). Idempotente razonable: re-ejecutarla
--- sobre una base ya migrada falla limpio en el primer ALTER (columna
--- ya text) sin tocar datos.
+-- MULTIEMPRESA_PROPUESTAS.md). IDEMPOTENTE: re-ejecutarla sobre una
+-- base ya migrada pasa limpio sin alterar datos (text→text es cast
+-- válido, drop/create llevan IF EXISTS, el insert ON CONFLICT).
+--
+-- DEPENDENCIAS DEL TIPO — verificadas contra Golden (solo lectura,
+-- 2026-10-01, pg_attribute/pg_proc/pg_constraint/pg_rewrite/pg_attrdef):
+--   · Columnas: SOLO las 2 que migra este script (más el índice
+--     idx_empleados_empresa sobre empleados.empresa_empleadora, que
+--     Postgres reconstruye automáticamente con el ALTER TYPE).
+--   · Funciones/RPCs: NINGUNA lo recibe ni lo devuelve.
+--   · Dominios, constraints, vistas: ninguno.
+--   · Defaults: los 2 que este script repone como texto.
+-- → el DROP TYPE del final no deja nada colgando.
+--
+-- TRANSACCIÓN: todo-o-nada — si cualquier paso falla, Golden queda
+-- exactamente como estaba. (Si se aplica vía migrar-todas, que ya
+-- envuelve cada archivo en su transacción, este BEGIN/COMMIT interno
+-- es redundante pero inofensivo; está para la aplicación manual en el
+-- SQL Editor, que es el plan del Paso 4.)
 -- ============================================================
+
+begin;
 
 -- 1-2. enum → text, conservando los defaults actuales
 alter table empleados alter column empresa_empleadora drop default;
@@ -58,3 +76,5 @@ from (
   select distinct por_cuenta_de from obligaciones_recurrentes where por_cuenta_de is not null
 ) as v(nombre)
 on conflict (nombre) do nothing;
+
+commit;
