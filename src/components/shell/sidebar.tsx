@@ -111,9 +111,12 @@ interface SidebarProps {
   ncsPendientesCount?: number;            // F-045
   rol?: Role;
   email?: string;
+  /** MULTI-EMPRESA 1-D: marca por deploy (defaults = Golden histórico). */
+  marcaNombre?: string;
+  marcaSub?: string;
 }
 
-export function Sidebar({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol }: SidebarProps = {}) {
+export function Sidebar({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, marcaNombre, marcaSub }: SidebarProps = {}) {
   const pathname = usePathname();
   const NAV = buildNav({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol });
 
@@ -129,8 +132,8 @@ export function Sidebar({ facturasVencidasCount, deudasVencidasCount, pagosPendi
       <div className="sidebar-brand">
         <div className="brand-mark">CF</div>
         <div>
-          <div className="brand-name">Control Financiero</div>
-          <div className="brand-sub">Sistema operativo</div>
+          <div className="brand-name">{marcaNombre ?? 'Control Financiero'}</div>
+          <div className="brand-sub">{marcaSub ?? 'Sistema operativo'}</div>
         </div>
       </div>
 

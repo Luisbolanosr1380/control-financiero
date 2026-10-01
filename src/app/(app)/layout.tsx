@@ -5,6 +5,7 @@ import { getRolUsuario } from '@/lib/auth/allowlist';
 import { getLimiteAuros } from '@/lib/auth/permissions';
 import { getSidebarBadges } from '@/lib/db/sidebar-kpis';
 import { getConsumoMensual } from '@/lib/db/uso-auros';
+import { empresaConfig } from '@/lib/config/empresa';
 
 export default async function AppLayout({
   children,
@@ -30,6 +31,8 @@ export default async function AppLayout({
     try { consumoAuros = await getConsumoMensual(email); } catch { /* 0 */ }
   }
 
+  const marca = empresaConfig();
+
   return (
     <AppShell
       facturasVencidasCount={badges.facturasVencidas}
@@ -41,6 +44,8 @@ export default async function AppLayout({
       email={email}
       consumoAuros={consumoAuros}
       limiteAuros={limiteAuros}
+      marcaNombre={marca.nombreSistema}
+      marcaSub={marca.subtitulo}
     >{children}</AppShell>
   );
 }

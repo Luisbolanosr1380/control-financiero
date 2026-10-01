@@ -91,7 +91,7 @@ function dibujarHeader(ctx: BoletaContext, periodo: Periodo) {
   const yTop = PAGE_H - MARGIN;
 
   // "GOLDEN TALENT GUATEMALA" como bloque de marca textual (placeholder de logo).
-  dibujarTexto(ctx, 'GOLDEN TALENT GUATEMALA', MARGIN, yTop - 8, { size: 14, bold: true, color: COLOR_OLIVE });
+  dibujarTexto(ctx, EMPRESA.razonSocial.replace(/,?\s*S\.?A\.?$/i, '').toUpperCase(), MARGIN, yTop - 8, { size: 14, bold: true, color: COLOR_OLIVE });
   dibujarTexto(ctx, EMPRESA.razonSocial, MARGIN, yTop - 22, { size: 8, color: COLOR_INK_3 });
   dibujarTexto(ctx, `NIT: ${EMPRESA.nit} · ${EMPRESA.direccion}`, MARGIN, yTop - 33, { size: 8, color: COLOR_INK_4 });
 

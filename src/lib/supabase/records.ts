@@ -282,6 +282,10 @@ function sumarISO(fechaISO: string, dias: number): string {
 
 export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
   const hoy = obtenerFechaHoyGuatemala();
+  // MULTI-EMPRESA 1-C: siembra el mapa CC→línea desde la base antes de
+  // que los mappers sync lo consulten (fail-soft adentro).
+  const { asegurarMapaLineas } = await import('../config/lineas');
+  await asegurarMapaLineas();
   const [rows, cobros, ncs] = await Promise.all([
     fetchAll<FacturaRow>('facturas_clientes', {
       select: '*, cliente:clientes(airtable_id, dias_credito, razon_social), centro:centros_costo(airtable_id)',
