@@ -24,6 +24,8 @@
  */
 
 export interface EmpresaConfig {
+  /** Identificador del deploy para permisos (Clerk metadata.empresas[].slug). */
+  slug: string;
   nombre: string;          // corto — UI, Auros, selector
   nombreLegal: string;     // razón social — boletas y documentos
   nit: string;
@@ -44,6 +46,7 @@ export interface EmpresaConfig {
 }
 
 const DEFAULTS_GOLDEN: EmpresaConfig = {
+  slug: 'golden',
   nombre: 'Golden Talent',
   nombreLegal: 'Golden Talent Guatemala, S.A.',
   nit: '8439027-3',
@@ -69,6 +72,7 @@ export function empresaConfig(): EmpresaConfig {
   const e = process.env;
   const moneda = e.EMPRESA_MONEDA === 'USD' ? 'USD' : DEFAULTS_GOLDEN.moneda;
   return {
+    slug:          (e.EMPRESA_SLUG?.trim() || DEFAULTS_GOLDEN.slug).toLowerCase(),
     nombre:        e.EMPRESA_NOMBRE?.trim()         || DEFAULTS_GOLDEN.nombre,
     nombreLegal:   e.EMPRESA_NOMBRE_LEGAL?.trim()   || DEFAULTS_GOLDEN.nombreLegal,
     nit:           e.EMPRESA_NIT?.trim()            || DEFAULTS_GOLDEN.nit,
