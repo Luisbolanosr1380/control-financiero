@@ -141,14 +141,31 @@ empleados en 4 empresas + 3 obligaciones):
 
 ---
 
-## Qué queda para cuando despiertes (gates)
+## ✅ Paso 3 CONSTRUIDO (propuestas aprobadas el 2026-10-01)
 
-1. **Revisar Golden** en local: debería verse idéntica (Paso 1 ya
-   mergeable a tu criterio).
-2. **Aprobar/ajustar Propuesta 1** (enum→text+catálogo) → recién ahí
-   adapto el código y la migración entra a `migrations/`.
-   Aplicarla a Golden: Paso 4, con vos.
-3. **Aprobar/ajustar Propuesta 2** (permisos en Clerk metadata) →
-   recién ahí construyo el selector y el guard (Paso 3, local con
-   usuarios simulados).
-4. Clerk real (dominios satélite + metadata) y deploys: Paso 4.
+Commits `MULTIEMPRESA·P3a/P3b/P3c`. Probado con usuarios simulados
+(20/20) — sin Clerk real, sin tocar Golden:
+
+- **Catálogo** (`db/empresas-relacionadas.ts`): el código del enum lee
+  de `empresas_relacionadas` con fallback a los labels legacy mientras
+  la 007 no esté aplicada (verificado contra Golden real: tabla
+  inexistente → los 4 históricos, Golden Talent principal). Tipo
+  `EmpresaEmpleadora` → string; `esGolden()`/default = empresa
+  principal de la config; selects de UI con opciones por props;
+  literales 'Golden Talent' de la lógica intercompany reemplazados.
+- **Permisos + guard** (`auth/empresas-acceso.ts` + guard en el
+  layout): metadata ausente → modo compat (allowlist decide — Golden
+  intacta); presente sin el slug del deploy → fuera (⛔ validado:
+  usuario solo-HIT no ve datos de golden). `EMPRESA_SLUG` en config.
+- **Selector** (`/empresas`): 1 empresa → directo (local o deploy
+  externo, sin re-login); 2+ → tarjetas; 0 → sin acceso. Ítem
+  "Cambiar de empresa" en el sidebar solo con 2+ empresas.
+
+## Paso 4 — lo hacés vos despierto (nada de esto se tocó)
+
+1. Revisar la 007 conmigo → moverla a `migrations/` → aplicarla a
+   Golden.
+2. Clerk real: dominios de los deploys nuevos en la instancia (satellite
+   domains) + cargar `publicMetadata.empresas` a los usuarios.
+3. Deploys por empresa (bootstrap-empresa.md) con `EMPRESA_SLUG` y las
+   env `EMPRESA_*`.
