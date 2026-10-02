@@ -6,14 +6,20 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { crearClienteAction } from '@/app/(app)/clientes/actions';
+import type { Customer } from '@/lib/types';
 
 interface Props {
   onClose: () => void;
+  /** F-CLIENTE-INLINE: si está, al crear se entrega el cliente al caller
+   *  (para dejarlo seleccionado donde se invocó, ej. emitir factura). */
+  onCreado?: (cliente: Customer) => void;
+  /** Pre-carga del nombre (ej. lo que el usuario venía buscando). */
+  nombreInicial?: string;
 }
 
-export function ModalClienteForm({ onClose }: Props) {
+export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
   const router = useRouter();
-  const [nombreEmpresa, setNombreEmpresa]   = useState('');
+  const [nombreEmpresa, setNombreEmpresa]   = useState(nombreInicial ?? '');
   const [razonSocial, setRazonSocial]       = useState('');
   const [nit, setNit]                       = useState('');
   const [cuentaCxc, setCuentaCxc]           = useState('1-1-3-1');
@@ -57,6 +63,22 @@ export function ModalClienteForm({ onClose }: Props) {
       });
       if (res.ok) {
         toast.success(res.mensaje);
+        // Mismo shape que recordToCustomer para que el caller lo use de una.
+        onCreado?.({
+          id: res.clienteId,
+          name: nombreEmpresa.trim(),
+          short: nombreEmpresa.trim(),
+          nit: nit.trim(),
+          contact: '',
+          email: emailCobros.trim(),
+          phone: '',
+          credit: diasCredito.trim() === '' ? 30 : (parseInt(diasCredito, 10) || 0),
+          totalBalance: 0,
+          vencido: 0,
+          avgPayDays: 0,
+          onTimeRate: 0,
+          contextoComercial: contexto.trim() || undefined,
+        });
         onClose();
         router.refresh();
       } else {

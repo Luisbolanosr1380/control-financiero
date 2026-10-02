@@ -12,6 +12,7 @@ import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { crearFacturaAction, checkFacturaExiste } from '@/app/(app)/facturacion/nueva/actions';
 import type { Customer } from '@/lib/types';
 import type { CentroCosto } from '@/lib/db/centros';
+import { ModalClienteForm } from '@/components/clientes/modal-cliente-form';
 
 // Monto se maneja como string (texto crudo) mientras se escribe; se parsea para cálculos.
 const parseNum = (s: string): number => {
@@ -42,6 +43,10 @@ interface Props {
 
 export function NuevaFacturaClient({ clientes, centros }: Props) {
   const router = useRouter();
+  // F-CLIENTE-INLINE: lista local para que el cliente recién creado quede
+  // disponible y seleccionado sin esperar el refresh.
+  const [clientesLocal, setClientesLocal] = useState(clientes);
+  const [showNuevoCliente, setShowNuevoCliente] = useState(false);
   const [pending, setPending] = useState(false);
   const [clienteQuery, setClienteQuery] = useState('');
   const [clienteOpen, setClienteOpen] = useState(false);
@@ -91,12 +96,12 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
   const { fields, append, remove } = useFieldArray({ control, name: 'lineas' });
 
   const custId = watch('custId');
-  const clienteSel = clientes.find(c => c.id === custId);
+  const clienteSel = clientesLocal.find(c => c.id === custId);
   const lineas = watch('lineas');
 
   const filtrados = clienteQuery.trim()
-    ? clientes.filter(c => c.name.toLowerCase().includes(clienteQuery.toLowerCase())).slice(0, 20)
-    : clientes.slice(0, 20);
+    ? clientesLocal.filter(c => c.name.toLowerCase().includes(clienteQuery.toLowerCase())).slice(0, 20)
+    : clientesLocal.slice(0, 20);
 
   // Sumas (parseando los strings de cada línea)
   let sumTotal = 0, sumIva = 0;
@@ -152,6 +157,17 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)}>
+        {showNuevoCliente && (
+          <ModalClienteForm
+            nombreInicial={clienteQuery.trim()}
+            onCreado={(c) => {
+              setClientesLocal(prev => [...prev, c].sort((a, b) => a.name.localeCompare(b.name)));
+              setValue('custId', c.id, { shouldValidate: true });   // queda SELECCIONADO en la factura
+            }}
+            onClose={() => setShowNuevoCliente(false)}
+          />
+        )}
+
         {/* Encabezado (overflow visible para que el dropdown del cliente flote sobre la tabla) */}
         <div className="card" style={{ marginBottom: 18, overflow: 'visible' }}>
           <div className="card-pad" style={{ overflow: 'visible' }}>
@@ -187,6 +203,17 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
                     background: 'var(--paper)', border: '1px solid var(--line-2)', borderRadius: 'var(--r-2)',
                     maxHeight: 240, overflowY: 'auto', boxShadow: '0 8px 24px rgba(0,0,0,0.10)',
                   }}>
+                    <button
+                      type="button"
+                      onMouseDown={(e) => { e.preventDefault(); setShowNuevoCliente(true); setClienteOpen(false); }}
+                      style={{
+                        display: 'block', width: '100%', textAlign: 'left', padding: '8px 12px',
+                        fontSize: 12.5, fontWeight: 500, color: 'var(--olive)', background: 'transparent',
+                        border: 'none', borderBottom: '1px solid var(--line-3)', cursor: 'pointer',
+                      }}
+                    >
+                      ＋ Crear cliente nuevo{clienteQuery.trim() ? ` — "${clienteQuery.trim()}"` : ''}
+                    </button>
                     {filtrados.length === 0 ? (
                       <div style={{ padding: '10px 12px', fontSize: 12.5, color: 'var(--ink-4)' }}>Sin resultados</div>
                     ) : filtrados.map(c => (
