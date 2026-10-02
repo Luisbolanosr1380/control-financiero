@@ -8,7 +8,9 @@
  * configurar nada (refactor, no cambio).
  *
  * Env vars por deploy (todas opcionales, default = Golden):
- *   EMPRESA_NOMBRE         — nombre corto para UI y Auros ("Golden Talent")
+ *   NEXT_PUBLIC_EMPRESA_NOMBRE — nombre corto para UI y Auros ("Golden
+ *     Talent"). PUBLIC para que los componentes cliente también lo vean;
+ *     EMPRESA_NOMBRE (server-only) funciona como alias/override.
  *   EMPRESA_NOMBRE_LEGAL   — razón social para documentos legales (boletas)
  *   EMPRESA_NIT
  *   EMPRESA_DIRECCION
@@ -18,9 +20,9 @@
  *                            (habilita semántica intercompany en UI/flujo)
  *   EMPRESA_DESCRIPCION    — una frase para el prompt de Auros
  *   EMPRESA_DUENO          — cómo llama Auros al dueño/CFO
- *   NEXT_PUBLIC_EMPRESA_NOMBRE / NEXT_PUBLIC_SISTEMA_NOMBRE — variantes
- *     públicas para componentes client (el sidebar); si no están, los
- *     server components pasan los valores por props.
+ *   NEXT_PUBLIC_SISTEMA_NOMBRE / NEXT_PUBLIC_EMPRESA_MONEDA — ídem,
+ *     públicas. El resto (NIT, dirección, descripción…) es server-only y
+ *     llega a la UI por props desde server components.
  */
 
 export interface EmpresaConfig {
@@ -67,13 +69,54 @@ function bool(v: string | undefined, def: boolean): boolean {
   return v === '1' || v.toLowerCase() === 'true';
 }
 
-/** Config de la empresa de ESTE deploy. Server-side (lee process.env). */
+// ── FIX server/client boundary ("process is not defined") ──
+// En el browser NO existe `process`: el bundler solo inlinea accesos
+// LITERALES a process.env.X — la referencia desnuda `const e =
+// process.env` llegaba al bundle del cliente (vía el import de
+// empleados/empresa.ts en componentes 'use client') y reventaba.
+//
+// Patrón seguro bajo cualquier bundler:
+//  · ENV: process.env real solo si `typeof process` existe (server);
+//    en el cliente queda {} — typeof sobre un global ausente no tira.
+//  · Identidad PÚBLICA del deploy: variables NEXT_PUBLIC_* accedidas
+//    con literales (el bundler las inlinea como constantes en el
+//    cliente), dentro del guard por si algún runtime no las inlinea.
+// En el cliente, lo no-público resuelve a los DEFAULTS de Golden; la
+// identidad visible (nombre/sistema/moneda) viaja por NEXT_PUBLIC_ o
+// por props desde server components (patrón del sidebar).
+const ENV: NodeJS.ProcessEnv =
+  typeof process !== 'undefined' && process.env ? process.env : ({} as NodeJS.ProcessEnv);
+
+// Literales COMPLETOS (el bundler los inlinea como constantes en el
+// cliente — por eso NO pueden ir detrás de un typeof-guard, que en el
+// browser elegiría la rama undefined aunque el valor esté inlineado).
+// El try/catch cubre el caso teórico de un bundler que no inlinea.
+function publicos(): { nombre?: string; sistema?: string; moneda?: string } {
+  try {
+    return {
+      nombre:  process.env.NEXT_PUBLIC_EMPRESA_NOMBRE,
+      sistema: process.env.NEXT_PUBLIC_SISTEMA_NOMBRE,
+      moneda:  process.env.NEXT_PUBLIC_EMPRESA_MONEDA,
+    };
+  } catch {
+    return {};
+  }
+}
+const PUB = publicos();
+
+/** Config de la empresa de ESTE deploy. Server: env completas; cliente:
+ *  NEXT_PUBLIC_* + defaults (lo sensible nunca llega al browser). */
 export function empresaConfig(): EmpresaConfig {
-  const e = process.env;
-  const moneda = e.EMPRESA_MONEDA === 'USD' ? 'USD' : DEFAULTS_GOLDEN.moneda;
+  const e = ENV;
+  const nombrePublico = PUB.nombre?.trim() || undefined;
+  const nombre = nombrePublico || e.EMPRESA_NOMBRE?.trim() || DEFAULTS_GOLDEN.nombre;
+  const sistema = PUB.sistema?.trim() || DEFAULTS_GOLDEN.nombreSistema;
+  const monedaRaw = PUB.moneda?.trim() || e.EMPRESA_MONEDA;
+  const moneda = monedaRaw === 'USD' ? 'USD' : DEFAULTS_GOLDEN.moneda;
+  const esCustom = nombre !== DEFAULTS_GOLDEN.nombre;
   return {
     slug:          (e.EMPRESA_SLUG?.trim() || DEFAULTS_GOLDEN.slug).toLowerCase(),
-    nombre:        e.EMPRESA_NOMBRE?.trim()         || DEFAULTS_GOLDEN.nombre,
+    nombre,
     nombreLegal:   e.EMPRESA_NOMBRE_LEGAL?.trim()   || DEFAULTS_GOLDEN.nombreLegal,
     nit:           e.EMPRESA_NIT?.trim()            || DEFAULTS_GOLDEN.nit,
     direccion:     e.EMPRESA_DIRECCION?.trim()      || DEFAULTS_GOLDEN.direccion,
@@ -83,15 +126,9 @@ export function empresaConfig(): EmpresaConfig {
     esGrupo:       bool(e.EMPRESA_ES_GRUPO, DEFAULTS_GOLDEN.esGrupo),
     descripcion:   e.EMPRESA_DESCRIPCION?.trim()    || DEFAULTS_GOLDEN.descripcion,
     dueno:         e.EMPRESA_DUENO?.trim()          || DEFAULTS_GOLDEN.dueno,
-    nombreSistema: e.NEXT_PUBLIC_SISTEMA_NOMBRE?.trim() || DEFAULTS_GOLDEN.nombreSistema,
-    ...derivados(e),
+    nombreSistema: sistema,
+    // titulo/subtitulo: históricos EXACTOS salvo que el deploy defina su nombre.
+    titulo:    esCustom ? `${sistema} · ${nombre}` : DEFAULTS_GOLDEN.titulo,
+    subtitulo: esCustom ? nombre : DEFAULTS_GOLDEN.subtitulo,
   };
-}
-
-/** titulo/subtitulo: históricos exactos salvo que el deploy defina su nombre. */
-function derivados(e: NodeJS.ProcessEnv): Pick<EmpresaConfig, 'titulo' | 'subtitulo'> {
-  const nombre = e.EMPRESA_NOMBRE?.trim();
-  const sistema = e.NEXT_PUBLIC_SISTEMA_NOMBRE?.trim() || DEFAULTS_GOLDEN.nombreSistema;
-  if (!nombre) return { titulo: DEFAULTS_GOLDEN.titulo, subtitulo: DEFAULTS_GOLDEN.subtitulo };
-  return { titulo: `${sistema} · ${nombre}`, subtitulo: nombre };
 }

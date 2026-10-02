@@ -70,10 +70,12 @@ si `cuentas` ya tiene datos, avisa y no toca nada.
    | `ALLOWED_EMAILS` / `ALLOWED_DOMAIN` | 🔁 quiénes entran a ESTA empresa |
    | `CRON_SECRET` | generar uno nuevo (`openssl rand -hex 24`) |
 
-3. Deploy. ⚠ Pendiente del molde (no existe todavía): variable
-   `NEXT_PUBLIC_EMPRESA_NOMBRE`/logo — hoy el branding ("Control
-   Financiero", "Golden Talent", enum `empresa_empleadora`) está en el
-   código. Anotado como trabajo de la fase "multi-empresa en la app".
+3. Deploy. Identidad de la empresa (construida en la fase multi-empresa):
+   `NEXT_PUBLIC_EMPRESA_NOMBRE` (nombre — PUBLIC: los componentes cliente
+   lo necesitan), `EMPRESA_SLUG` (permisos del selector), y las server-only
+   `EMPRESA_NOMBRE_LEGAL`, `EMPRESA_NIT`, `EMPRESA_DIRECCION`,
+   `EMPRESA_DESCRIPCION`, `EMPRESA_DUENO`, `EMPRESA_ES_GRUPO`,
+   `EMPRESA_LOGO_URL`. Sin estas vars el deploy se viste de Golden.
 
 ## Paso 5 — Verificaciones de que quedó lista (~5 min)
 
