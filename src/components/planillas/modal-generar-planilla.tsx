@@ -10,7 +10,6 @@ import { crearPeriodoAction, generarPlanillaAction } from '@/app/(app)/planillas
 import { EnteroInput } from '@/components/ui/monto-input';
 import {
   esGolden,
-  EMPRESAS_EMPLEADORAS,
   EMPRESA_EMPLEADORA_DEFAULT,
   type EmpresaEmpleadora,
 } from '@/lib/empleados/empresa';
@@ -94,7 +93,6 @@ export function ModalGenerarPlanilla({ empleadosActivos, periodosExistentes, def
   const desgloseGolden = proyeccion.porEmpresa.find(p => esGolden(p.empresa));
   const desgloseIntercompany = proyeccion.porEmpresa.filter(p => !esGolden(p.empresa));
   const totalNoGolden = desgloseIntercompany.reduce((s, d) => s + d.numEmpleados, 0);
-  void EMPRESAS_EMPLEADORAS;  // import conservado por compat con UI futura.
 
   const onConfirm = async () => {
     if (!valido) return;

@@ -1,0 +1,9 @@
+{
+  "_doc": "FASE MOLDE — lista de bases por empresa para scripts/migrar-todas.ts. Llenar cuando existan las bases reales. NUNCA commitear dbUrl con credenciales reales: usar variables (ej. leerlas de un .env que no se commitea) o llenar este archivo solo en local.",
+  "empresas": [
+    {
+      "nombre": "EJEMPLO — borrar",
+      "dbUrl": "postgresql://postgres:<password>@db.<ref>.supabase.co:5432/postgres"
+    }
+  ]
+}

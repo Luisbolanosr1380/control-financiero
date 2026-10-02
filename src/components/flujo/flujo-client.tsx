@@ -14,6 +14,7 @@ import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { MontoInput } from '@/components/ui/monto-input';
 
 interface Props {
+  opcionesEmpresas?: readonly string[];
   proyeccion: ProyeccionFlujo;
   obligaciones: ObligacionRecurrente[];
   saldoSugerido: number;
@@ -24,7 +25,7 @@ type Tab = 'timeline' | 'recurrentes';
 
 const SALDO_KEY = 'fc.flujo.saldo-manual';
 
-export function FlujoClient({ proyeccion, obligaciones, saldoSugerido, saldoSugeridoCuentas }: Props) {
+export function FlujoClient({ proyeccion, obligaciones, saldoSugerido, saldoSugeridoCuentas, opcionesEmpresas }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
   const [tab, setTab] = useState<Tab>('timeline');
@@ -117,6 +118,7 @@ export function FlujoClient({ proyeccion, obligaciones, saldoSugerido, saldoSuge
 
       {modalAbierto && (
         <ModalObligacionForm
+          opcionesEmpresas={opcionesEmpresas}
           obligacion={editandoObligacion}
           onCerrar={() => setModalAbierto(false)}
           onGuardado={() => {

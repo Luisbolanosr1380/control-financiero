@@ -60,8 +60,10 @@ export const PRIORIDADES_OBLIGACION: readonly PrioridadObligacion[] = [
  *   El cash-flow planner igual lo cuenta porque la liquidez SÍ sale.
  * - "Otra" → fallback genérico.
  */
-export type PorCuentaDe = 'Golden Talent' | 'HIT' | 'Poligrafy' | 'Otra';
+// MULTI-EMPRESA · Paso 3: string — las opciones vienen del catálogo
+// empresas_relacionadas (fallback legacy abajo, pre-007 idéntico a hoy).
+export type PorCuentaDe = string;
 export const POR_CUENTA_DE_OPCIONES: readonly PorCuentaDe[] = [
   'Golden Talent', 'HIT', 'Poligrafy', 'Otra',
 ];
-export const POR_CUENTA_DE_DEFAULT: PorCuentaDe = 'Golden Talent';
+export const POR_CUENTA_DE_DEFAULT: PorCuentaDe = 'Golden Talent';   // = empresa principal histórica (la config la gobierna en los call-sites)

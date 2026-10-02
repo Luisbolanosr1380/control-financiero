@@ -16,6 +16,7 @@
  * construido localmente porque introduce shift UTC.
  */
 
+import { EMPRESA_EMPLEADORA_DEFAULT } from '@/lib/empleados/empresa';
 import type { ObligacionRecurrente } from './obligaciones';
 import type { EventoFlujo } from './types';
 
@@ -58,7 +59,7 @@ function descripcionEvento(o: ObligacionRecurrente): string {
   if (o.tipo !== 'Otro') partes.push(`(${o.tipo.toLowerCase()})`);
   // F-051.6: cuando la obligación es intercompany, lo marcamos en la
   // descripción para que se vea claro en el timeline.
-  if (o.porCuentaDe && o.porCuentaDe !== 'Golden Talent') {
+  if (o.porCuentaDe && o.porCuentaDe !== EMPRESA_EMPLEADORA_DEFAULT) {
     partes.push(`(por ${o.porCuentaDe})`);
   }
   return partes.join(' ');

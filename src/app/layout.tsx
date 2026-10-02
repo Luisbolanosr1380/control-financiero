@@ -22,8 +22,12 @@ const jetbrainsMono = JetBrains_Mono({
   display: 'swap',
 });
 
+// MULTI-EMPRESA 1-D: título por deploy desde la config central.
+import { empresaConfig } from '@/lib/config/empresa';
+
+const CFG = empresaConfig();
 export const metadata: Metadata = {
-  title: 'Control Financiero · Sistema operativo de contabilidad',
+  title: CFG.titulo,
   description: 'Sistema operativo de contabilidad con Auros, asistente AI integrado',
 };
 

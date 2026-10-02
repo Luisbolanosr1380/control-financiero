@@ -18,7 +18,7 @@ interface NavGroup {
   items: NavItem[];
 }
 
-function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: number; pagosPendientesCount?: number; pagosPendientesAlertasRojas?: number; ncsPendientesCount?: number; rol?: Role } = {}): NavGroup[] {
+function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: number; pagosPendientesCount?: number; pagosPendientesAlertasRojas?: number; ncsPendientesCount?: number; rol?: Role; multiEmpresa?: boolean } = {}): NavGroup[] {
   // F-043: badge dinámico de facturas vencidas (antes hardcoded "5 vencidas").
   // Fuente: getFacturasLiviano + predicadoFiltro('vencidas') vía getSidebarBadges.
   const facturasBadge = opts.facturasVencidasCount && opts.facturasVencidasCount > 0
@@ -98,6 +98,8 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
   // F-046: ayuda al final, accesible para todos los roles.
   groups.push({ group: 'Ayuda', items: [
     { href: '/ayuda', label: 'Centro de Ayuda', icon: 'Help' },
+    // MULTI-EMPRESA: solo si el usuario tiene 2+ empresas en su metadata.
+    ...(opts.multiEmpresa ? [{ href: '/empresas', label: 'Cambiar de empresa', icon: 'Bank' as IconName }] : []),
   ]});
 
   return groups;
@@ -111,11 +113,15 @@ interface SidebarProps {
   ncsPendientesCount?: number;            // F-045
   rol?: Role;
   email?: string;
+  /** MULTI-EMPRESA 1-D: marca por deploy (defaults = Golden histórico). */
+  marcaNombre?: string;
+  marcaSub?: string;
+  multiEmpresa?: boolean;
 }
 
-export function Sidebar({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol }: SidebarProps = {}) {
+export function Sidebar({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, marcaNombre, marcaSub, multiEmpresa }: SidebarProps = {}) {
   const pathname = usePathname();
-  const NAV = buildNav({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol });
+  const NAV = buildNav({ facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, multiEmpresa });
 
   // El item activo es el de href más específico que matchea (evita que
   // /cobros y /cobros/identificar se marquen ambos a la vez).
@@ -129,8 +135,8 @@ export function Sidebar({ facturasVencidasCount, deudasVencidasCount, pagosPendi
       <div className="sidebar-brand">
         <div className="brand-mark">CF</div>
         <div>
-          <div className="brand-name">Control Financiero</div>
-          <div className="brand-sub">Sistema operativo</div>
+          <div className="brand-name">{marcaNombre ?? 'Control Financiero'}</div>
+          <div className="brand-sub">{marcaSub ?? 'Sistema operativo'}</div>
         </div>
       </div>
 

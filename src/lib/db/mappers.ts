@@ -38,27 +38,26 @@ export const F = {
 // Poligrafia Xela (oficina cerrada) → agrupada con Poligrafia (mismo servicio histórico).
 // "Pendiente" y "6300" son internos → caen al default (poligrafo) y la analítica los
 // agrupa en "Otros" por nombre.
-const CC_ID_TO_LINE: Record<string, LineKey> = {
-  recta6yzMaZVORniO: 'poligrafo',      // "Poligrafia"
-  recNI39e0UgnPAZJc: 'poligrafo',      // "Poligrafia Xela" → mismo servicio
-  recBKqaIp3hHmp7FT: 'socio',          // "Socioeconomicos"
-  receAuGbyq1yzLRL7: 'talenttrack',    // "TalentTrackAI"
-  rec4K7KF4q6qNdMfJ: 'administrativo', // "Administrativo" → línea propia
-};
+// MULTI-EMPRESA 1-C: el mapa CC→línea ya NO se hardcodea con rec-ids de
+// Golden — se deriva de la tabla centros_costo de la base de ESTE deploy
+// (cache sembrado por asegurarMapaLineas() en sbFacturasRecords). Para
+// Golden el resultado es idéntico al mapa viejo: la derivación por nombre
+// reproduce Poligrafia/Xela→poligrafo, Socioeconomicos→socio,
+// TalentTrackAI→talenttrack, Administrativo→administrativo, y 'Pendiente'
+// (sin match) cae al default poligrafo — igual que antes.
+import { lineKeyDeCC, derivarLineKey, LINE_KEY_DEFAULT } from '../config/lineas';
 
 function ccToLineKey(cc: unknown): LineKey {
   const first = Array.isArray(cc) ? cc[0] : cc;
 
-  // CENTRO_COSTO es un linked record (array de ids)
-  if (typeof first === 'string' && CC_ID_TO_LINE[first]) return CC_ID_TO_LINE[first];
+  // CENTRO_COSTO es un linked record (array de ids) → cache por id
+  if (typeof first === 'string') {
+    const porId = lineKeyDeCC(first);
+    if (porId) return porId;
+  }
 
-  // Fallback: si alguna vez llega el nombre como texto
-  const s = String(first ?? '').toLowerCase();
-  if (s.includes('polígraf') || s.includes('poligraf')) return 'poligrafo';
-  if (s.includes('socio'))      return 'socio';
-  if (s.includes('talent'))     return 'talenttrack';
-  if (s.includes('admin'))      return 'administrativo';
-  return 'poligrafo';
+  // Fallback: si llega el nombre como texto (o un id fuera del cache)
+  return derivarLineKey(String(first ?? '')) ?? LINE_KEY_DEFAULT;
 }
 
 /**

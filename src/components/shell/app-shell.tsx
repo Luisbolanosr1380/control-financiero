@@ -18,9 +18,13 @@ interface AppShellProps {
   email: string;
   consumoAuros?: number;
   limiteAuros?: number;
+  marcaNombre?: string;
+  marcaSub?: string;
+  /** MULTI-EMPRESA: el usuario tiene 2+ empresas → ítem "Cambiar de empresa". */
+  multiEmpresa?: boolean;
 }
 
-export function AppShell({ children, facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, email, consumoAuros, limiteAuros }: AppShellProps) {
+export function AppShell({ children, facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, email, consumoAuros, limiteAuros, marcaNombre, marcaSub, multiEmpresa }: AppShellProps) {
   const [aiOpen, setAiOpen] = useState(false);
   const [showCmdK, setShowCmdK] = useState(false);
 
@@ -51,6 +55,9 @@ export function AppShell({ children, facturasVencidasCount, deudasVencidasCount,
         ncsPendientesCount={ncsPendientesCount}
         rol={rol}
         email={email}
+        marcaNombre={marcaNombre}
+        marcaSub={marcaSub}
+        multiEmpresa={multiEmpresa}
       />
 
       <div className="main">

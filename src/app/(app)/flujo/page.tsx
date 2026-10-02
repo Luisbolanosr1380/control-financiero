@@ -11,6 +11,7 @@ import { construirFlujo } from '@/lib/flujo/construir-flujo';
 import { getSaldoInicialBancos } from '@/lib/flujo/saldo-inicial';
 import { listarObligaciones } from './_actions/obligaciones';
 import { FlujoClient } from '@/components/flujo/flujo-client';
+import { getOpcionesEmpresas } from '@/lib/db/empresas-relacionadas';
 
 export const revalidate = 60;
 
@@ -38,6 +39,7 @@ export default async function FlujoPage({
 
   return (
     <FlujoClient
+      opcionesEmpresas={await getOpcionesEmpresas()}
       proyeccion={proyeccion}
       obligaciones={obligaciones}
       saldoSugerido={saldoSugerido}

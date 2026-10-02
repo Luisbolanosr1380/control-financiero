@@ -8,6 +8,7 @@ import { getRolUsuario } from '@/lib/auth/allowlist';
 import { tienePermiso, getLimiteAuros } from '@/lib/auth/permissions';
 import { registrarUsoAuros, getConsumoMensual } from '@/lib/db/uso-auros';
 import { partesFechaHoy } from '@/lib/utils/fechas';
+import { empresaConfig } from '@/lib/config/empresa';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -38,7 +39,9 @@ Cuando hables de fechas con el usuario, siempre en zona Guatemala — nunca menc
 }
 
 function buildSystemPrompt(hoy: Date = new Date()): string {
-  return `Sos Auros, el asistente financiero de Stark en Golden Talent (empresa de servicios profesionales en Guatemala: Polígrafo, Socioeconómicos, TalentTrackAI, Administrativo). Hablás con el DUEÑO, que NO es financiero. Hablás en primera persona como Auros cuando es natural ("Te recomiendo...", "Mirando tus datos..."), pero sin saludar ni firmar cada respuesta. Sos directo, preciso y conciso. Español, "vos", sin jerga, oraciones cortas. NUNCA inventás números — siempre los pedís a las funciones.
+  // MULTI-EMPRESA 1-D: identidad de la empresa desde la config del deploy.
+  const emp = empresaConfig();
+  return `Sos Auros, el asistente financiero de ${emp.dueno} en ${emp.nombre} (${emp.descripcion}). Hablás con el DUEÑO, que NO es financiero. Hablás en primera persona como Auros cuando es natural ("Te recomiendo...", "Mirando tus datos..."), pero sin saludar ni firmar cada respuesta. Sos directo, preciso y conciso. Español, "vos", sin jerga, oraciones cortas. NUNCA inventás números — siempre los pedís a las funciones.
 
 ${buildContextoTemporal(hoy)}
 

@@ -5,6 +5,8 @@ import { getRolUsuario } from '@/lib/auth/allowlist';
 import { getLimiteAuros } from '@/lib/auth/permissions';
 import { getSidebarBadges } from '@/lib/db/sidebar-kpis';
 import { getConsumoMensual } from '@/lib/db/uso-auros';
+import { empresaConfig } from '@/lib/config/empresa';
+import { empresasDeMetadata, tieneAccesoAlDeploy } from '@/lib/auth/empresas-acceso';
 
 export default async function AppLayout({
   children,
@@ -17,6 +19,18 @@ export default async function AppLayout({
   if (!rol) {
     redirect('/no-acceso');
   }
+
+  // MULTI-EMPRESA · guard de aislamiento (H): aunque el login de Clerk sea
+  // compartido entre deploys, este deploy solo muestra datos si el usuario
+  // tiene SU slug en metadata.empresas. Metadata ausente (usuarios pre-Paso 4)
+  // = modo compatibilidad: decide el allowlist de arriba, como siempre.
+  const marca = empresaConfig();
+  const empresasUsuario = empresasDeMetadata(user?.publicMetadata);
+  if (!tieneAccesoAlDeploy(empresasUsuario, marca.slug)) {
+    // Tiene otras empresas → el selector lo lleva a la suya; sin ninguna → sin acceso.
+    redirect(empresasUsuario && empresasUsuario.length > 0 ? '/empresas' : '/no-acceso');
+  }
+  const multiEmpresa = (empresasUsuario?.length ?? 0) > 1;
 
   // F-043: única fuente de verdad para los badges del sidebar. Los counts
   // ya vienen normalizados a 0 si una fuente falló (silenciosa).
@@ -41,6 +55,9 @@ export default async function AppLayout({
       email={email}
       consumoAuros={consumoAuros}
       limiteAuros={limiteAuros}
+      marcaNombre={marca.nombreSistema}
+      marcaSub={marca.subtitulo}
+      multiEmpresa={multiEmpresa}
     >{children}</AppShell>
   );
 }
