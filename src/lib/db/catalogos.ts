@@ -36,7 +36,9 @@ export interface CrearBancoInput {
   moneda?: 'GTQ' | 'USD';          // default GTQ
   saldoInicial?: number;
   fechaSaldoInicial?: string;      // YYYY-MM-DD
-  cuentaContableId?: string;       // airtable_id de la cuenta del plan (1-1-1-x)
+  /** OBLIGATORIA (F-BANCO-INLINE): el banco siempre queda amarrado a su
+   *  cuenta del plan — hoja bajo 1-1 (1-1-2-x bancos; 1-1-1-x caja). */
+  cuentaContableId: string;
 }
 
 export async function crearBanco(input: CrearBancoInput): Promise<Resultado> {
@@ -46,16 +48,25 @@ export async function crearBanco(input: CrearBancoInput): Promise<Resultado> {
   const banco = (input.banco ?? '').trim();
   if (!nombreCuenta) return { ok: false, error: 'El nombre de la cuenta es requerido.' };
   if (!banco)        return { ok: false, error: 'El banco es requerido.' };
+  if (!input.cuentaContableId?.trim()) {
+    return { ok: false, error: 'El banco debe amarrarse a una cuenta contable del plan (creala inline si no existe).' };
+  }
 
   try {
     const existentes = await fetchAll<{ airtable_id: string; nombre_cuenta: string | null }>('bancos', { select: 'airtable_id, nombre_cuenta' });
     const dup = existentes.find(b => norm(String(b.nombre_cuenta ?? '')) === norm(nombreCuenta));
     if (dup) return { ok: false, error: `Ya existe una cuenta bancaria "${dup.nombre_cuenta}".` };
 
-    let cuentaUuid: string | null = null;
-    if (input.cuentaContableId?.trim()) {
-      const { uuidRequerido } = await import('../supabase/writes');
-      cuentaUuid = await uuidRequerido('cuentas', input.cuentaContableId.trim(), 'crearBanco.cuentaContable');
+    const { uuidRequerido } = await import('../supabase/writes');
+    const cuentaUuid = await uuidRequerido('cuentas', input.cuentaContableId.trim(), 'crearBanco.cuentaContable');
+    // Dependencia contable: la cuenta debe vivir bajo 1-1 (efectivo y bancos).
+    // Golden real: bancos → 1-1-2-x y CAJA CHICA → 1-1-1-1, por eso 1-1 y no
+    // solo 1-1-2.
+    const sb0 = supabase();
+    const { data: cta } = sb0 ? await sb0.from('cuentas').select('codigo_path').eq('id', cuentaUuid).single() : { data: null };
+    const codigoCta = String((cta as { codigo_path?: string } | null)?.codigo_path ?? '');
+    if (!codigoCta.startsWith('1-1-')) {
+      return { ok: false, error: `La cuenta ${codigoCta || 'elegida'} no es de efectivo/bancos — el banco debe amarrarse a una hoja bajo 1-1 (bancos: 1-1-2-x).` };
     }
     const res = await insertar('bancos', {
       nombre_cuenta: nombreCuenta,

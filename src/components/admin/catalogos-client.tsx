@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { crearBancoAction, crearCentroCostoAction } from '@/app/(app)/admin/catalogos/actions';
+import { ModalCuentaInline, type CuentaMin } from '@/components/admin/modal-cuenta-inline';
 import type { CatalogoResumen } from '@/lib/db/catalogos';
 
 interface Props {
@@ -19,6 +20,22 @@ const SECCION: React.CSSProperties = {
 
 export function AdminCatalogosClient({ catalogos }: Props) {
   const router = useRouter();
+
+  // F-BANCO-INLINE: el plan vive en estado local para que una cuenta creada
+  // inline aparezca y quede seleccionable sin esperar el refresh.
+  const [cuentasPlan, setCuentasPlan] = useState(catalogos.cuentas);
+  const [showCuentaInline, setShowCuentaInline] = useState(false);
+
+  // Opciones del selector del banco: cuentas HOJA de TODO el plan (buscables
+  // por código o nombre vía datalist), con las de Bancos (1-1-2-x) primero y
+  // Caja (1-1-1-x) después — antes el filtro startsWith('1-1-1') EXCLUÍA
+  // justamente las cuentas de bancos.
+  const conHijos = new Set(cuentasPlan.map(c => c.codigo.split('-').slice(0, -1).join('-')));
+  const hojas = cuentasPlan.filter(c => !conHijos.has(c.codigo) || !cuentasPlan.some(x => x.codigo.startsWith(c.codigo + '-')));
+  const prioridad = (c: { codigo: string }) =>
+    c.codigo.startsWith('1-1-2') ? 0 : c.codigo.startsWith('1-1-1') ? 1 : 2;
+  const opcionesCuentaBanco = [...hojas].sort((a, b) =>
+    prioridad(a) - prioridad(b) || a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
 
   // ── Banco ──
   const [bNombre, setBNombre]   = useState('');
@@ -37,10 +54,14 @@ export function AdminCatalogosClient({ catalogos }: Props) {
   const [cObs, setCObs]               = useState('');
   const [cLoading, setCLoading]       = useState(false);
 
+  const cuentaSeleccionada = cuentasPlan.find(c => `${c.codigo} · ${c.nombre}` === bCuenta.trim());
+
   const submitBanco = async () => {
+    // Dependencia contable: el banco SIEMPRE amarrado a su cuenta del plan.
+    if (!cuentaSeleccionada) { toast.error('Elegí la cuenta contable del banco (o creala con "+ Nueva cuenta de banco").'); return; }
     setBLoading(true);
     try {
-      const cuentaSel = catalogos.cuentas.find(c => `${c.codigo} · ${c.nombre}` === bCuenta.trim());
+      const cuentaSel = cuentaSeleccionada;
       const res = await crearBancoAction({
         nombreCuenta: bNombre.trim(),
         banco: bBanco.trim(),
@@ -79,6 +100,21 @@ export function AdminCatalogosClient({ catalogos }: Props) {
           </div>
         </div>
       </div>
+
+      {showCuentaInline && (
+        <ModalCuentaInline
+          parentPath="1-1-2"
+          titulo="Nueva cuenta de banco (bajo 1-1-2)"
+          cuentas={cuentasPlan.map(c => ({ id: c.id, codigo: c.codigo, nombre: c.nombre }))}
+          onCreada={(c: CuentaMin) => {
+            setCuentasPlan(prev => [...prev, { id: c.id, codigo: c.codigo, nombre: c.nombre, nivel: c.codigo.split('-').length }]);
+            setBCuenta(`${c.codigo} · ${c.nombre}`);   // queda SELECCIONADA para el banco
+            setShowCuentaInline(false);
+            router.refresh();
+          }}
+          onClose={() => setShowCuentaInline(false)}
+        />
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))', gap: 16, alignItems: 'start' }}>
 
@@ -127,15 +163,21 @@ export function AdminCatalogosClient({ catalogos }: Props) {
                 </div>
               </div>
               <div className="field" style={{ margin: 0 }}>
-                <label className="label">Cuenta contable (plan)</label>
-                <input className="input" list="cuentas-banco" placeholder="Buscar por código o nombre…" value={bCuenta} onChange={e => setBCuenta(e.target.value)} disabled={bLoading} />
+                <label className="label">Cuenta contable (plan) * — bancos en 1-1-2</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input className="input" list="cuentas-banco" placeholder="Buscar por código o nombre…" value={bCuenta} onChange={e => setBCuenta(e.target.value)} disabled={bLoading} style={{ flex: 1, borderColor: bCuenta.trim() === '' ? undefined : (cuentaSeleccionada ? 'var(--olive)' : 'var(--wine)') }} />
+                  <button type="button" className="btn btn-secondary" style={{ whiteSpace: 'nowrap' }} disabled={bLoading}
+                    onClick={() => setShowCuentaInline(true)} title="Crear la cuenta contable del banco sin salir de acá">
+                    <I.Plus size={12} /> Nueva cuenta
+                  </button>
+                </div>
                 <datalist id="cuentas-banco">
-                  {catalogos.cuentas.filter(c => c.codigo.startsWith('1-1-1')).map(c => (
+                  {opcionesCuentaBanco.map(c => (
                     <option key={c.id} value={`${c.codigo} · ${c.nombre}`} />
                   ))}
                 </datalist>
               </div>
-              <button className="btn btn-primary" onClick={submitBanco} disabled={bLoading || !bNombre.trim() || !bBanco.trim()}>
+              <button className="btn btn-primary" onClick={submitBanco} disabled={bLoading || !bNombre.trim() || !bBanco.trim() || !cuentaSeleccionada}>
                 {bLoading ? <><I.Refresh size={13} /> Guardando…</> : <><I.Plus size={13} /> Crear cuenta bancaria</>}
               </button>
             </div>
