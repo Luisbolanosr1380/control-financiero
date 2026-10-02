@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
-import { crearClienteAction } from '@/app/(app)/clientes/actions';
+import { crearClienteAction, getDatosAltaClienteAction, type DatosAltaCliente } from '@/app/(app)/clientes/actions';
+import { detectarIntercompany, CUENTA_CXC_DEFAULT, CUENTA_CXC_INTERCOMPANY } from '@/lib/clientes/intercompany';
 import type { Customer } from '@/lib/types';
 
 interface Props {
@@ -22,7 +23,15 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
   const [nombreEmpresa, setNombreEmpresa]   = useState(nombreInicial ?? '');
   const [razonSocial, setRazonSocial]       = useState('');
   const [nit, setNit]                       = useState('');
-  const [cuentaCxc, setCuentaCxc]           = useState('1-1-3-1');
+  // F-CXC-SELECTOR: la cuenta sale de un selector (código · nombre) con
+  // default Nacionales; si el nombre matchea una empresa hermana del
+  // catálogo se SUGIERE Partes Relacionadas (el usuario puede cambiarla).
+  const [cuentaCxc, setCuentaCxc]           = useState(CUENTA_CXC_DEFAULT);
+  const [cxcTocada, setCxcTocada]           = useState(false);
+  const [datosAlta, setDatosAlta]           = useState<DatosAltaCliente>({
+    cuentasCxc: [{ codigo: CUENTA_CXC_DEFAULT, nombre: 'CxC Clientes Nacionales' }],
+    hermanas: [],
+  });
   const [emailCobros, setEmailCobros]       = useState('');
   const [correoCobro, setCorreoCobro]       = useState('');
   const [whatsappCobros, setWhatsapp]       = useState('');
@@ -32,6 +41,24 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
   const [instrucciones, setInstrucciones]   = useState('');
   const [contexto, setContexto]             = useState('');
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    let vivo = true;
+    getDatosAltaClienteAction().then(d => { if (vivo) setDatosAlta(d); }).catch(() => {});
+    return () => { vivo = false; };
+  }, []);
+
+  // Sugerencia intercompany: solo mientras el usuario no haya tocado el
+  // selector a mano (es sugerencia, no imposición).
+  const hermanaDetectada = detectarIntercompany(nombreEmpresa, datosAlta.hermanas)
+    ?? detectarIntercompany(razonSocial, datosAlta.hermanas);
+  useEffect(() => {
+    if (cxcTocada) return;
+    const tiene333 = datosAlta.cuentasCxc.some(c => c.codigo === CUENTA_CXC_INTERCOMPANY);
+    if (hermanaDetectada && tiene333) setCuentaCxc(CUENTA_CXC_INTERCOMPANY);
+    else setCuentaCxc(CUENTA_CXC_DEFAULT);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hermanaDetectada, cxcTocada, datosAlta.cuentasCxc.length]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !loading) onClose(); };
