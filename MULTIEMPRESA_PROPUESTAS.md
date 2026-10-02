@@ -161,11 +161,16 @@ Commits `MULTIEMPRESA·P3a/P3b/P3c`. Probado con usuarios simulados
   externo, sin re-login); 2+ → tarjetas; 0 → sin acceso. Ítem
   "Cambiar de empresa" en el sidebar solo con 2+ empresas.
 
-## Paso 4 — lo hacés vos despierto (nada de esto se tocó)
+## Paso 4 — estado
 
-1. Revisar la 007 conmigo → moverla a `migrations/` → aplicarla a
-   Golden.
-2. Clerk real: dominios de los deploys nuevos en la instancia (satellite
-   domains) + cargar `publicMetadata.empresas` a los usuarios.
-3. Deploys por empresa (bootstrap-empresa.md) con `EMPRESA_SLUG` y las
-   env `EMPRESA_*`.
+1. ✅ **007 APLICADA a Golden** (2026-10-01, por el usuario vía su
+   conector — el MCP de esta sesión no tiene permiso DDL). Verificación
+   independiente post-aplicación: conteos idénticos al antes (empleados
+   76/1/1/2, obligaciones 34/9/6/2), columnas text, enum eliminado,
+   default conservado, índice reconstruido, catálogo con 5 filas
+   (Golden Talent★) y `getEmpresasRelacionadas()` leyendo el catálogo
+   real (ya no el fallback). Golden corre en producción sobre la
+   arquitectura multi-empresa con datos intactos.
+2. ⏳ Clerk real: dominios satélite + `publicMetadata.empresas`.
+3. ⏳ Bootstrap de la primera empresa nueva (HIT) con `EMPRESA_SLUG` y
+   las env `EMPRESA_*` (bootstrap-empresa.md).
