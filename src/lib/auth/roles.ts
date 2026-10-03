@@ -52,6 +52,8 @@ export type Accion =
   | 'cerrar_periodo'
   | 'catalogos'
   | 'gestionar_deudas'
+  | 'registrar_movimiento'
+  | 'conciliar'
   | 'gestionar_usuarios'
   | 'configurar_empresa';
 
@@ -74,6 +76,8 @@ export const MATRIZ: Record<Accion, readonly Rol[]> = {
   cerrar_periodo:     CONTROL,
   catalogos:          CONTROL,
   gestionar_deudas:   CONTROL,     // pasivos/préstamos: no es "meter gastos"
+  registrar_movimiento: REGISTRAN, // cargar movimientos del banco (manual / estado de cuenta)
+  conciliar:          CONTROL,     // conciliar / deshacer / contabilizar movimiento: separación de funciones
   gestionar_usuarios: SOLO_ADMIN,
   configurar_empresa: SOLO_ADMIN,
 };
@@ -91,6 +95,8 @@ export const ACCION_LABEL: Record<Accion, string> = {
   cerrar_periodo:     'cerrar períodos y asientos',
   catalogos:          'crear o editar catálogos',
   gestionar_deudas:   'gestionar deudas',
+  registrar_movimiento: 'cargar movimientos bancarios',
+  conciliar:          'conciliar movimientos bancarios',
   gestionar_usuarios: 'gestionar usuarios',
   configurar_empresa: 'configurar la empresa',
 };

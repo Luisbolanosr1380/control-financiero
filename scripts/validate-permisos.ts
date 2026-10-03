@@ -53,6 +53,10 @@ function archivosUseServer(dir: string): string[] {
     aprobarPeriodoAction: 'planilla',
     crearBancoAction: 'catalogos',
     crearDeudaAction: 'gestionar_deudas',
+    conciliarAction: 'conciliar',
+    deshacerConciliacionAction: 'conciliar',
+    contabilizarMovimientoAction: 'conciliar',
+    importarMovimientosAction: 'registrar_movimiento',
   };
   const sinGuard: string[] = [];
   let totalActions = 0;

@@ -50,7 +50,7 @@ import { generarAsientoFacturaCompra } from '@/lib/gastos/services/generar-asien
 import { composerDescripcion } from '@/lib/gastos/services/composer-descripcion';
 import { writeSource } from '@/lib/config/data-source';
 import { getFacturaInPorId } from '@/lib/db/facturas-in';
-import { sbAprobarGasto, sbCrearMovimientoBancario } from '@/lib/gastos/supabase-gastos';
+import { sbAprobarGasto } from '@/lib/gastos/supabase-gastos';
 
 export interface AprobarFacturaInput {
   facturaInId: string;
@@ -320,23 +320,11 @@ export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<
         fechaAprobacion:       obtenerDateTimeHoyGuatemala(),
       });
 
-      // Movimiento bancario de conciliación (fail-soft, igual que F-050.1).
-      if (input.metodoPago === 'Contado' && input.bancoId && input.fechaPago) {
-        try {
-          await sbCrearMovimientoBancario({
-            bancoAppId: input.bancoId,
-            fecha: input.fechaPago,
-            monto: datos.total,
-            concepto: `Pago factura ${datos.serie}-${datos.numero} a ${proveedor.nombre}`,
-            referencia: input.referenciaPago,
-            periodoNombre: periodo.nombrePeriodo,
-            asientoAppId: resSb.asientoId,
-          });
-        } catch (err) {
-          console.warn(`FASE 2.3: MOVIMIENTO_BANCARIO no creado para gasto ${resSb.gastoId}:`,
-            err instanceof Error ? err.message : err);
-        }
-      }
+      // CONCILIACIÓN BANCARIA: ya NO se crea un movimiento bancario desde el
+      // gasto. movimientos_bancarios = lo que dice el BANCO (carga manual o
+      // estado de cuenta); generarlo desde el propio gasto haría conciliar
+      // el libro contra sí mismo. El gasto queda como documento pendiente
+      // de conciliar en /conciliacion.
 
       // Aprendizaje pasivo F-052/F-052.1 (fail-soft).
       try {
