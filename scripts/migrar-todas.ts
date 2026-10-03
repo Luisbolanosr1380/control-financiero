@@ -11,6 +11,14 @@
  *   npx tsx scripts/migrar-todas.ts --aplicar              # aplica sobre empresas.json
  *   npx tsx scripts/migrar-todas.ts --db <url> [--aplicar] # una base puntual
  *   npx tsx scripts/migrar-todas.ts --db <url> --aplicar --seed supabase/seeds/seed_plan_cuentas_base.sql
+ *   npx tsx scripts/migrar-todas.ts --db <url> --baseline 008_etiquetas_documentos.sql [--aplicar]
+ *
+ * --baseline <archivo>: REGISTRA como aplicadas (SIN ejecutarlas) todas
+ *   las migraciones hasta <archivo> inclusive que falten en _migraciones.
+ *   Para bases cuyo esquema nació fuera del runner (Golden: migración de
+ *   Airtable, sin _migraciones) o con una migración aplicada a mano sin
+ *   registro (HIT: la 008). Sin esto el runner intentaría re-ejecutarlas.
+ *   Solo usarlo cuando el esquema de esas migraciones YA existe en la base.
  *
  * SEGURIDAD:
  *   - Sin --aplicar es SIEMPRE dry-run (lista qué haría, no toca nada).
@@ -37,7 +45,7 @@ function argsCli() {
     const i = argv.indexOf(f);
     return i >= 0 && argv[i + 1] ? argv[i + 1] : null;
   };
-  return { aplicar: flag('--aplicar'), db: valor('--db'), seed: valor('--seed') };
+  return { aplicar: flag('--aplicar'), db: valor('--db'), seed: valor('--seed'), baseline: valor('--baseline') };
 }
 
 function cargarEmpresas(): Empresa[] {
@@ -52,7 +60,7 @@ function archivosMigracion(): string[] {
     .sort();   // orden léxico = orden numérico con prefijo 00N
 }
 
-async function migrarBase(nombre: string, dbUrl: string, aplicar: boolean, seedPath: string | null): Promise<boolean> {
+async function migrarBase(nombre: string, dbUrl: string, aplicar: boolean, seedPath: string | null, baseline: string | null = null): Promise<boolean> {
   const cliente = new Client({ connectionString: dbUrl });
   await cliente.connect();
   try {
@@ -62,6 +70,21 @@ async function migrarBase(nombre: string, dbUrl: string, aplicar: boolean, seedP
     )`);
     const { rows } = await cliente.query('select nombre from _migraciones');
     const aplicadas = new Set(rows.map(r => r.nombre));
+
+    if (baseline) {
+      if (!archivosMigracion().includes(baseline)) {
+        console.error(`  ✗ --baseline: ${baseline} no existe en supabase/migrations`);
+        return false;
+      }
+      const aMarcar = archivosMigracion().filter(f => f <= baseline && !aplicadas.has(f));
+      for (const f of aMarcar) {
+        if (!aplicar) { console.log(`  · (dry-run) registraría SIN ejecutar ${f} (baseline)`); continue; }
+        await cliente.query('insert into _migraciones (nombre) values ($1) on conflict (nombre) do nothing', [f]);
+        aplicadas.add(f);
+        console.log(`  ≡ ${f} registrada (baseline, no ejecutada)`);
+      }
+      if (!aplicar) for (const f of aMarcar) aplicadas.add(f);   // el dry-run muestra lo que quedaría pendiente
+    }
     const pendientes = archivosMigracion().filter(f => !aplicadas.has(f));
 
     console.log(`\n■ ${nombre} — ${aplicadas.size} aplicadas, ${pendientes.length} pendientes`);
@@ -108,7 +131,7 @@ async function migrarBase(nombre: string, dbUrl: string, aplicar: boolean, seedP
 }
 
 (async () => {
-  const { aplicar, db, seed } = argsCli();
+  const { aplicar, db, seed, baseline } = argsCli();
   const objetivos: Empresa[] = db
     ? [{ nombre: '(base puntual --db)', dbUrl: db }]
     : cargarEmpresas();
@@ -123,7 +146,7 @@ async function migrarBase(nombre: string, dbUrl: string, aplicar: boolean, seedP
   let ok = true;
   for (const e of objetivos) {
     try {
-      ok = (await migrarBase(e.nombre, e.dbUrl, aplicar, seed)) && ok;
+      ok = (await migrarBase(e.nombre, e.dbUrl, aplicar, seed, baseline)) && ok;
     } catch (err) {
       console.error(`■ ${e.nombre}: no se pudo conectar — ${err instanceof Error ? err.message : err}`);
       ok = false;
