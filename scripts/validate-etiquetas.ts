@@ -65,10 +65,10 @@ const ok = (cond: boolean, msg: string) => { if (cond) { pass++; console.log(`  
     airtable_id: FACT_ID, no_factura: MARCA, estado: 'ANULADO', total: 0, observaciones: MARCA,
   });
   const { data: finRow, error: eI } = await sb.from('facturas_in').insert({
-    airtable_id: FIN_ID, proveedor_nombre: MARCA, estatus: 'descartada',
+    airtable_id: FIN_ID, proveedor_nombre: MARCA, estado: 'descartada',
   }).select('id').single();
   const { error: eG0 } = eI ? { error: eI } : await sb.from('gastos').insert({
-    airtable_id: GASTO_ID, descripcion: MARCA, estado: 'Anulado', factura_in_id: finRow?.id,
+    airtable_id: GASTO_ID, descripcion: MARCA, estado: 'Anulado', monto: 123.45, factura_in_id: finRow?.id,
   });
   if (eF || eI || eG0) {
     console.error('✗ No se pudieron crear los documentos staging:', (eF ?? eI ?? eG0)?.message);
@@ -141,8 +141,9 @@ const ok = (cond: boolean, msg: string) => { if (cond) { pass++; console.log(`  
       execute: (i: { etiqueta?: string }, o: Record<string, unknown>) => Promise<Record<string, unknown>>;
     }).execute;
     const res = await ejecutar({ etiqueta: `${MARCA} iglesia` }, {});
-    const gastosTool = res.gastos as { cantidad: number } | undefined;
-    ok(res.etiqueta === `${MARCA} Iglesia` && (gastosTool?.cantidad ?? 0) >= 1, 'getPorEtiqueta resuelve el nombre y trae el gasto');
+    const gastosTool = res.gastos as { cantidad: number; total_Q: number } | undefined;
+    ok(res.etiqueta === `${MARCA} Iglesia` && (gastosTool?.cantidad ?? 0) >= 1 && (gastosTool?.total_Q ?? 0) >= 123,
+      'getPorEtiqueta resuelve el nombre y trae el gasto con su total');
   } finally {
     await limpiar();
   }

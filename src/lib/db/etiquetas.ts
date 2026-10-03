@@ -30,6 +30,25 @@ export interface Etiqueta {
   color: string | null;
 }
 
+// Paginador para las tablas PUENTE: fetchAll no sirve acá porque agrega
+// order('id') como orden secundario y los puentes no tienen columna id
+// (PK compuesta fk+etiqueta_id) — PostgREST rechaza la query entera.
+async function fetchAllPuente<T>(tabla: string, select: string, ordenCols: string[]): Promise<T[]> {
+  const sb = supabase();
+  if (!sb) return [];
+  const PAGE = 1000;
+  const out: T[] = [];
+  for (let page = 0; ; page++) {
+    let q = sb.from(tabla).select(select);
+    for (const c of ordenCols) q = q.order(c, { ascending: true });
+    const { data, error } = await q.range(page * PAGE, page * PAGE + PAGE - 1);
+    if (error) throw new Error(`supabase ${tabla}: ${error.message}`);
+    out.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAGE) break;
+  }
+  return out;
+}
+
 const norm = (s: string) =>
   s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
@@ -128,10 +147,10 @@ export async function getEtiquetasPorDocumento(
   if (dataSource('etiquetas') !== 'supabase') return {};
   try {
     const cfg = TIPOS_DOCUMENTO[tipo];
-    const rows = await fetchAll<{
+    const rows = await fetchAllPuente<{
       doc: { airtable_id: string } | null;
       etiqueta: { id: string; nombre: string; color: string | null } | null;
-    }>(cfg.puente, { select: `doc:${cfg.tablaDoc}(airtable_id), etiqueta:etiquetas(id, nombre, color)` });
+    }>(cfg.puente, `doc:${cfg.tablaDoc}(airtable_id), etiqueta:etiquetas(id, nombre, color)`, [cfg.fk, 'etiqueta_id']);
     const out: Record<string, Etiqueta[]> = {};
     for (const r of rows) {
       if (!r.doc?.airtable_id || !r.etiqueta) continue;
@@ -152,7 +171,8 @@ export async function getUsoEtiquetas(): Promise<Record<string, { facturas: numb
   const out: Record<string, { facturas: number; gastos: number }> = {};
   for (const [tipo, campo] of [['factura', 'facturas'], ['gasto', 'gastos']] as const) {
     try {
-      const rows = await fetchAll<{ etiqueta_id: string }>(TIPOS_DOCUMENTO[tipo].puente, { select: 'etiqueta_id' });
+      const rows = await fetchAllPuente<{ etiqueta_id: string }>(
+        TIPOS_DOCUMENTO[tipo].puente, 'etiqueta_id', [TIPOS_DOCUMENTO[tipo].fk, 'etiqueta_id']);
       for (const r of rows) {
         const e = (out[String(r.etiqueta_id)] ??= { facturas: 0, gastos: 0 });
         e[campo]++;
@@ -191,6 +211,40 @@ export async function borrarEtiqueta(id: string): Promise<{ ok: true } | { ok: f
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
+/** Detalle mínimo de gastos etiquetados (para la tool de Auros — getGastos
+ *  del F-050 es legacy Airtable y devuelve [] en Supabase; acá leemos directo:
+ *  el total del gasto vive en la columna `monto`). */
+export interface GastoEtiquetadoDetalle {
+  fecha: string | null;
+  totalQ: number;
+  estado: string | null;
+  metodoPago: string | null;
+  proveedor: string | null;
+  descripcion: string | null;
+}
+export async function getDetalleGastos(appIds: string[]): Promise<GastoEtiquetadoDetalle[]> {
+  if (dataSource('etiquetas') !== 'supabase' || appIds.length === 0) return [];
+  const sb = supabase();
+  if (!sb) return [];
+  const out: GastoEtiquetadoDetalle[] = [];
+  for (let i = 0; i < appIds.length; i += 200) {
+    const { data, error } = await sb.from('gastos')
+      .select('fecha, monto, estado, metodo_pago, descripcion, proveedor:proveedores(nombre)')
+      .in('airtable_id', appIds.slice(i, i + 200));
+    if (error) throw new Error(`gastos: ${error.message}`);
+    for (const r of (data ?? []) as unknown as Array<{
+      fecha: string | null; monto: number | null; estado: string | null;
+      metodo_pago: string | null; descripcion: string | null; proveedor: { nombre: string } | null;
+    }>) {
+      out.push({
+        fecha: r.fecha, totalQ: Number(r.monto ?? 0), estado: r.estado,
+        metodoPago: r.metodo_pago, proveedor: r.proveedor?.nombre ?? null, descripcion: r.descripcion,
+      });
+    }
+  }
+  return out.sort((a, b) => (b.fecha ?? '').localeCompare(a.fecha ?? ''));
+}
+
 /**
  * Mapa facturaInAppId → etiquetas DEL GASTO que generó (para la bandeja
  * de /gastos, donde las filas son FACTURAS_IN). Embed anidado con hint:
@@ -200,12 +254,12 @@ export async function borrarEtiqueta(id: string): Promise<{ ok: true } | { ok: f
 export async function getEtiquetasPorFacturaIn(): Promise<Record<string, Etiqueta[]>> {
   if (dataSource('etiquetas') !== 'supabase') return {};
   try {
-    const rows = await fetchAll<{
+    const rows = await fetchAllPuente<{
       etiqueta: { id: string; nombre: string; color: string | null } | null;
       gasto: { factura_in: { airtable_id: string } | null } | null;
-    }>('gasto_etiquetas', {
-      select: 'etiqueta:etiquetas(id, nombre, color), gasto:gastos(factura_in:facturas_in!gastos_factura_in_id_fkey(airtable_id))',
-    });
+    }>('gasto_etiquetas',
+      'etiqueta:etiquetas(id, nombre, color), gasto:gastos(factura_in:facturas_in!gastos_factura_in_id_fkey(airtable_id))',
+      ['gasto_id', 'etiqueta_id']);
     const out: Record<string, Etiqueta[]> = {};
     for (const r of rows) {
       const fiId = r.gasto?.factura_in?.airtable_id;

@@ -40,14 +40,13 @@ import {
 import { getArticulos } from '@/lib/db/ayuda';
 import { getFacturasIn, getKPIsFacturasIn } from '@/lib/db/facturas-in';
 import {
-  getGastos,
   getGastosDelMes,
   getCxpPendientes,
   getCxpVencidas,
   getGastosPorProveedor,
   getGastosPorCC,
 } from '@/lib/db/gastos';
-import { getEtiquetas, getEtiquetasPorDocumento, getUsoEtiquetas } from '@/lib/db/etiquetas';
+import { getEtiquetas, getEtiquetasPorDocumento, getUsoEtiquetas, getDetalleGastos } from '@/lib/db/etiquetas';
 import { buscarProveedorPorNit } from '@/lib/gastos/services/buscar-o-crear-proveedor';
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
@@ -2423,18 +2422,18 @@ export const aiTools = {
           etiquetas_disponibles: catalogo.map(e => e.nombre),
         };
       }
-      const [mapaFacturas, mapaGastos, facturas, gastos, clientes] = await Promise.all([
+      const [mapaFacturas, mapaGastos, facturas, clientes] = await Promise.all([
         getEtiquetasPorDocumento('factura'),
         getEtiquetasPorDocumento('gasto'),
         getFacturas(),
-        getGastos(),
         getClientes(),
       ]);
       const tiene = (mapa: Record<string, Array<{ id: string }>>, docId: string) =>
         (mapa[docId] ?? []).some(e => e.id === match.id);
       const nombreCliente = new Map(clientes.map(c => [c.id, c.name]));
       const facturasMarcadas = facturas.filter(i => tiene(mapaFacturas, i.id));
-      const gastosMarcados = gastos.filter(g => tiene(mapaGastos, g.id));
+      const gastosMarcados = await getDetalleGastos(
+        Object.keys(mapaGastos).filter(gid => tiene(mapaGastos, gid)));
       return {
         etiqueta: match.nombre,
         facturas: {
@@ -2445,8 +2444,11 @@ export const aiTools = {
         },
         gastos: {
           cantidad: gastosMarcados.length,
-          total_Q: Math.round(gastosMarcados.reduce((s, g) => s + g.total, 0)),
-          lista: gastosMarcados.map(g => ({ fecha: g.fecha, total: g.total, estado: g.estado, metodoPago: g.metodoPago })),
+          total_Q: Math.round(gastosMarcados.reduce((s, g) => s + g.totalQ, 0)),
+          lista: gastosMarcados.map(g => ({
+            fecha: g.fecha, total: g.totalQ, estado: g.estado,
+            metodoPago: g.metodoPago, proveedor: g.proveedor, descripcion: g.descripcion,
+          })),
         },
         nota: 'Las etiquetas son metadata libre: estos totales NO salen de libros contables ni sustituyen al ER / centros de costo.',
       };
