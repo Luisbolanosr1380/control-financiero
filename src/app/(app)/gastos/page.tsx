@@ -2,6 +2,7 @@ import { currentUser } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import { getRolUsuario } from '@/lib/auth/allowlist';
 import { getFacturasInRecientes, getKPIsFacturasIn } from '@/lib/db/facturas-in';
+import { getEtiquetasPorFacturaIn } from '@/lib/db/etiquetas';
 import { Q } from '@/lib/utils';
 import { UploadFacturas } from './_components/UploadFacturas';
 import { FacturasInList } from './_components/FacturasInList';
@@ -29,9 +30,10 @@ export default async function GastosPage({
   // F-BF-002a: respeta el selector global de mes (filtra por FECHA_EMISION).
   const mes = parseMesParam(mesRaw);
 
-  const [facturas, kpis] = await Promise.all([
+  const [facturas, kpis, etiquetasPorFacturaIn] = await Promise.all([
     getFacturasInRecientes(500, mes),
     getKPIsFacturasIn(),
+    getEtiquetasPorFacturaIn(),
   ]);
 
   return (
@@ -69,7 +71,7 @@ export default async function GastosPage({
       </div>
 
       <UploadFacturas />
-      <FacturasInList facturas={facturas} />
+      <FacturasInList facturas={facturas} etiquetasPorFacturaIn={etiquetasPorFacturaIn} />
     </div>
   );
 }

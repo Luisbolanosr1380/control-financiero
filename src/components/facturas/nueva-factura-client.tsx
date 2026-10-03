@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useForm, useFieldArray } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -13,6 +13,9 @@ import { crearFacturaAction, checkFacturaExiste } from '@/app/(app)/facturacion/
 import type { Customer } from '@/lib/types';
 import type { CentroCosto } from '@/lib/db/centros';
 import { ModalClienteForm } from '@/components/clientes/modal-cliente-form';
+import { EtiquetasChips } from '@/components/common/etiquetas-chips';
+import { getEtiquetasAction } from '@/app/(app)/etiquetas-actions';
+import type { Etiqueta } from '@/lib/db/etiquetas';
 
 // Monto se maneja como string (texto crudo) mientras se escribe; se parsea para cálculos.
 const parseNum = (s: string): number => {
@@ -47,6 +50,14 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
   // disponible y seleccionado sin esperar el refresh.
   const [clientesLocal, setClientesLocal] = useState(clientes);
   const [showNuevoCliente, setShowNuevoCliente] = useState(false);
+  // F-ETIQUETAS: metadata libre, se aplica server-side tras crear.
+  const [etiquetas, setEtiquetas] = useState<string[]>([]);
+  const [sugerenciasEtiquetas, setSugerenciasEtiquetas] = useState<Etiqueta[]>([]);
+  useEffect(() => {
+    let vivo = true;
+    getEtiquetasAction().then(e => { if (vivo) setSugerenciasEtiquetas(e); }).catch(() => {});
+    return () => { vivo = false; };
+  }, []);
   const [pending, setPending] = useState(false);
   const [clienteQuery, setClienteQuery] = useState('');
   const [clienteOpen, setClienteOpen] = useState(false);
@@ -123,6 +134,7 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
         total: parseNum(l.total),
         iva: parseNum(l.iva),
       })),
+      etiquetas,
     }));
     if (pdf) fd.append('pdf', pdf, pdf.name);
 
@@ -232,6 +244,11 @@ export function NuevaFacturaClient({ clientes, centros }: Props) {
                   </div>
                 )}
                 {errors.custId && <FieldError msg={errors.custId.message} />}
+              </div>
+
+              <div className="field" style={{ margin: 0 }}>
+                <label className="label">Etiquetas (opcional — organizan y filtran, sin efecto contable)</label>
+                <EtiquetasChips value={etiquetas} onChange={setEtiquetas} sugerencias={sugerenciasEtiquetas} disabled={pending} />
               </div>
 
               <div className="field" style={{ margin: 0 }}>

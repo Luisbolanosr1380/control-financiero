@@ -49,6 +49,8 @@ const schema = z.object({
     total: z.number().positive('Total debe ser mayor a 0'),
     iva: z.number().min(0, 'IVA inválido'),
   })).min(1, 'Se requiere al menos una línea'),
+  // F-ETIQUETAS: metadata libre (sin efecto contable) — se aplican tras crear.
+  etiquetas: z.array(z.string().trim().min(1)).max(20).optional(),
 });
 
 export type CrearFacturaResult =
@@ -83,11 +85,22 @@ export async function crearFacturaAction(formData: FormData): Promise<CrearFactu
 
   // 2) Adjuntar PDF (opcional). Si falla, NO se pierde la factura ya creada.
   const pdf = formData.get('pdf');
+  // F-ETIQUETAS: fail-soft — si fallan, la factura ya quedó creada (aviso).
+  let avisoEtiquetas = '';
+  if (parsed.data.etiquetas?.length && creada.recordIdPrincipal) {
+    try {
+      const { setEtiquetasDocumento } = await import('@/lib/db/etiquetas');
+      await setEtiquetasDocumento('factura', creada.recordIdPrincipal, parsed.data.etiquetas);
+    } catch (e) {
+      avisoEtiquetas = ` Etiquetas no guardadas (${e instanceof Error ? e.message : 'error'}) — agregalas desde el detalle.`;
+    }
+  }
+
   if (pdf instanceof File && pdf.size > 0 && creada.recordIdPrincipal) {
     try {
       const buf = await pdf.arrayBuffer();
       await uploadAttachmentPdf(creada.recordIdPrincipal, ADJUNTO_FIELD_ID, pdf.name, buf);
-      return { ok: true, noFactura: creada.noFactura, recordsCreados: creada.recordsCreados, pdfAdjuntado: true };
+      return { ok: true, noFactura: creada.noFactura, recordsCreados: creada.recordsCreados, pdfAdjuntado: true, aviso: avisoEtiquetas || undefined };
     } catch (err) {
       console.error('Error adjuntando PDF a la factura:', err);
       return {
@@ -100,5 +113,5 @@ export async function crearFacturaAction(formData: FormData): Promise<CrearFactu
     }
   }
 
-  return { ok: true, noFactura: creada.noFactura, recordsCreados: creada.recordsCreados, pdfAdjuntado: false };
+  return { ok: true, noFactura: creada.noFactura, recordsCreados: creada.recordsCreados, pdfAdjuntado: false, aviso: avisoEtiquetas || undefined };
 }

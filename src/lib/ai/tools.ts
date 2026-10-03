@@ -40,12 +40,14 @@ import {
 import { getArticulos } from '@/lib/db/ayuda';
 import { getFacturasIn, getKPIsFacturasIn } from '@/lib/db/facturas-in';
 import {
+  getGastos,
   getGastosDelMes,
   getCxpPendientes,
   getCxpVencidas,
   getGastosPorProveedor,
   getGastosPorCC,
 } from '@/lib/db/gastos';
+import { getEtiquetas, getEtiquetasPorDocumento, getUsoEtiquetas } from '@/lib/db/etiquetas';
 import { buscarProveedorPorNit } from '@/lib/gastos/services/buscar-o-crear-proveedor';
 import { getClientes } from '@/lib/db/clientes';
 import { getCobrosCompletos } from '@/lib/db/cobros';
@@ -2380,6 +2382,73 @@ export const aiTools = {
             valor_libros_Q:        Math.round(a.valorEnLibrosDespues),
             llega_al_tope:         a.llegaAlTope,
           })),
+      };
+    },
+  }),
+
+  getPorEtiqueta: tool({
+    description:
+      'F-ETIQUETAS: etiquetas de documentos (metadata libre, SIN efecto contable) que marcan ' +
+      'facturas emitidas Y gastos — ej. "iglesia", "donación", "proyecto X". ' +
+      'Sin parámetro: lista el catálogo de etiquetas con cuántas facturas y gastos usa cada una. ' +
+      'Con etiqueta: devuelve las facturas y los gastos marcados con ella, con totales por lado. ' +
+      'USAR para "¿cuánto llevamos de la iglesia?", "mostrame lo etiquetado como donación", ' +
+      '"¿qué etiquetas existen?". NO confundir con centros de costo ni líneas de negocio ' +
+      '(esos sí son dimensiones contables).',
+    parameters: z.object({
+      etiqueta: z.string().optional()
+        .describe('Nombre de la etiqueta (match exacto o parcial, sin distinguir mayúsculas/acentos). Omitir para listar el catálogo.'),
+    }),
+    execute: async ({ etiqueta }) => {
+      const catalogo = await getEtiquetas();
+      if (catalogo.length === 0) {
+        return { mensaje: 'No hay etiquetas creadas todavía. Se crean escribiéndolas al emitir una factura, en el detalle de una factura o al aprobar un gasto.' };
+      }
+      if (!etiqueta) {
+        const uso = await getUsoEtiquetas();
+        return {
+          etiquetas: catalogo.map(e => ({
+            nombre: e.nombre,
+            facturas: uso[e.id]?.facturas ?? 0,
+            gastos: uso[e.id]?.gastos ?? 0,
+          })),
+        };
+      }
+      const q = normalizar(etiqueta);
+      const match = catalogo.find(e => normalizar(e.nombre) === q)
+        ?? catalogo.find(e => normalizar(e.nombre).includes(q));
+      if (!match) {
+        return {
+          mensaje: `No existe ninguna etiqueta que matchee "${etiqueta}".`,
+          etiquetas_disponibles: catalogo.map(e => e.nombre),
+        };
+      }
+      const [mapaFacturas, mapaGastos, facturas, gastos, clientes] = await Promise.all([
+        getEtiquetasPorDocumento('factura'),
+        getEtiquetasPorDocumento('gasto'),
+        getFacturas(),
+        getGastos(),
+        getClientes(),
+      ]);
+      const tiene = (mapa: Record<string, Array<{ id: string }>>, docId: string) =>
+        (mapa[docId] ?? []).some(e => e.id === match.id);
+      const nombreCliente = new Map(clientes.map(c => [c.id, c.name]));
+      const facturasMarcadas = facturas.filter(i => tiene(mapaFacturas, i.id));
+      const gastosMarcados = gastos.filter(g => tiene(mapaGastos, g.id));
+      return {
+        etiqueta: match.nombre,
+        facturas: {
+          cantidad: facturasMarcadas.length,
+          total_Q: Math.round(facturasMarcadas.reduce((s, i) => s + i.total, 0)),
+          saldo_pendiente_Q: Math.round(facturasMarcadas.reduce((s, i) => s + i.balance, 0)),
+          lista: facturasMarcadas.map(i => ({ ...proyectarFactura(i), cliente: nombreCliente.get(i.custId) ?? i.custId })),
+        },
+        gastos: {
+          cantidad: gastosMarcados.length,
+          total_Q: Math.round(gastosMarcados.reduce((s, g) => s + g.total, 0)),
+          lista: gastosMarcados.map(g => ({ fecha: g.fecha, total: g.total, estado: g.estado, metodoPago: g.metodoPago })),
+        },
+        nota: 'Las etiquetas son metadata libre: estos totales NO salen de libros contables ni sustituyen al ER / centros de costo.',
       };
     },
   }),

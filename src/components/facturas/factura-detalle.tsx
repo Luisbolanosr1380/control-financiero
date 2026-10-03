@@ -15,6 +15,7 @@ import type { Banco } from '@/lib/db/bancos';
 import type { GrupoCobro } from '@/lib/db/cobros';
 import type { NotaCredito } from '@/lib/db/notas-credito';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
+import { EtiquetasEditor } from '@/components/common/etiquetas-chips';
 
 const STATUS_BADGE: Record<InvoiceStatus, { cls: string; text: string }> = {
   vencido:       { cls: 'badge-wine',    text: 'Vencida' },
@@ -316,6 +317,14 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 22 }}>
         {/* 4. PDF ADJUNTO */}
         <div className="card">
+          <div className="card-head"><div className="card-title">Etiquetas</div></div>
+          <div className="card-pad" style={{ paddingTop: 10, paddingBottom: 14 }}>
+            <EtiquetasEditor tipo="factura" docAppId={inv.id} />
+            <div style={{ fontSize: 10.5, color: 'var(--ink-4)', marginTop: 6 }}>
+              Metadata libre para organizar y filtrar — sin efecto contable.
+            </div>
+          </div>
+
           <div className="card-head"><div className="card-title">Documento adjunto</div></div>
           <div className="card-pad">
             {inv.adjuntoUrl ? (

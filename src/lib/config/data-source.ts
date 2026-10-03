@@ -44,7 +44,10 @@ export type TablaMigrable =
   | 'gestiones_cobro'
   // F-ROADMAP: tablero de prioridades del dueño (solo admin). Tabla nueva;
   // sus escrituras gatean por la operación 'sistema'.
-  | 'roadmap_items';
+  | 'roadmap_items'
+  // F-ETIQUETAS-FACTURAS: metadata libre de facturas (sin efecto contable).
+  // Escrituras gateadas por la operación 'facturacion' (van pegadas a la factura).
+  | 'etiquetas';
 
 export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   // Flipeadas con diff limpio (scripts/diff-datasource.ts, 2026-08-04):
@@ -72,6 +75,7 @@ export const DATA_SOURCE: Record<TablaMigrable, Backend> = {
   mapeo_bs:                 'supabase',
   gestiones_cobro:          'supabase',   // F-COBRANZA: nace en Supabase
   roadmap_items:            'supabase',   // F-ROADMAP: nace en Supabase
+  etiquetas:                'supabase',   // F-ETIQUETAS: nace en Supabase
 };
 
 /** Backend efectivo para una tabla (respeta el override del diff script). */

@@ -7,10 +7,14 @@ import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { crearBancoAction, crearCentroCostoAction } from '@/app/(app)/admin/catalogos/actions';
 import { ModalCuentaInline, type CuentaMin } from '@/components/admin/modal-cuenta-inline';
+import { EtiquetasGestion } from '@/components/admin/etiquetas-gestion';
 import type { CatalogoResumen } from '@/lib/db/catalogos';
+import type { Etiqueta } from '@/lib/db/etiquetas';
 
 interface Props {
   catalogos: CatalogoResumen;
+  etiquetas: Etiqueta[];
+  usoEtiquetas: Record<string, { facturas: number; gastos: number }>;
 }
 
 const CARD: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 0 };
@@ -18,7 +22,7 @@ const SECCION: React.CSSProperties = {
   fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 8,
 };
 
-export function AdminCatalogosClient({ catalogos }: Props) {
+export function AdminCatalogosClient({ catalogos, etiquetas, usoEtiquetas }: Props) {
   const router = useRouter();
 
   // F-BANCO-INLINE: el plan vive en estado local para que una cuenta creada
@@ -96,7 +100,7 @@ export function AdminCatalogosClient({ catalogos }: Props) {
         <div>
           <h1 className="page-title">Catálogos</h1>
           <div className="page-subtitle" style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>
-            Bancos, centros de costo y plan de cuentas — altas que antes se hacían en Airtable.
+            Bancos, centros de costo, plan de cuentas y etiquetas — altas que antes se hacían en Airtable.
           </div>
         </div>
       </div>
@@ -249,6 +253,9 @@ export function AdminCatalogosClient({ catalogos }: Props) {
             </div>
           </div>
         </div>
+
+        {/* ── Etiquetas (F-ETIQUETAS) ── */}
+        <EtiquetasGestion etiquetas={etiquetas} uso={usoEtiquetas} />
 
       </div>
     </div>

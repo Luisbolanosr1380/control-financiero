@@ -15,9 +15,13 @@ import { formatearFecha, formatearFechaConHora } from '@/lib/utils/fechas';
 import { HelpButton } from '@/components/ayuda/help-button';
 import { ModalRevisionFactura } from './ModalRevisionFactura';
 import type { FacturaIn } from '@/lib/db/facturas-in';
+import { ChipEtiqueta } from '@/components/common/etiquetas-chips';
+import type { Etiqueta } from '@/lib/db/etiquetas';
 
 interface Props {
   facturas: FacturaIn[];
+  /** F-ETIQUETAS: mapa facturaInAppId → etiquetas del gasto generado. */
+  etiquetasPorFacturaIn?: Record<string, Etiqueta[]>;
 }
 
 const ESTATUS_BADGE: Record<string, { cls: string; text: string }> = {
@@ -27,12 +31,19 @@ const ESTATUS_BADGE: Record<string, { cls: string; text: string }> = {
   Anulada:   { cls: 'badge-wine',    text: 'Anulada' },
 };
 
-export function FacturasInList({ facturas }: Props) {
+export function FacturasInList({ facturas, etiquetasPorFacturaIn = {} }: Props) {
   // F-050: tab default Pendiente (lo que requiere acción).
   const [estatus, setEstatus] = useState<string>('Pendiente');
   const [subidoPor, setSubidoPor] = useState<string>('');
   const [soloBajaConfianza, setSoloBajaConfianza] = useState(false);
   const [search, setSearch] = useState('');
+  const [fEtiqueta, setFEtiqueta] = useState('');
+  const etiquetasDisponibles = useMemo(() => {
+    const m = new Map<string, Etiqueta>();
+    for (const f of facturas) for (const e of etiquetasPorFacturaIn[f.id] ?? []) m.set(e.nombre, e);
+    return [...m.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [facturas, etiquetasPorFacturaIn]);
   const [seleccionada, setSeleccionada] = useState<FacturaIn | null>(null);
   const [revisando, setRevisando] = useState<FacturaIn | null>(null);
 
@@ -69,8 +80,10 @@ export function FacturasInList({ facturas }: Props) {
         f.numero.toLowerCase().includes(q),
       );
     }
+    if (fEtiqueta) r = r.filter(f => (etiquetasPorFacturaIn[f.id] ?? []).some(e => e.nombre === fEtiqueta));
     return r;
-  }, [facturas, estatus, subidoPor, soloBajaConfianza, search]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [facturas, estatus, subidoPor, soloBajaConfianza, search, fEtiqueta, etiquetasPorFacturaIn]);
 
   return (
     <div className="card">
@@ -112,6 +125,12 @@ export function FacturasInList({ facturas }: Props) {
           />
           Solo baja confianza (&lt;0.8)
         </label>
+        {etiquetasDisponibles.length > 0 && (
+          <select className="input" style={{ width: 'auto' }} value={fEtiqueta} onChange={e => setFEtiqueta(e.target.value)}>
+            <option value="">Todas las etiquetas</option>
+            {etiquetasDisponibles.map(e => <option key={e.id} value={e.nombre}>{e.nombre}</option>)}
+          </select>
+        )}
         <div className="toolbar-search" style={{ marginLeft: 'auto' }}>
           <I.Search size={13} style={{ color: 'var(--ink-4)' }} />
           <input
@@ -156,7 +175,12 @@ export function FacturasInList({ facturas }: Props) {
               const badge = ESTATUS_BADGE[f.estatus] ?? { cls: 'badge-mute', text: f.estatus };
               return (
                 <tr key={f.id} className="clickable" onClick={() => setSeleccionada(f)}>
-                  <td className="cell-strong">{f.proveedorNombre || '—'}</td>
+                  <td className="cell-strong">
+                    {f.proveedorNombre || '—'}
+                    {(etiquetasPorFacturaIn[f.id] ?? []).slice(0, 2).map(e => (
+                      <span key={e.id} style={{ marginLeft: 4 }}><ChipEtiqueta etiqueta={e} size={9.5} /></span>
+                    ))}
+                  </td>
                   <td className="cell-mute" style={{ whiteSpace: 'nowrap' }}>{f.fechaEmision ? formatearFecha(f.fechaEmision) : '—'}</td>
                   <td className="num cell-strong">{Q(f.total)}</td>
                   <td><span className={'badge ' + badge.cls} style={{ fontSize: 10 }}>{badge.text}</span></td>

@@ -8,11 +8,15 @@ import { Q, formatDate } from '@/lib/utils';
 import { AGING_BUCKETS, AGING_LABEL, type PendientesCobro, type FacturaPendiente } from '@/lib/db/facturas-pendientes';
 import { GestionCobroModal } from '@/components/facturas/gestion-cobro-modal';
 import type { ResumenGestiones } from '@/lib/db/gestiones-cobro';
+import { ChipEtiqueta } from '@/components/common/etiquetas-chips';
+import type { Etiqueta } from '@/lib/db/etiquetas';
 import type { AgingBucket } from '@/lib/types';
 
 interface Props {
   data: PendientesCobro;
   gestiones: ResumenGestiones;
+  /** F-ETIQUETAS: mapa facturaAppId → etiquetas (metadata, sin efecto contable). */
+  etiquetasFacturas?: Record<string, Etiqueta[]>;
 }
 
 type SortKey = 'diasVencidos' | 'saldo' | 'cliente' | 'fechaEmision' | 'fechaVencimiento' | 'pagoPrometido';
@@ -57,7 +61,7 @@ function csvEscape(v: string | number): string {
   return /[",\n;]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-export function PendientesCobroClient({ data, gestiones }: Props) {
+export function PendientesCobroClient({ data, gestiones, etiquetasFacturas = {} }: Props) {
   const router = useRouter();
   const [search, setSearch] = useState('');
   const [centro, setCentro] = useState('');
@@ -65,6 +69,7 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
   const [gestionF, setGestionF] = useState<GestionFiltro>('todas');
   const [bucket, setBucket] = useState<AgingBucket | ''>('');
   const [mes, setMes] = useState('');
+  const [fEtiqueta, setFEtiqueta] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('diasVencidos');
   const [sortAsc, setSortAsc] = useState(false);
   const [modalCliente, setModalCliente] = useState<{ custId: string; cliente: string } | null>(null);
@@ -84,6 +89,13 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
     () => [...new Set(data.filas.flatMap(f => f.centros))].sort(),
     [data.filas],
   );
+  const etiquetasDisponibles = useMemo(() => {
+    const m = new Map<string, Etiqueta>();
+    for (const f of data.filas) for (const e of etiquetasFacturas[f.id] ?? []) m.set(e.nombre, e);
+    return [...m.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.filas, etiquetasFacturas]);
+
   const mesesDisponibles = useMemo(
     () => [...new Set(data.filas.map(f => f.mesEmision).filter(Boolean))].sort().reverse(),
     [data.filas],
@@ -106,6 +118,7 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
     });
     if (gestionF === 'promesa_vencida') rows = rows.filter(f => promesaDe(f)?.vencida);
     if (mes)     rows = rows.filter(f => f.mesEmision === mes);
+    if (fEtiqueta) rows = rows.filter(f => (etiquetasFacturas[f.id] ?? []).some(e => e.nombre === fEtiqueta));
 
     const dir = sortAsc ? 1 : -1;
     return [...rows].sort((a, b) => {
@@ -127,7 +140,7 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.filas, gestiones, search, centro, bucket, estatus, gestionF, mes, sortKey, sortAsc]);
+  }, [data.filas, gestiones, etiquetasFacturas, search, centro, bucket, estatus, gestionF, mes, fEtiqueta, sortKey, sortAsc]);
 
   const saldoFiltrado = filas.reduce((s, f) => s + f.saldo, 0);
 
@@ -141,13 +154,14 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
     const encabezado = [
       'No. Factura', 'Cliente', 'Fecha emisión', 'Mes', 'Total', 'Saldo por cobrar',
       'Días crédito', 'Fecha vencimiento', 'Días vencidos', 'Estatus', 'Tramo', 'Centro de costo',
-      'Pago prometido', 'Última gestión',
+      'Pago prometido', 'Última gestión', 'Etiquetas',
     ];
     const lineas = filas.map(f => [
       f.noFactura, f.cliente, f.fechaEmision, f.mesEmision, f.total.toFixed(2), f.saldo.toFixed(2),
       f.diasCredito, f.fechaVencimiento, f.diasVencidos, f.vencida ? 'VENCIDA' : 'POR VENCER',
       AGING_LABEL[f.bucket], f.centros.join(' + '),
       promesaDe(f)?.fecha ?? '', ultimaGestionDe(f)?.ultimaGestion ?? '',
+      (etiquetasFacturas[f.id] ?? []).map(e => e.nombre).join(' | '),
     ].map(csvEscape).join(','));
     // BOM para que Excel abra el UTF-8 con acentos bien.
     const blob = new Blob(['﻿' + [encabezado.join(','), ...lineas].join('\n')], { type: 'text/csv;charset=utf-8' });
@@ -234,6 +248,12 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
           <option value="sin_gestion">Sin gestión reciente</option>
           <option value="promesa_vencida">Promesa vencida</option>
         </select>
+        {etiquetasDisponibles.length > 0 && (
+          <select className="input" style={{ width: 'auto' }} value={fEtiqueta} onChange={e => setFEtiqueta(e.target.value)}>
+            <option value="">Todas las etiquetas</option>
+            {etiquetasDisponibles.map(e => <option key={e.id} value={e.nombre}>{e.nombre}</option>)}
+          </select>
+        )}
         <select className="input num" style={{ width: 'auto' }} value={mes} onChange={e => setMes(e.target.value)}>
           <option value="">Todos los meses</option>
           {mesesDisponibles.map(m => <option key={m} value={m}>{m}</option>)}
@@ -270,6 +290,15 @@ export function PendientesCobroClient({ data, gestiones }: Props) {
               <tr key={f.id} className="clickable" onClick={() => router.push(`/facturacion/${f.id}`)}>
                 <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>
                   {f.noFactura}{f.esParcial && <span className="badge badge-mute" style={{ marginLeft: 6 }}>parcial</span>}
+                  {(etiquetasFacturas[f.id] ?? []).slice(0, 2).map(e => (
+                    <span key={e.id} style={{ marginLeft: 4 }}><ChipEtiqueta etiqueta={e} size={9.5} /></span>
+                  ))}
+                  {(etiquetasFacturas[f.id]?.length ?? 0) > 2 && (
+                    <span style={{ marginLeft: 3, fontSize: 9.5, color: 'var(--ink-4)' }}
+                      title={(etiquetasFacturas[f.id] ?? []).map(e => e.nombre).join(', ')}>
+                      +{(etiquetasFacturas[f.id]!.length - 2)}
+                    </span>
+                  )}
                 </td>
                 <td style={{ maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={f.cliente}>
                   {f.cliente}

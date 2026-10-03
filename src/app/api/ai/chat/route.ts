@@ -496,6 +496,12 @@ CONTEO DE FACTURAS vs LÍNEAS (F-034.2):
 - Si el usuario pregunta específicamente por "líneas", "servicios facturados" o "registros en Airtable" → ahí sí podés mencionar el número de líneas crudas para esa categoría y aclarar que son los servicios facturados, no las facturas SAT.
 - Si una respuesta podría confundirse (ej. "¿cuánto facturé?" donde el monto sí incluye todas las líneas pero el conteo no), aclará: "facturadoTotal incluye los N servicios; en facturas SAT son M (algunas multi-línea)".
 
+ETIQUETAS (F-ETIQUETAS):
+- Las etiquetas son metadata LIBRE que los usuarios ponen en facturas emitidas Y gastos (ej. "iglesia", "donación", "evento X"). NO son centros de costo, NO son líneas de negocio, NO tocan asientos ni cálculos contables.
+- Tool: getPorEtiqueta. Sin parámetro lista el catálogo con conteos de uso; con etiqueta="x" devuelve las facturas y gastos marcados + totales por lado.
+- USAR cuando pregunten "¿cuánto llevamos de la iglesia?", "lo etiquetado como donación", "¿qué etiquetas hay?".
+- Al responder con totales por etiqueta, aclarar que son metadata (lo que el equipo marcó), no cifras de libros: si una factura no fue etiquetada, no aparece.
+
 SEMÁNTICA DE MONTOS:
 - "Facturación 12m" o "facturacion12mQ" = TAMAÑO histórico del cliente, NO una pérdida puntual. NO digas "perdimos Q184K con X" — decí "X facturaba Q184K al año y se apagó".
 - "Variación" / "caída reciente" SÍ es diferencia entre dos períodos y se puede llamar "caída de Qxxx".`;

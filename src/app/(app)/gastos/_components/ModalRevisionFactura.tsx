@@ -32,6 +32,9 @@ import { Q } from '@/lib/utils';
 import { formatearFecha } from '@/lib/utils/fechas';
 import { anularFacturaAction } from '@/app/(app)/gastos/_actions/anular-factura';
 import { aprobarFacturaAction } from '@/app/(app)/gastos/_actions/aprobar-factura';
+import { EtiquetasChips } from '@/components/common/etiquetas-chips';
+import { getEtiquetasAction, setEtiquetasDocumentoAction } from '@/app/(app)/etiquetas-actions';
+import type { Etiqueta } from '@/lib/db/etiquetas';
 import { buscarProveedorPorNitAction } from '@/app/(app)/gastos/_actions/buscar-proveedor-por-nit';
 import { cargarOpcionesModalAction, type OpcionesModal, type OpcionSelector } from '@/app/(app)/gastos/_actions/cargar-opciones-modal';
 import { CUENTAS_SISTEMA } from '@/lib/contabilidad/cuentas-sistema';
@@ -79,6 +82,14 @@ function sumarDias(fechaIso: string, dias: number): string {
 }
 
 export function ModalRevisionFactura({ factura, onClose }: Props) {
+  // F-ETIQUETAS: metadata libre del gasto (se aplican tras aprobar; sin efecto contable).
+  const [etiquetasGasto, setEtiquetasGasto] = useState<string[]>([]);
+  const [sugerenciasEtiquetas, setSugerenciasEtiquetas] = useState<Etiqueta[]>([]);
+  useEffect(() => {
+    let vivo = true;
+    getEtiquetasAction().then(e => { if (vivo) setSugerenciasEtiquetas(e); }).catch(() => {});
+    return () => { vivo = false; };
+  }, []);
   const router = useRouter();
 
   // Opciones de selectores (centros / cuentas / bancos).
@@ -352,6 +363,11 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
       });
 
       if (res.ok) {
+        // F-ETIQUETAS: fail-soft — el gasto ya quedó aprobado.
+        if (etiquetasGasto.length && res.gastoId) {
+          const rE = await setEtiquetasDocumentoAction('gasto', res.gastoId, etiquetasGasto);
+          if (!rE.ok) toast.error(`Etiquetas no guardadas: ${rE.error}`);
+        }
         const accion = res.periodoAjustado
           ? `Asiento ${res.asientoRef} creado (ajustado al período actual por cierre)`
           : `Asiento ${res.asientoRef} creado`;
@@ -621,6 +637,18 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
                     </div>
                   </div>
                 )}
+              </SubSection>
+
+              <SubSection title="Etiquetas (opcional)">
+                <EtiquetasChips
+                  value={etiquetasGasto}
+                  onChange={setEtiquetasGasto}
+                  sugerencias={sugerenciasEtiquetas}
+                  placeholder="ej. iglesia, proyecto X…"
+                />
+                <div style={{ fontSize: 10.5, color: 'var(--ink-4)', marginTop: 4 }}>
+                  Metadata libre para organizar y filtrar — sin efecto contable.
+                </div>
               </SubSection>
             </>
           )}
