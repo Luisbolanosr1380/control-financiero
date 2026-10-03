@@ -1,3 +1,4 @@
+import { exigirPagina } from '@/lib/auth/guard';
 import { getOpcionesEmpresas } from '@/lib/db/empresas-relacionadas';
 import {
   getEmpleados,
@@ -11,6 +12,8 @@ import { EmpleadosListClient } from '@/components/empleados/empleados-list-clien
 export const revalidate = 60;
 
 export default async function EmpleadosPage() {
+  // F-GESTION-USUARIOS: pantalla completa gateada por rol (las actions revalidan igual).
+  await exigirPagina('planilla');
   const [empleados, kpis, centros, planillaPorCC, resumenPendientes] = await Promise.all([
     getEmpleados(),
     getKPIsPlanilla(),

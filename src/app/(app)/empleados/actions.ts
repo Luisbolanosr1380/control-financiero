@@ -1,5 +1,6 @@
 'use server';
 
+import { autorizar } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 import {
   crearEmpleado, editarEmpleado, darDeBajaEmpleado,
@@ -16,12 +17,16 @@ function revalidarTodo(): void {
 }
 
 export async function crearEmpleadoAction(input: CrearEmpleadoInput): Promise<EmpleadoMutationResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await crearEmpleado(input);
   if (result.ok) revalidarTodo();
   return result;
 }
 
 export async function editarEmpleadoAction(id: string, input: EditarEmpleadoInput): Promise<EmpleadoMutationResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await editarEmpleado(id, input);
   if (result.ok) revalidarTodo();
   return result;
@@ -30,6 +35,8 @@ export async function editarEmpleadoAction(id: string, input: EditarEmpleadoInpu
 export async function darDeBajaEmpleadoAction(
   id: string, fechaSalida: string, motivoSalida: string, nuevoStatus: StatusEmpleado = 'INACTIVO',
 ): Promise<EmpleadoMutationResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await darDeBajaEmpleado(id, fechaSalida, motivoSalida, nuevoStatus);
   if (result.ok) revalidarTodo();
   return result;
@@ -38,6 +45,8 @@ export async function darDeBajaEmpleadoAction(
 export async function crearDeudaSalarialAction(
   empleadoId: string, monto: number, fechaQuincena: string, notas?: string,
 ): Promise<CrearDeudaSalarialResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await crearDeudaSalarioPendiente(empleadoId, monto, fechaQuincena, notas);
   if (result.ok) revalidarTodo();
   return result;

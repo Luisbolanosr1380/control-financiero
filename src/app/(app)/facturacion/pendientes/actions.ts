@@ -1,8 +1,7 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { currentUser } from '@clerk/nextjs/server';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { autorizar, exigir } from '@/lib/auth/guard';
 import {
   crearGestionCobro, getGestionesCliente,
   type CanalGestion, type CrearGestionCobroResult, type GestionCobro,
@@ -19,15 +18,14 @@ export interface RegistrarGestionInput {
 }
 
 export async function registrarGestionAction(input: RegistrarGestionInput): Promise<CrearGestionCobroResult> {
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  if (!getRolUsuario(email)) return { ok: false, error: 'Usuario no autorizado.' };
-
-  const res = await crearGestionCobro({ ...input, usuario: email });
+  const permiso = await autorizar('registrar_cobro');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const res = await crearGestionCobro({ ...input, usuario: permiso.email });
   if (res.ok) revalidatePath('/facturacion/pendientes');
   return res;
 }
 
 export async function getGestionesClienteAction(custId: string): Promise<GestionCobro[]> {
+  await exigir('ver');
   return getGestionesCliente(custId);
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
@@ -242,6 +243,7 @@ export function FacturasListClient({
   initialTab = 'todas', ncsActivasAnio = 0, mesActivo,
   topClientes = [], totalMesQ = 0, nombresCC = {},
 }: Props) {
+  const puede = usePuede();
   const router = useRouter();
   // Nombre de línea = CC real de la base; fallback legacy a LINES solo si
   // la línea no trae centroCostoId (datos viejos sin CC).
@@ -371,9 +373,11 @@ export function FacturasListClient({
         <div className="page-actions">
           <button className="btn btn-secondary"><I.Download size={13} /> Exportar</button>
           <button className="btn btn-secondary"><I.Mail size={13} /> Recordatorios masivos</button>
+{puede('emitir_factura') && (
           <button className="btn btn-primary" onClick={() => router.push('/facturacion/nueva')}>
             <I.Plus size={13} /> Nueva factura <span className="kbd">⌘N</span>
           </button>
+          )}
         </div>
       </div>
 

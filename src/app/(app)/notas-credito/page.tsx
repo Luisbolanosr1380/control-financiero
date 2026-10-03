@@ -1,6 +1,5 @@
-import { currentUser } from '@clerk/nextjs/server';
 import { getNotasCredito, getKPIsNotasCredito } from '@/lib/db/notas-credito';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import { NotasCreditoClient, type FiltroEstadoNC } from '@/components/notas-credito/notas-credito-client';
 
 export const revalidate = 30;
@@ -17,9 +16,7 @@ export default async function NotasCreditoPage({
     ? (estado as FiltroEstadoNC)
     : 'todas';
 
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
+  const { email, rol } = await getSesion();
 
   const [notas, kpis] = await Promise.all([
     getNotasCredito(),

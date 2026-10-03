@@ -22,11 +22,28 @@
  * sobre estas funciones sin Clerk real.
  */
 
+import { accesosDeMetadata, ROL_LABEL, type Rol } from './roles';
+import { deployDe } from '../config/deploys';
+
 export interface EmpresaAcceso {
   slug: string;
   nombre: string;
   url: string;
+  rol?: Rol;
 }
+
+/**
+ * F-GESTION-USUARIOS: empresas del usuario para el selector. Con
+ * `accesos` (formato nuevo) se arman desde el registro de deploys; sin
+ * él, se cae al viejo `empresas` (null = modo compatibilidad).
+ */
+export function empresasDelUsuario(meta: unknown): EmpresaAcceso[] | null {
+  const accesos = accesosDeMetadata(meta);
+  if (accesos === null) return empresasDeMetadata(meta);
+  return accesos.map(a => ({ ...deployDe(a.empresa_slug), rol: a.rol }));
+}
+
+export const etiquetaRol = (r?: Rol) => (r ? ROL_LABEL[r] : '');
 
 /**
  * Parsea `publicMetadata` de Clerk.

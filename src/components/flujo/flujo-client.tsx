@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
@@ -354,6 +355,9 @@ interface RecurrentesProps {
 }
 
 function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: RecurrentesProps) {
+  // F-GESTION-USUARIOS: configurar obligaciones = catálogos (admin/contador).
+  const puede = usePuede();
+  const editable = puede('catalogos');
   const hoy = useMemo(() => obtenerFechaHoyGuatemala(), []);
   const totalMensual = useMemo(
     () => obligaciones
@@ -368,13 +372,13 @@ function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: 
           Total mensual estimado (activas):{' '}
           <span style={{ fontWeight: 600, color: 'var(--ink)' }}>{Q(totalMensual)}</span>
         </div>
-        <button onClick={onNueva} className="btn-primary" style={{
+        {editable && <button onClick={onNueva} className="btn-primary" style={{
           display: 'inline-flex', alignItems: 'center', gap: 6,
           padding: '6px 12px', borderRadius: 6, border: 'none',
           background: 'var(--ink)', color: 'var(--paper)', cursor: 'pointer', fontSize: 13,
         }}>
           <I.Plus size={14} /> Nueva obligación
-        </button>
+        </button>}
       </div>
       {obligaciones.length === 0 ? (
         <div className="card" style={{ textAlign: 'center', padding: 24, color: 'var(--ink-3)' }}>
@@ -439,7 +443,8 @@ function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: 
                   </Td>
                   <Td align="center">
                     <button
-                      onClick={() => onTogglePausa(o.id)}
+                      disabled={!editable}
+                      onClick={() => editable && onTogglePausa(o.id)}
                       style={{
                         all: 'unset', cursor: 'pointer',
                         padding: '2px 8px',
@@ -453,12 +458,12 @@ function RecurrentesSection({ obligaciones, onNueva, onEditar, onTogglePausa }: 
                     </button>
                   </Td>
                   <Td align="right">
-                    <button
+                    {editable && <button
                       onClick={() => onEditar(o)}
                       style={{ all: 'unset', cursor: 'pointer', color: 'var(--indigo)', fontSize: 12 }}
                     >
                       Editar
-                    </button>
+                    </button>}
                   </Td>
                 </tr>
               ))}

@@ -6,6 +6,8 @@
  * Clerk sí la protege — requiere sesión.
  *
  * Reglas (brief aprobado):
+ *  · F-GESTION-USUARIOS: lee `accesos` (rol por empresa) si existe;
+ *    si no, el viejo `empresas`.
  *  · metadata sin `empresas` (usuarios pre-Paso 4) → directo al
  *    dashboard: decide el allowlist, comportamiento actual de Golden.
  *  · 1 empresa → directo, sin mostrar selector (local o redirect al
@@ -17,14 +19,14 @@
 import { redirect } from 'next/navigation';
 import { currentUser } from '@clerk/nextjs/server';
 import { empresaConfig } from '@/lib/config/empresa';
-import { empresasDeMetadata, resolverSeleccion } from '@/lib/auth/empresas-acceso';
+import { empresasDelUsuario, etiquetaRol, resolverSeleccion } from '@/lib/auth/empresas-acceso';
 
 export const dynamic = 'force-dynamic';
 
 export default async function SelectorEmpresasPage() {
   const user = await currentUser();
   const cfg = empresaConfig();
-  const empresas = empresasDeMetadata(user?.publicMetadata);
+  const empresas = empresasDelUsuario(user?.publicMetadata);
   const seleccion = resolverSeleccion(empresas, cfg.slug);
 
   if (seleccion.tipo === 'directo-local') redirect('/dashboard');
@@ -74,6 +76,7 @@ export default async function SelectorEmpresasPage() {
                     <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>{e.nombre}</div>
                     <div style={{ fontSize: 11.5, color: 'var(--ink-4)' }}>
                       {esEsta ? 'Estás en este entorno' : (e.url ? new URL(e.url).host : e.slug)}
+                      {e.rol && <> · <span style={{ color: 'var(--ink-3)' }}>{etiquetaRol(e.rol)}</span></>}
                     </div>
                   </div>
                   <span style={{ color: 'var(--ink-4)' }}>→</span>

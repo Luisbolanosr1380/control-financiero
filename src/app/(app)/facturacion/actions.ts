@@ -1,5 +1,6 @@
 'use server';
 
+import { exigir } from '@/lib/auth/guard';
 import { getFacturasPagina, type GetFacturasPaginaResult, type FiltroTabFactura } from '@/lib/db/facturas';
 
 export async function cargarMasFacturasAction(
@@ -8,5 +9,6 @@ export async function cargarMasFacturasAction(
   filtro?: FiltroTabFactura,
   mes?: string,   // F-BF-002a: respeta el selector de mes activo.
 ): Promise<GetFacturasPaginaResult> {
+  await exigir('ver');
   return await getFacturasPagina({ before, limit, filtro, mes });
 }

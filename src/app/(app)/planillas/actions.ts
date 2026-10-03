@@ -1,5 +1,6 @@
 'use server';
 
+import { autorizar } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
 import {
@@ -32,24 +33,32 @@ async function emailUsuario(): Promise<string> {
 }
 
 export async function crearPeriodoAction(input: CrearPeriodoInput): Promise<PlanillaMutationResult & { periodoId?: string }> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await crearPeriodo(input);
   if (result.ok) revalidarTodo();
   return result;
 }
 
 export async function generarPlanillaAction(periodoId: string): Promise<GenerarPlanillaResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, cantidadEmpleados: 0, montoTotalProyectado: 0, error: permiso.error };
   const result = await generarPlanilla(periodoId);
   if (result.ok) revalidarTodo();
   return result;
 }
 
 export async function ajustarLineaAction(lineaId: string, ajustes: AjustesQuincena): Promise<PlanillaMutationResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await ajustarLineaPlanilla(lineaId, ajustes);
   if (result.ok) revalidarTodo();
   return result;
 }
 
 export async function aprobarPeriodoAction(periodoId: string): Promise<PlanillaMutationResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const email = await emailUsuario();
   const result = await aprobarPeriodo(periodoId, email);
   if (result.ok) revalidarTodo();
@@ -62,6 +71,8 @@ export async function registrarPagoEmpleadoAction(args: {
   bancoId: string;
   referencia?: string;
 }): Promise<PlanillaMutationResult> {
+  const permiso = await autorizar('pagar');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const email = await emailUsuario();
   const result = await registrarPagoEmpleado({ ...args, usuarioEmail: email });
   if (result.ok) revalidarTodo();
@@ -72,6 +83,8 @@ export async function diferirPagoEmpleadoAction(args: {
   lineaId: string;
   motivo: string;
 }): Promise<PlanillaMutationResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const email = await emailUsuario();
   const result = await diferirPagoEmpleado({ ...args, usuarioEmail: email });
   if (result.ok) revalidarTodo();
@@ -83,6 +96,8 @@ export async function cancelarPagoEmpleadoAction(args: {
   lineaId: string;
   motivo: string;
 }): Promise<PlanillaMutationResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const email = await emailUsuario();
   const result = await cancelarPagoEmpleado({ ...args, usuarioEmail: email });
   if (result.ok) revalidarTodo();
@@ -107,6 +122,8 @@ export async function diferirMasivoAction(args: {
   lineaIds: string[];
   motivo: string;
 }): Promise<DiferirMasivoResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, exitosos: 0, fallidos: args.lineaIds.length, totalDiferidoQ: 0, errores: [{ lineaId: '*', error: permiso.error }] };
   const email = await emailUsuario();
   let exitosos = 0;
   let totalDiferidoQ = 0;
@@ -183,6 +200,8 @@ export async function previewAsientoPlanillaAction(args: {
   periodoId: string;
   bancoId: string;
 }): Promise<{ ok: true; preview: PreviewAsientoPlanilla } | { ok: false; error: string }> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const armado = await armarInputAsiento(args.periodoId, args.bancoId);
   if (!armado.ok) return armado;
   try {
@@ -197,6 +216,8 @@ export async function generarAsientoPlanillaAction(args: {
   periodoId: string;
   bancoId: string;
 }): Promise<ResultadoGeneracion> {
+  const permiso = await autorizar('cerrar_periodo');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const armado = await armarInputAsiento(args.periodoId, args.bancoId);
   if (!armado.ok) return { ok: false, error: armado.error };
   const result = await generarAsientoPlanilla(armado.input);

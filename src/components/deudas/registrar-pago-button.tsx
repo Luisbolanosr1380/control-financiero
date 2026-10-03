@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { toast } from 'sonner';
@@ -33,7 +34,7 @@ interface Props {
 
 const METODOS: MetodoPagoDeuda[] = ['Transferencia', 'Cheque', 'Efectivo', 'Tarjeta', 'Domiciliado', 'Compensación'];
 
-export function RegistrarPagoButton({ deudaId, deudaNombre, acreedorNombre, saldoPendiente, estaLiquidada, cuentasBanco }: Props) {
+function RegistrarPagoButtonInner({ deudaId, deudaNombre, acreedorNombre, saldoPendiente, estaLiquidada, cuentasBanco }: Props) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -278,4 +279,10 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function parseNum(s: string): number {
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** F-GESTION-USUARIOS: solo se muestra si el rol puede 'pagar' (el servidor revalida). */
+export function RegistrarPagoButton(props: Props) {
+  const puede = usePuede();
+  return puede('pagar') ? <RegistrarPagoButtonInner {...props} /> : null;
 }

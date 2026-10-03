@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useState } from 'react';
 import { I } from '@/components/common/icons';
 import { DeudaFormModal } from '@/components/deudas/deuda-form-modal';
@@ -10,7 +11,7 @@ interface Props {
   centros: Array<{ id: string; nombre: string }>;
 }
 
-export function NuevaDeudaButton({ acreedores, centros }: Props) {
+function NuevaDeudaButtonInner({ acreedores, centros }: Props) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -27,4 +28,10 @@ export function NuevaDeudaButton({ acreedores, centros }: Props) {
       )}
     </>
   );
+}
+
+/** F-GESTION-USUARIOS: solo si el rol puede 'gestionar_deudas' (el servidor revalida). */
+export function NuevaDeudaButton(props: Props) {
+  const puede = usePuede();
+  return puede('gestionar_deudas') ? <NuevaDeudaButtonInner {...props} /> : null;
 }

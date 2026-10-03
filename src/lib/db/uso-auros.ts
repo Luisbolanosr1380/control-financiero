@@ -9,7 +9,7 @@
 import { writeSource } from '../config/data-source';
 import { insertar } from '../supabase/writes';
 import { airtable, USE_MOCK, TABLES } from './airtable';
-import { getRolUsuario, type Role } from '@/lib/auth/allowlist';
+import { type Role } from '@/lib/auth/allowlist';
 import { mesReferencia } from '@/lib/auth/permissions';
 
 export type TipoUso = 'chat' | 'analisis_semanal' | 'analisis_manual';
@@ -151,7 +151,7 @@ export async function getResumenUsoMensual(mes?: string): Promise<ResumenUsuario
 
       const e = m.get(email) ?? {
         email,
-        rol: getRolUsuario(email),
+        rol: null,   // el rol es por empresa y vive en Clerk: lo resuelve /admin/usuarios
         consultas: 0,
         analisisManual: 0,
         costoTotalUsd: 0,

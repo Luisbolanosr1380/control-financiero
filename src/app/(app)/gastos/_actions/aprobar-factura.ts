@@ -22,6 +22,7 @@
  * fallos en MOVIMIENTOS_BANCARIOS (paso 9): logueamos warning y seguimos.
  */
 
+import { autorizar } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 import { aprenderCuentaHabitualProveedor } from '@/lib/gastos/services/sugerir-cuenta-gasto';
 import { aprenderCentroHabitualProveedor } from '@/lib/gastos/services/sugerir-centro-costo';
@@ -155,6 +156,8 @@ async function leerFacturaIn(facturaInId: string): Promise<FacturaInData> {
 }
 
 export async function aprobarFacturaAction(input: AprobarFacturaInput): Promise<AprobarFacturaResult> {
+  const permiso = await autorizar('aprobar_gasto');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const escribeSupabase = writeSource('gastos') === 'supabase';
   if (!airtable && !escribeSupabase) return { ok: false, error: 'Airtable no está configurado.' };
 

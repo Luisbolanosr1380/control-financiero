@@ -11,6 +11,7 @@
  *  - 2 fases: edit → confirm (sólo para NCs grandes).
  */
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -33,7 +34,7 @@ interface Props {
   estadoBruto: InvoiceEstadoBruto;
 }
 
-export function EmitirNCButton({ facturaId, facturaNumero, clienteNombre, total, saldoPendiente, estadoBruto }: Props) {
+function EmitirNCButtonInner({ facturaId, facturaNumero, clienteNombre, total, saldoPendiente, estadoBruto }: Props) {
   const [open, setOpen] = useState(false);
 
   const inaplicable =
@@ -309,4 +310,10 @@ function Modal({ facturaId, facturaNumero, clienteNombre, total, saldoPendiente,
     </div>,
     document.body,
   );
+}
+
+/** F-GESTION-USUARIOS: solo se muestra si el rol puede 'anular' (el servidor revalida). */
+export function EmitirNCButton(props: Props) {
+  const puede = usePuede();
+  return puede('anular') ? <EmitirNCButtonInner {...props} /> : null;
 }

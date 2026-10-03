@@ -1,4 +1,3 @@
-import { currentUser } from '@clerk/nextjs/server';
 import { getFacturas } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { getDashboardKPIs, getLineStats, getAging, getTopDeudores } from '@/lib/db/kpis';
@@ -8,7 +7,7 @@ import { getKPIsPagosPendientes } from '@/lib/db/planillas';
 import { getKPIsNotasCredito } from '@/lib/db/notas-credito';
 import { getEvolucion12m, construirAlertasVivas } from '@/lib/db/dashboard-live';
 import { empresaConfig } from '@/lib/config/empresa';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import { DashboardClient } from '@/components/dashboard/dashboard-client';
 
 // Saludo real por hora/fecha de Guatemala (UTC-6 fija) — antes era un
@@ -28,10 +27,8 @@ function saludoGuatemala(dueno: string) {
 export const revalidate = 60;
 
 export default async function DashboardPage() {
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
-  const esOperativo = rol === 'operativo';
+  const { email, rol } = await getSesion();
+  const esOperativo = rol === 'auxiliar';
   const esAdmin = rol === 'admin';
 
   const [facturas, clientes] = await Promise.all([getFacturas(), getClientes()]);

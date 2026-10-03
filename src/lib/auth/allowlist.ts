@@ -1,56 +1,29 @@
 /**
- * Allowlist + roles del sistema (F-011 base + F-030 roles).
+ * Allowlist LEGACY (F-011 + F-030) — solo para usuarios SIN
+ * `publicMetadata.accesos` (pre-migración F-GESTION-USUARIOS).
  *
- * Decide si un email autenticado puede entrar al sistema y qué rol tiene.
- * Lee ALLOWED_EMAILS (compat F-011) y ALLOWED_DOMAIN, además del map de
- * roles hardcoded abajo (F-030).
- *
- * Fail-closed: si nada matchea, retorna null/false. Para agregar usuarios
- * o cambiar roles, editar ROLES_USUARIOS y desplegar.
+ * La decisión de rol vive en roles.ts (rolEnEmpresa) y el servidor la
+ * aplica con guard.ts. Acá queda únicamente la configuración vieja:
+ * emails explícitos (conservan su rol mapeado) y ALLOWED_EMAILS /
+ * ALLOWED_DOMAIN (entran como 'lectura' hasta que un admin les asigne
+ * un rol desde Admin → Usuarios y accesos).
  */
 
-export type Role = 'admin' | 'gerencia' | 'operativo';
+import type { ConfigLegacy, RolLegacy } from './roles';
 
-/**
- * Map email → rol. Stark mantiene este registro a mano y despliega.
- * Para usuarios que cumplen ALLOWED_DOMAIN pero no están en el map, el
- * fallback es 'operativo' (el más restrictivo).
- */
-export const ROLES_USUARIOS: Record<string, Role> = {
+export type { Rol as Role } from './roles';
+
+export const ROLES_USUARIOS: Record<string, RolLegacy> = {
   'luisbolanosr1380@gmail.com': 'admin',
   'luis@goldentalent.org': 'admin',
-  // 'monica@goldentalent.org': 'gerencia',
-  // 'operativo1@goldentalent.org': 'operativo',
   'rcontreras@goldentalent.org': 'admin',
 };
 
-
-/** Devuelve el rol del usuario, o null si no está autorizado. */
-export function getRolUsuario(email: string | null | undefined): Role | null {
-  if (!email) return null;
-  const e = email.trim().toLowerCase();
-
-  // 1) Match explícito por email
-  if (ROLES_USUARIOS[e]) return ROLES_USUARIOS[e];
-
-  // 2) Allowed por env: ALLOWED_EMAILS (compat F-011, default 'operativo')
+export function configLegacy(): ConfigLegacy {
   const emailsRaw = (process.env.ALLOWED_EMAILS ?? '').trim();
-  const emails = emailsRaw
-    ? emailsRaw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
-    : [];
-  if (emails.includes(e)) return 'operativo';
-
-  // 3) Dominio permitido (default 'operativo')
-  const domainRaw = (process.env.ALLOWED_DOMAIN ?? '').trim();
-  if (domainRaw) {
-    const domain = domainRaw.startsWith('@') ? domainRaw.toLowerCase() : '@' + domainRaw.toLowerCase();
-    if (e.endsWith(domain)) return 'operativo';
-  }
-
-  return null;
-}
-
-/** Compatibilidad F-011: el guard del (app)/layout sigue usando esto. */
-export function isEmailAllowed(email: string | null | undefined): boolean {
-  return getRolUsuario(email) !== null;
+  return {
+    rolesExplicitos: ROLES_USUARIOS,
+    allowedEmails: emailsRaw ? emailsRaw.split(',').map(s => s.trim().toLowerCase()).filter(Boolean) : [],
+    allowedDomain: (process.env.ALLOWED_DOMAIN ?? '').trim(),
+  };
 }

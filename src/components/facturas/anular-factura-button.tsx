@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -25,7 +26,7 @@ const ESTADO_LABEL: Partial<Record<InvoiceStatus, string>> = {
   emitida:       'Emitida',
 };
 
-export function AnularFacturaButton({ noFactura, status }: Props) {
+function AnularFacturaButtonInner({ noFactura, status }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [motivo, setMotivo] = useState('');
@@ -212,4 +213,10 @@ function ConfirmModal({ noFactura, status, advertenciaReforzada, motivo, setMoti
     </div>,
     document.body,
   );
+}
+
+/** F-GESTION-USUARIOS: solo se muestra si el rol puede 'anular' (el servidor revalida). */
+export function AnularFacturaButton(props: Props) {
+  const puede = usePuede();
+  return puede('anular') ? <AnularFacturaButtonInner {...props} /> : null;
 }

@@ -1,3 +1,4 @@
+import { exigirPagina } from '@/lib/auth/guard';
 import Link from 'next/link';
 import { getPeriodoPorId } from '@/lib/db/planillas';
 import { getEmpleados } from '@/lib/db/empleados';
@@ -8,6 +9,8 @@ import { I } from '@/components/common/icons';
 export const revalidate = 30;
 
 export default async function PlanillaDetallePage({ params }: { params: Promise<{ id: string }> }) {
+  // F-GESTION-USUARIOS: pantalla completa gateada por rol (las actions revalidan igual).
+  await exigirPagina('planilla');
   const { id } = await params;
 
   const datos = await getPeriodoPorId(id);

@@ -8,8 +8,10 @@
  * abre la factura. Lectura ligera, sin side-effects.
  */
 
+import { exigir } from '@/lib/auth/guard';
 import { buscarProveedorPorNit } from '@/lib/gastos/services/buscar-o-crear-proveedor';
 
 export async function buscarProveedorPorNitAction(nit: string) {
+  await exigir('ver');
   return buscarProveedorPorNit(nit);
 }

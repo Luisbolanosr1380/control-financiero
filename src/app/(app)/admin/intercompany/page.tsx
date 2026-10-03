@@ -10,16 +10,13 @@
  */
 
 import { redirect } from 'next/navigation';
-import { currentUser } from '@clerk/nextjs/server';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import { IntercompanyPreviewClient } from '@/components/intercompany/preview-client';
 
 export const dynamic = 'force-dynamic';
 
 export default async function AdminIntercompanyPage() {
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
+  const { email, rol } = await getSesion();
   if (rol !== 'admin') {
     redirect('/no-acceso');
   }

@@ -1,5 +1,6 @@
 'use server';
 
+import { autorizar, exigir } from '@/lib/auth/guard';
 import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { createFactura } from '@/lib/db/facturas';
@@ -14,6 +15,7 @@ export interface FacturaExisteResult {
 
 // Verificación puntual: ¿ya existe ese NO.FACTURA? (query filtrada, no trae todo)
 export async function checkFacturaExiste(noFactura: string): Promise<FacturaExisteResult> {
+  await exigir('ver');
   const nf = (noFactura ?? '').trim();
   if (!nf || !airtable) return { existe: false };
 
@@ -58,6 +60,8 @@ export type CrearFacturaResult =
   | { ok: false; error: string; duplicado?: boolean };
 
 export async function crearFacturaAction(formData: FormData): Promise<CrearFacturaResult> {
+  const permiso = await autorizar('emitir_factura');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const rawData = formData.get('data');
   if (typeof rawData !== 'string') return { ok: false, error: 'Datos faltantes en el formulario.' };
 

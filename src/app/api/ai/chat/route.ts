@@ -1,10 +1,9 @@
 import { generateText, type CoreMessage } from 'ai';
 import { google } from '@ai-sdk/google';
-import { currentUser } from '@clerk/nextjs/server';
 import { aiTools } from '@/lib/ai/tools';
 import { calcularCostoUSD } from '@/lib/db/ai-analisis';
 import { resolverPeriodo } from '@/lib/db/periodos';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import { tienePermiso, getLimiteAuros } from '@/lib/auth/permissions';
 import { registrarUsoAuros, getConsumoMensual } from '@/lib/db/uso-auros';
 import { partesFechaHoy } from '@/lib/utils/fechas';
@@ -524,9 +523,7 @@ export async function POST(req: Request) {
   // ──────────────────────────────────────────────────────────
   // F-030: control de permisos + rate limit por rol
   // ──────────────────────────────────────────────────────────
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
+  const { email, rol } = await getSesion();
   if (!rol) {
     return Response.json({ ok: false, error: 'NO_AUTORIZADO', mensaje: 'Tu correo no está autorizado para usar este sistema.' }, { status: 401 });
   }

@@ -1,5 +1,6 @@
 'use server';
 
+import { autorizar } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 import {
   crearDeuda,
@@ -24,18 +25,24 @@ function revalidarTodo(): void {
 }
 
 export async function crearDeudaAction(input: CrearDeudaInput): Promise<CrearDeudaResult> {
+  const permiso = await autorizar('gestionar_deudas');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await crearDeuda(input);
   if (result.ok) revalidarTodo();
   return result;
 }
 
 export async function editarDeudaAction(deudaId: string, input: EditarDeudaInput): Promise<EditarDeudaResult> {
+  const permiso = await autorizar('gestionar_deudas');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await editarDeuda(deudaId, input);
   if (result.ok) revalidarTodo();
   return result;
 }
 
 export async function crearAcreedorAction(input: CrearAcreedorInput): Promise<CrearAcreedorResult> {
+  const permiso = await autorizar('gestionar_deudas');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await crearAcreedor(input);
   if (result.ok) revalidarTodo();
   return result;

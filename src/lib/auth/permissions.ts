@@ -1,16 +1,19 @@
 /**
- * Matriz de permisos por rol (F-030).
+ * Permisos de AI y vistas por rol (F-030, adaptado a F-GESTION-USUARIOS).
  *
- * Reglas:
+ * Las acciones que tocan datos (registrar, aprobar, pagar…) NO se
+ * deciden acá: viven en la matriz de roles.ts y las aplica guard.ts.
+ * Esto solo regula Auros/análisis y la analítica avanzada.
+ *
  * - admin: todo, sin límites.
- * - gerencia: chat con límite mensual, análisis manual solo lunes/fin de mes.
- * - operativo: lectura + CRUD operativo, SIN AI (ni chat ni análisis).
+ * - contador / lectura: chat con límite mensual, análisis manual solo
+ *   lunes/fin de mes (Auros es de solo lectura — no toca datos).
+ * - auxiliar: sin AI (como el antiguo 'operativo').
  *
- * `aurosLimiteMensual` es número o Infinity (admin). Cuando se compara contra
- * el consumo actual hay que tratarlo como cap duro.
+ * `aurosLimiteMensual` es número o Infinity (admin).
  */
 
-import type { Role } from './allowlist';
+import type { Rol as Role } from './roles';
 
 export interface PermisosRol {
   aurosChat: boolean;
@@ -22,6 +25,14 @@ export interface PermisosRol {
   verAnaliticaAvanzada: boolean;
 }
 
+const AI_LIMITADA = {
+  aurosChat: true,
+  aurosLimiteMensual: 100,
+  analisisManual: true,
+  analisisManualVentanaTiempo: true,
+  verAnaliticaAvanzada: true,
+} as const;
+
 export const PERMISSIONS: Record<Role, PermisosRol> = {
   admin: {
     aurosChat: true,
@@ -32,16 +43,8 @@ export const PERMISSIONS: Record<Role, PermisosRol> = {
     crearEditar: true,
     verAnaliticaAvanzada: true,
   },
-  gerencia: {
-    aurosChat: true,
-    aurosLimiteMensual: 100,
-    analisisManual: true,
-    analisisManualVentanaTiempo: true,
-    gestionUsuarios: false,
-    crearEditar: true,
-    verAnaliticaAvanzada: true,
-  },
-  operativo: {
+  contador: { ...AI_LIMITADA, gestionUsuarios: false, crearEditar: true },
+  auxiliar: {
     aurosChat: false,
     aurosLimiteMensual: 0,
     analisisManual: false,
@@ -50,6 +53,7 @@ export const PERMISSIONS: Record<Role, PermisosRol> = {
     crearEditar: true,
     verAnaliticaAvanzada: false,
   },
+  lectura: { ...AI_LIMITADA, gestionUsuarios: false, crearEditar: false },
 };
 
 type PermisoBooleano = {

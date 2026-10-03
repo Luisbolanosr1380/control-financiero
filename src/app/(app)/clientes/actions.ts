@@ -1,9 +1,12 @@
 'use server';
 
+import { autorizar, exigir } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 import { crearCliente, type CrearClienteInput, type CrearClienteResult } from '@/lib/db/clientes';
 
 export async function crearClienteAction(input: CrearClienteInput): Promise<CrearClienteResult> {
+  const permiso = await autorizar('emitir_factura');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const result = await crearCliente(input);
   if (result.ok) {
     revalidatePath('/clientes', 'layout');       // lista + /clientes/[id]
@@ -25,6 +28,7 @@ export interface DatosAltaCliente {
 }
 
 export async function getDatosAltaClienteAction(): Promise<DatosAltaCliente> {
+  await exigir('ver');
   try {
     const [{ getCatalogos }, { getEmpresasRelacionadas }] = await Promise.all([
       import('@/lib/db/catalogos'),

@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
+import { usePuede } from '@/components/auth/permisos';
 import {
   getEtiquetasAction, getEtiquetasDeDocumentoAction, setEtiquetasDocumentoAction,
 } from '@/app/(app)/etiquetas-actions';
@@ -130,6 +131,7 @@ export function EtiquetasChips({ value, onChange, sugerencias, disabled, placeho
 export function EtiquetasEditor({ tipo, docAppId, disabled }: {
   tipo: TipoDocumentoEtiqueta; docAppId: string; disabled?: boolean;
 }) {
+  const puedeEtiquetar = usePuede()('etiquetar');   // lectura: ve los chips, no edita
   const [sugerencias, setSugerencias] = useState<Etiqueta[]>([]);
   const [nombres, setNombres] = useState<string[]>([]);
   const [cargado, setCargado] = useState(false);
@@ -165,5 +167,5 @@ export function EtiquetasEditor({ tipo, docAppId, disabled }: {
   };
 
   if (!cargado) return <div style={{ fontSize: 11.5, color: 'var(--ink-4)' }}>Cargando etiquetas…</div>;
-  return <EtiquetasChips value={nombres} onChange={onChange} sugerencias={sugerencias} disabled={disabled || guardando} />;
+  return <EtiquetasChips value={nombres} onChange={onChange} sugerencias={sugerencias} disabled={disabled || guardando || !puedeEtiquetar} />;
 }

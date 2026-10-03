@@ -6,6 +6,7 @@
  * hace 1-3 lookups locales antes de decidir si llama a Gemini.
  */
 
+import { exigir } from '@/lib/auth/guard';
 import {
   sugerirCentroCosto,
   type SugerenciaCentroCosto,
@@ -18,5 +19,6 @@ export type {
 } from '@/lib/gastos/services/sugerir-centro-costo';
 
 export async function sugerirCentroCostoAction(input: SugerirCentroCostoInput): Promise<SugerenciaCentroCosto> {
+  await exigir('ver');
   return await sugerirCentroCosto(input);
 }

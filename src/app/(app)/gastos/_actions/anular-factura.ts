@@ -12,6 +12,7 @@
  * extracción (F-049.2) y permite reconstruir la historia de la factura.
  */
 
+import { autorizar } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
 import { airtable } from '@/lib/db/airtable';
@@ -38,6 +39,8 @@ export interface AnularFacturaResult {
 const MIN_MOTIVO_CHARS = 5;
 
 export async function anularFacturaAction(input: AnularFacturaInput): Promise<AnularFacturaResult> {
+  const permiso = await autorizar('anular');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const escribeSupabase = writeSource('gastos') === 'supabase';
   if (!airtable && !escribeSupabase) return { ok: false, error: 'Airtable no está configurado.' };
 

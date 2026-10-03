@@ -13,6 +13,7 @@
  *    decodifica del lado cliente).
  */
 
+import { autorizar } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
 import { generarBoletaPago, nombreArchivoBoleta } from '@/lib/boletas/generar-boleta';
@@ -70,6 +71,8 @@ export async function generarBoletaAction(
   lineaId: string,
   opts: { motivoRegeneracion?: string } = {},
 ): Promise<GenerarBoletaActionResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, lineaId, error: permiso.error };
   if (!airtable && writeSource('planilla') !== 'supabase') return { ok: false, lineaId, error: 'Airtable no está configurado.' };
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
@@ -159,6 +162,8 @@ export interface GenerarBoletasMasivoResult {
 }
 
 export async function generarBoletasMasivoAction(periodoId: string): Promise<GenerarBoletasMasivoResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, periodoId, total: 0, generadas: 0, regeneradas: 0, saltadas: 0, fallidas: [{ lineaId: '*', error: permiso.error }] };
   const periodo = await getPeriodoPorId(periodoId);
   if (!periodo) {
     return { ok: false, periodoId, total: 0, generadas: 0, regeneradas: 0, saltadas: 0, fallidas: [] };
@@ -208,6 +213,8 @@ export interface DescargarBoletaActionResult {
  * desde el cliente. NO la sube a Airtable (no es side-effect de descargar).
  */
 export async function descargarBoletaAction(lineaId: string): Promise<DescargarBoletaActionResult> {
+  const permiso = await autorizar('planilla');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
   const gen = await generarBoletaPago(lineaId, email);

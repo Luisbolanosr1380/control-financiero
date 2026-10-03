@@ -19,7 +19,7 @@ import {
   type AnularNCResult,
   type AprobarNCResult,
 } from '@/lib/db/notas-credito';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { autorizar } from '@/lib/auth/guard';
 import {
   registrarCobro, anularCobro, anularCobroLegacy,
   type RegistrarCobroInput, type RegistrarCobroResult, type AnularCobroResult,
@@ -54,6 +54,8 @@ export async function anularFacturaAction(
   motivo?: string,
   motivoTipo?: MotivoAnulacion,
 ): Promise<AnularResult> {
+  const permiso = await autorizar('anular');
+  if (!permiso.ok) return { ok: false, noFactura, recordsActualizados: 0, recordsTotal: 0, error: permiso.error };
   const result = await anularFactura(noFactura, motivo, motivoTipo);
   if (result.ok || result.recordsActualizados > 0) revalidarTodo();
   return result;
@@ -66,6 +68,8 @@ export async function anularFacturaAction(
  * que un upload caído no pierda el cobro.
  */
 export async function registrarCobroAction(formData: FormData): Promise<CobroResult> {
+  const permiso = await autorizar('registrar_cobro');
+  if (!permiso.ok) return errorResult(permiso.error);
   const raw = formData.get('data');
   if (typeof raw !== 'string') {
     return { ...errorResult('Datos del cobro faltantes en el formulario.') };
@@ -115,6 +119,8 @@ export async function registrarCobroAction(formData: FormData): Promise<CobroRes
 
 /* F-045: emitir nota de crédito desde el detalle de factura. */
 export async function emitirNotaCreditoAction(input: CrearNotaCreditoInput): Promise<CrearNotaCreditoResult> {
+  const permiso = await autorizar('anular');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
   const result = await crearNotaCredito(input, email);
@@ -124,17 +130,18 @@ export async function emitirNotaCreditoAction(input: CrearNotaCreditoInput): Pro
 
 /* F-045: aprobar una NC (solo admin). */
 export async function aprobarNotaCreditoAction(ncId: string): Promise<AprobarNCResult> {
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
-  const esAdmin = rol === 'admin';
-  const result = await aprobarNotaCredito(ncId, email || 'sistema', esAdmin);
+  const permiso = await autorizar('anular');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  // F-045: NC > Q5K requiere admin (regla de negocio sobre la base 'anular').
+  const result = await aprobarNotaCredito(ncId, permiso.email || 'sistema', permiso.rol === 'admin');
   if (result.ok) revalidarTodo();
   return result;
 }
 
 /* F-045: anular una NC (revierte el saldo). */
 export async function anularNotaCreditoAction(ncId: string, motivo: string): Promise<AnularNCResult> {
+  const permiso = await autorizar('anular');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
   const result = await anularNotaCredito(ncId, motivo, email);
@@ -147,6 +154,8 @@ export async function editarFacturaAction(
   facturaId: string,
   cambios: CambiosFacturaPermitidos,
 ): Promise<EditarFacturaResult> {
+  const permiso = await autorizar('emitir_factura');
+  if (!permiso.ok) return { ok: false, facturaId, recordsActualizados: 0, recordsTotal: 0, auditoriaPersistida: false, error: permiso.error };
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
   const result = await editarFacturaNoContable(facturaId, cambios, email);
@@ -159,6 +168,8 @@ export async function anularCobroAction(
   grupoId: string,
   motivo: string,
 ): Promise<AnularCobroResult> {
+  const permiso = await autorizar('anular');
+  if (!permiso.ok) return { ok: false, grupoId, noFactura: '', cobrosAnulados: 0, saldoAnterior: 0, saldoNuevo: 0, estadoNuevo: '', error: permiso.error };
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
   const result = grupoId.startsWith('__legacy__')

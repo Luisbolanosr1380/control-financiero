@@ -8,6 +8,7 @@
  * atenuadas con el motivo visible.
  */
 
+import { usePuede } from '@/components/auth/permisos';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -32,6 +33,7 @@ interface Props {
 }
 
 export function NotasCreditoSection({ notasCredito, esAdmin }: Props) {
+  const puede = usePuede();
   const router = useRouter();
   const [busyId, setBusyId] = useState<string | null>(null);
   const [anulandoId, setAnulandoId] = useState<string | null>(null);
@@ -139,7 +141,7 @@ export function NotasCreditoSection({ notasCredito, esAdmin }: Props) {
                       <HelpButton tag="aprobar-nc" />
                     </span>
                   )}
-                  {(nc.estado === 'Activa' || nc.estado === 'Aprobada') && !enAnulacion && (
+                  {puede('anular') && (nc.estado === 'Activa' || nc.estado === 'Aprobada') && !enAnulacion && (
                     <span style={{ display: 'inline-flex', alignItems: 'center' }}>
                       <button
                         type="button"

@@ -1,5 +1,6 @@
 'use client';
 
+import { PermisosProvider } from '@/components/auth/permisos';
 import { useEffect, useState } from 'react';
 import { Sidebar } from '@/components/shell/sidebar';
 import { Topbar } from '@/components/shell/topbar';
@@ -46,6 +47,7 @@ export function AppShell({ children, facturasVencidasCount, deudasVencidasCount,
   }, []);
 
   return (
+    <PermisosProvider rol={rol}>
     <div className={'app' + (aiOpen ? ' ai-open' : '')}>
       <Sidebar
         facturasVencidasCount={facturasVencidasCount}
@@ -77,5 +79,6 @@ export function AppShell({ children, facturasVencidasCount, deudasVencidasCount,
       )}
       {showCmdK && <CommandPalette onClose={() => setShowCmdK(false)} />}
     </div>
+    </PermisosProvider>
   );
 }

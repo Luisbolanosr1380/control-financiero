@@ -1,12 +1,11 @@
 import Link from 'next/link';
-import { currentUser } from '@clerk/nextjs/server';
 import { getFactura } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { getBancosActivos } from '@/lib/db/bancos';
 import { getSaldoPendiente, getCobrosDeFactura } from '@/lib/db/cobros';
 import { getNotasCreditoFactura } from '@/lib/db/notas-credito';
 import { getCentrosCosto } from '@/lib/db/centros';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import { FacturaDetalle } from '@/components/facturas/factura-detalle';
 import { I } from '@/components/common/icons';
 
@@ -32,9 +31,7 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
   }
 
   // F-035 + F-045: saldo + cobros + NCs vinculadas + rol del usuario actual.
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
+  const { email, rol } = await getSesion();
 
   const [clientes, bancos, saldoInfo, cobrosFactura, notasCredito, centros] = await Promise.all([
     getClientes(),

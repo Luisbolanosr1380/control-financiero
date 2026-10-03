@@ -1,6 +1,5 @@
-import { currentUser } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import { getFacturasInRecientes, getKPIsFacturasIn } from '@/lib/db/facturas-in';
 import { getEtiquetasPorFacturaIn } from '@/lib/db/etiquetas';
 import { Q } from '@/lib/utils';
@@ -16,9 +15,7 @@ export default async function GastosPage({
 }: {
   searchParams: Promise<{ mes?: string }>;
 }) {
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
+  const { email, rol } = await getSesion();
 
   // F-049: por ahora solo admin. Sin permisos granulares todavía
   // (operativo/gerencia van en F-046.4).

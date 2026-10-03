@@ -9,6 +9,7 @@
  * siempre desde el detalle de la factura origen.
  */
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -53,6 +54,7 @@ function matchTab(n: NotaCredito, tab: FiltroEstadoNC): boolean {
 }
 
 export function NotasCreditoClient({ notas, kpis, esAdmin, initialTab = 'todas' }: Props) {
+  const puede = usePuede();
   const router = useRouter();
   const [tab, setTab] = useState<FiltroEstadoNC>(initialTab);
   const [search, setSearch] = useState('');
@@ -272,7 +274,7 @@ export function NotasCreditoClient({ notas, kpis, esAdmin, initialTab = 'todas' 
                             Aprobar
                           </button>
                         )}
-                        {(nc.estado === 'Activa' || nc.estado === 'Aprobada') && (
+                        {puede('anular') && (nc.estado === 'Activa' || nc.estado === 'Aprobada') && (
                           <button className="btn btn-ghost" style={{ fontSize: 10, padding: '2px 8px', color: 'var(--wine)' }} onClick={() => { setAnulandoId(nc.id); setMotivoAnul(''); }}>
                             Anular
                           </button>

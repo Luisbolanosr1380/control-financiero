@@ -16,6 +16,7 @@
  * caían a `bancosSinCuenta` aunque CUENTA_CONTABLE estuviera poblado.
  */
 
+import { exigir } from '@/lib/auth/guard';
 import { airtable } from '@/lib/db/airtable';
 import { getCentrosCostoActivos } from '@/lib/db/centros';
 import { getBancosActivos } from '@/lib/db/bancos';
@@ -68,6 +69,7 @@ async function mapaCuentaContablePorBanco(): Promise<Map<string, string | undefi
 }
 
 export async function cargarOpcionesModalAction(): Promise<OpcionesModal> {
+  await exigir('ver');
   const [centros, cuentas, bancos, mapaCuentaPorBanco] = await Promise.all([
     getCentrosCostoActivos(),
     getCuentasGasto(),

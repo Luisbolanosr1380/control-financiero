@@ -1,6 +1,5 @@
 import { redirect } from 'next/navigation';
-import { currentUser } from '@clerk/nextjs/server';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import { getRoadmapItems } from '@/lib/db/roadmap';
 import { RoadmapClient } from '@/components/admin/roadmap-client';
 
@@ -8,9 +7,8 @@ export const dynamic = 'force-dynamic';
 
 export default async function RoadmapPage() {
   // Solo admin — el tablero personal de prioridades del dueño.
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  if (getRolUsuario(email) !== 'admin') {
+  const { rol: rolSesion } = await getSesion();
+  if (rolSesion !== 'admin') {
     redirect('/no-acceso');
   }
 

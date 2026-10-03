@@ -1,7 +1,6 @@
 import Link from 'next/link';
-import { currentUser } from '@clerk/nextjs/server';
 import { getArticuloPorSlug, getArticulos } from '@/lib/db/ayuda';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import { I } from '@/components/common/icons';
 import { ArticuloDetalleClient } from '@/components/ayuda/articulo-detalle-client';
 
@@ -32,9 +31,7 @@ export default async function ArticuloDetallePage({ params }: { params: Promise<
     );
   }
 
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
+  const { email, rol } = await getSesion();
 
   // Artículos relacionados: misma categoría, distintos al actual, top 3 por orden.
   const todos = await getArticulos({ soloActivos: true, categoria: articulo.categoria });

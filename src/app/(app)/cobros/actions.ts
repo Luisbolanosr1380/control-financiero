@@ -1,8 +1,10 @@
 'use server';
 
+import { exigir } from '@/lib/auth/guard';
 import { getCobrosPagina, getCobrosCompletos, type GetCobrosPaginaResult, type CobroListado } from '@/lib/db/cobros';
 
 export async function cargarMasCobrosAction(before: string, limit = 50, mes?: string): Promise<GetCobrosPaginaResult> {
+  await exigir('ver');
   return await getCobrosPagina({ before, limit, mes });
 }
 
@@ -14,5 +16,6 @@ export async function cargarMasCobrosAction(before: string, limit = 50, mes?: st
  * reporte de facturación.
  */
 export async function getCobrosParaExportAction(): Promise<CobroListado[]> {
+  await exigir('ver');
   return await getCobrosCompletos({});
 }

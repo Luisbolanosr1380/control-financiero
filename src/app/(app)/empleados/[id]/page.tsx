@@ -1,16 +1,18 @@
+import { exigirPagina } from '@/lib/auth/guard';
 import Link from 'next/link';
-import { currentUser } from '@clerk/nextjs/server';
 import { getEmpleadoPorId } from '@/lib/db/empleados';
 import { getDeudas } from '@/lib/db/deudas';
 import { getCentrosCostoActivos } from '@/lib/db/centros';
 import { getPeriodos, getLineasPlanilla, getBoletasDelEmpleado, type LineaPlanilla, type Periodo } from '@/lib/db/planillas';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import { EmpleadoDetalle, type LineaPlanillaHistorico } from '@/components/empleados/empleado-detalle';
 import { I } from '@/components/common/icons';
 
 export const revalidate = 30;
 
 export default async function EmpleadoDetallePage({ params }: { params: Promise<{ id: string }> }) {
+  // F-GESTION-USUARIOS: pantalla completa gateada por rol (las actions revalidan igual).
+  await exigirPagina('planilla');
   const { id } = await params;
   const empleado = await getEmpleadoPorId(id);
 
@@ -28,8 +30,7 @@ export default async function EmpleadoDetallePage({ params }: { params: Promise<
     );
   }
 
-  const user = await currentUser();
-  const rol = getRolUsuario(user?.emailAddresses?.[0]?.emailAddress ?? '');
+  const { rol } = await getSesion();
   const esAdmin = rol === 'admin';
 
   const [deudas, centros, periodos, boletas] = await Promise.all([

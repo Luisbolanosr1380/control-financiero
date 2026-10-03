@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { Role } from '@/lib/auth/allowlist';
 import { PERMISSIONS } from '@/lib/auth/permissions';
+import { puede, type Accion } from '@/lib/auth/roles';
 
 interface NavItem {
   href: string;
@@ -36,7 +37,9 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
       : undefined;
   const rol = opts.rol;
   const esAdmin0 = rol === 'admin';
-  // F-045: badge "X aprobar" SOLO para admin (los demás usuarios no aprueban).
+  // F-GESTION-USUARIOS: el menú sigue a la matriz de permisos (UX; el servidor revalida).
+  const p = (a: Accion) => puede(rol, a);
+  // F-045: badge "X aprobar" SOLO para admin (aprueba NCs > Q5K).
   const ncsBadge = esAdmin0 && opts.ncsPendientesCount && opts.ncsPendientesCount > 0
     ? { text: `${opts.ncsPendientesCount} aprobar`, kind: 'warn' as const }
     : undefined;
@@ -58,9 +61,11 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
       { href: '/gastos',       label: 'Gastos',         icon: 'Expense' },
       { href: '/flujo',        label: 'Centro de Pagos',icon: 'Calendar' },  // F-051
       { href: '/bancos',       label: 'Bancos',         icon: 'Bank' },
-      { href: '/empleados',    label: 'Empleados',      icon: 'Users' },   // F-037
-      { href: '/planillas',    label: 'Planillas',      icon: 'Payroll' }, // F-038
-      { href: '/planillas/pendientes', label: 'Pagos pendientes', icon: 'Clock', badge: pagosPendBadge },   // F-038.4
+      ...(p('planilla') ? [
+        { href: '/empleados',    label: 'Empleados',      icon: 'Users' as IconName },   // F-037
+        { href: '/planillas',    label: 'Planillas',      icon: 'Payroll' as IconName }, // F-038
+        { href: '/planillas/pendientes', label: 'Pagos pendientes', icon: 'Clock' as IconName, badge: pagosPendBadge },   // F-038.4
+      ] : []),
       { href: '/deudas',       label: 'Deudas',         icon: 'Debt', badge: deudasBadge },
       { href: '/pagos-deudas', label: 'Pagos a deudas', icon: 'Coins' },
     ]},
@@ -85,15 +90,14 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
     ]});
   }
 
-  // Admin: solo si rol = admin.
-  if (esAdmin) {
-    groups.push({ group: 'Admin', items: [
-      { href: '/admin/usuarios',     label: 'Usuarios y AI',   icon: 'Users' },
-      { href: '/admin/intercompany', label: 'Intercompany',    icon: 'Journal' },   // F-056.1
-      { href: '/admin/catalogos',    label: 'Catálogos',       icon: 'Slider' },    // FIX-CLIENTES-ALTA
-      { href: '/admin/roadmap',      label: 'Roadmap',         icon: 'TrendUp' },   // F-ROADMAP
-    ]});
-  }
+  // Admin: usuarios/configuración solo admin; catálogos también contador.
+  const adminItems: NavGroup['items'] = [
+    ...(esAdmin ? [{ href: '/admin/usuarios', label: 'Usuarios y accesos', icon: 'Users' as IconName }] : []),
+    ...(esAdmin ? [{ href: '/admin/intercompany', label: 'Intercompany', icon: 'Journal' as IconName }] : []),   // F-056.1
+    ...(p('catalogos') ? [{ href: '/admin/catalogos', label: 'Catálogos', icon: 'Slider' as IconName }] : []),    // FIX-CLIENTES-ALTA
+    ...(esAdmin ? [{ href: '/admin/roadmap', label: 'Roadmap', icon: 'TrendUp' as IconName }] : []),   // F-ROADMAP
+  ];
+  if (adminItems.length) groups.push({ group: 'Admin', items: adminItems });
 
   // F-046: ayuda al final, accesible para todos los roles.
   groups.push({ group: 'Ayuda', items: [

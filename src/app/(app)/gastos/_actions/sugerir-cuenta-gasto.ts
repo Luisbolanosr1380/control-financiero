@@ -8,6 +8,7 @@
  * solo un wrapper para exponer la función al modal del browser.
  */
 
+import { exigir } from '@/lib/auth/guard';
 import {
   sugerirCuentaGasto,
   type SugerenciaCuenta,
@@ -17,5 +18,6 @@ import {
 export type { SugerenciaCuenta, SugerirCuentaInput } from '@/lib/gastos/services/sugerir-cuenta-gasto';
 
 export async function sugerirCuentaGastoAction(input: SugerirCuentaInput): Promise<SugerenciaCuenta> {
+  await exigir('ver');
   return await sugerirCuentaGasto(input);
 }

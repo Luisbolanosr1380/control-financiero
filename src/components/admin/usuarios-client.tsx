@@ -1,12 +1,12 @@
 'use client';
 
 import { I } from '@/components/common/icons';
-import type { Role } from '@/lib/auth/allowlist';
+import type { Rol } from '@/lib/auth/roles';
 import type { TotalesMes } from '@/lib/db/uso-auros';
 
 interface UsuarioRow {
   email: string;
-  rol: Role;
+  rol: Rol | null;
   consultas: number;
   analisisManual: number;
   costoTotalUsd: number;
@@ -22,11 +22,13 @@ interface Props {
   miEmail: string;
 }
 
-const ROL_BADGE: Record<Role, { cls: string; label: string }> = {
-  admin:     { cls: 'badge-wine',    label: 'Admin' },
-  gerencia:  { cls: 'badge-warn',    label: 'Gerencia' },
-  operativo: { cls: 'badge-outline', label: 'Operativo' },
+const ROL_BADGE: Record<Rol, { cls: string; label: string }> = {
+  admin:    { cls: 'badge-wine',    label: 'Admin' },
+  contador: { cls: 'badge-olive',   label: 'Contador' },
+  auxiliar: { cls: 'badge-outline', label: 'Auxiliar' },
+  lectura:  { cls: 'badge-mute',    label: 'Lectura' },
 };
+const SIN_ROL = { cls: 'badge-mute', label: 'Sin acceso' };
 
 const fmtUSD = (n: number) => `$${n.toFixed(n < 1 ? 4 : 2)}`;
 const fmtDateTime = (iso: string | null) => {
@@ -44,12 +46,12 @@ export function AdminUsuariosClient({ usuarios, totales, miEmail }: Props) {
   const topPorConsultas = [...usuarios].filter(u => u.consultas > 0).sort((a, b) => b.consultas - a.consultas).slice(0, 5);
 
   return (
-    <div className="page">
+    <div className="page" style={{ paddingTop: 0 }}>
       <div className="page-header">
         <div>
-          <h1 className="page-title">Usuarios y uso de AI</h1>
+          <h2 className="page-title" style={{ fontSize: 22 }}>Uso de AI</h2>
           <div className="page-subtitle">
-            Gestión de roles y monitoreo del consumo de Auros + análisis. Mes actual.
+            Monitoreo del consumo de Auros + análisis. Mes actual.
           </div>
         </div>
       </div>
@@ -106,7 +108,7 @@ export function AdminUsuariosClient({ usuarios, totales, miEmail }: Props) {
               {topPorConsultas.map(u => (
                 <tr key={u.email}>
                   <td className="cell-strong">{u.email}{u.email === miEmail && <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--ink-4)' }}>(vos)</span>}</td>
-                  <td><span className={'badge ' + ROL_BADGE[u.rol].cls}>{ROL_BADGE[u.rol].label}</span></td>
+                  <td><span className={'badge ' + (u.rol ? ROL_BADGE[u.rol] : SIN_ROL).cls}>{(u.rol ? ROL_BADGE[u.rol] : SIN_ROL).label}</span></td>
                   <td className="num cell-strong">{u.consultas}{Number.isFinite(u.limite) && u.limite > 0 ? ` / ${u.limite}` : ''}</td>
                   <td className="num">{fmtUSD(u.costoTotalUsd)}</td>
                 </tr>
@@ -119,7 +121,7 @@ export function AdminUsuariosClient({ usuarios, totales, miEmail }: Props) {
       {/* Usuarios autorizados (registro completo) */}
       <div className="card" style={{ marginBottom: 22 }}>
         <div className="card-head">
-          <div className="card-title">Usuarios autorizados</div>
+          <div className="card-title">Consumo por usuario</div>
           <div className="card-actions" style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>
             {usuarios.length} usuario{usuarios.length === 1 ? '' : 's'}
           </div>
@@ -149,7 +151,7 @@ export function AdminUsuariosClient({ usuarios, totales, miEmail }: Props) {
                     {u.email}
                     {u.email === miEmail && <span style={{ marginLeft: 6, fontSize: 10.5, color: 'var(--ink-4)' }}>(vos)</span>}
                   </td>
-                  <td><span className={'badge ' + ROL_BADGE[u.rol].cls}>{ROL_BADGE[u.rol].label}</span></td>
+                  <td><span className={'badge ' + (u.rol ? ROL_BADGE[u.rol] : SIN_ROL).cls}>{(u.rol ? ROL_BADGE[u.rol] : SIN_ROL).label}</span></td>
                   <td className="num" style={{ color: alarmaLimite ? 'var(--wine)' : 'var(--ink)', fontWeight: alarmaLimite ? 600 : 400 }}>
                     {limiteTxt}
                   </td>
@@ -163,17 +165,6 @@ export function AdminUsuariosClient({ usuarios, totales, miEmail }: Props) {
         </table>
       </div>
 
-      {/* Nota administrativa */}
-      <div className="card" style={{ background: 'var(--paper-2)' }}>
-        <div className="card-pad" style={{ display: 'flex', alignItems: 'flex-start', gap: 10, fontSize: 12.5, color: 'var(--ink-3)', lineHeight: 1.55 }}>
-          <I.Info size={14} style={{ color: 'var(--ink-3)', flexShrink: 0, marginTop: 2 }} />
-          <div>
-            Para <strong>agregar o quitar usuarios</strong> o <strong>cambiar roles</strong>, editar
-            {' '}<code style={{ fontSize: 11.5, background: 'var(--paper)', padding: '1px 5px', borderRadius: 3 }}>src/lib/auth/allowlist.ts</code>
-            {' '}(map <code>ROLES_USUARIOS</code>) y desplegar. Los usuarios que entran por dominio sin estar en el map quedan como <strong>operativo</strong> automáticamente.
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

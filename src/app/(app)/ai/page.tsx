@@ -1,8 +1,7 @@
 import { redirect } from 'next/navigation';
-import { currentUser } from '@clerk/nextjs/server';
 import { getUltimoAnalisis, getHistorialAnalisis, getCostoAcumulado } from '@/lib/db/ai-analisis';
 import { AiInsightsClient } from '@/components/ai/insights-client';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import {
   PERMISSIONS,
   estaEnVentanaAnalisisManual,
@@ -13,9 +12,7 @@ import {
 export const dynamic = 'force-dynamic';
 
 export default async function AiInsightsPage() {
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
+  const { email, rol } = await getSesion();
   // Operativos NO ven /ai — redirigimos. (El sidebar ya esconde la entrada
   // si rol=operativo; este guard es por si alguien tipea la URL directo.)
   if (!rol || !PERMISSIONS[rol].verAnaliticaAvanzada) {

@@ -1,13 +1,12 @@
 import { generateText } from 'ai';
 import { google } from '@ai-sdk/google';
 import { revalidatePath } from 'next/cache';
-import { currentUser } from '@clerk/nextjs/server';
 import { getAnaliticaIngresos } from '@/lib/db/analitica';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getServiciosActivos, describirLineasParaPrompt } from '@/lib/db/lineas-negocio';
 import { guardarAnalisis, calcularCostoUSD } from '@/lib/db/ai-analisis';
 import { Q } from '@/lib/utils';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { getSesion } from '@/lib/auth/guard';
 import {
   PERMISSIONS,
   estaEnVentanaAnalisisManual,
@@ -38,9 +37,7 @@ export async function POST() {
   // ──────────────────────────────────────────────────────────
   // F-030 parte F: permisos + ventana de tiempo
   // ──────────────────────────────────────────────────────────
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
+  const { email, rol } = await getSesion();
   if (!rol) {
     return Response.json(
       { ok: false, error: 'NO_AUTORIZADO', mensaje: 'Tu correo no está autorizado.' },

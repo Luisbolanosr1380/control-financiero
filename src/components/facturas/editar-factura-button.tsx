@@ -18,6 +18,7 @@
  * el cambio funcional ya se aplicó.
  */
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -38,7 +39,7 @@ interface Props {
   cobrosActivos: number;   // cantidad de cobros activos vinculados — info al usuario
 }
 
-export function EditarFacturaButton({ factura, clienteNombre, subtotal, iva, cobrosActivos }: Props) {
+function EditarFacturaButtonInner({ factura, clienteNombre, subtotal, iva, cobrosActivos }: Props) {
   const [open, setOpen] = useState(false);
 
   // F-044: no editable si la factura está anulada o refacturada.
@@ -401,4 +402,10 @@ function Bloqueado({ label, valor }: { label: string; valor: string }) {
       <div style={{ fontSize: 12.5, color: 'var(--ink-3)' }}>{valor}</div>
     </div>
   );
+}
+
+/** F-GESTION-USUARIOS: solo se muestra si el rol puede 'emitir_factura' (el servidor revalida). */
+export function EditarFacturaButton(props: Props) {
+  const puede = usePuede();
+  return puede('emitir_factura') ? <EditarFacturaButtonInner {...props} /> : null;
 }

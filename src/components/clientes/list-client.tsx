@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
@@ -34,6 +35,7 @@ interface Props {
 type Tab = 'todos' | 'riesgo' | 'sanos' | 'episodicos';
 
 export function ClientesListClient({ clientes }: Props) {
+  const puede = usePuede();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('todos');
   const [search, setSearch] = useState('');
@@ -81,9 +83,11 @@ export function ClientesListClient({ clientes }: Props) {
             <span className="num">{clientes.length}</span> clientes con actividad (12 meses) · análisis de retención
           </div>
         </div>
+        {puede('emitir_factura') && (
         <button className="btn btn-primary" style={{ marginLeft: 'auto', alignSelf: 'flex-start' }} onClick={() => setShowAlta(true)}>
           <I.Plus size={13} /> Nuevo cliente
         </button>
+        )}
       </div>
 
       {showAlta && <ModalClienteForm onClose={() => setShowAlta(false)} />}

@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -24,6 +25,7 @@ interface Props {
 }
 
 export function GestionCobroModal({ custId, cliente, facturas, onClose }: Props) {
+  const puede = usePuede();
   const router = useRouter();
   const [historial, setHistorial] = useState<GestionCobro[] | null>(null);
   const [mostrarForm, setMostrarForm] = useState(false);
@@ -114,7 +116,7 @@ export function GestionCobroModal({ custId, cliente, facturas, onClose }: Props)
         </div>
 
         <div style={{ padding: '16px 22px', overflowY: 'auto' }}>
-          {!mostrarForm && (
+          {!mostrarForm && puede('registrar_cobro') && (
             <button className="btn btn-primary" style={{ marginBottom: 14 }} onClick={() => setMostrarForm(true)}>
               <I.Plus size={13} /> Registrar gestión
             </button>

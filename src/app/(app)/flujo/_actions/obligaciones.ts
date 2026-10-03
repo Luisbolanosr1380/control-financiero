@@ -18,6 +18,7 @@
  * NO genera eventos en el cash-flow planner (la lectura filtra activo=true).
  */
 
+import { autorizar, exigir } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 import { airtable } from '@/lib/db/airtable';
 import { writeSource } from '@/lib/config/data-source';
@@ -121,6 +122,7 @@ function fieldsDeInput(input: ObligacionInput): Record<string, unknown> {
 }
 
 export async function listarObligaciones(): Promise<ObligacionRecurrente[]> {
+  await exigir('ver');
   return getObligacionesRecurrentes(false);
 }
 
@@ -147,6 +149,8 @@ async function filaSupabaseDeInput(input: ObligacionInput): Promise<Record<strin
 }
 
 export async function crearObligacion(input: ObligacionInput): Promise<ObligacionResult> {
+  const permiso = await autorizar('catalogos');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   if (!airtable && writeSource('obligaciones') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   const err = validarInput(input);
   if (err) return { ok: false, error: err };
@@ -176,6 +180,8 @@ export async function crearObligacion(input: ObligacionInput): Promise<Obligacio
 }
 
 export async function actualizarObligacion(id: string, input: ObligacionInput): Promise<ObligacionResult> {
+  const permiso = await autorizar('catalogos');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   if (!airtable && writeSource('obligaciones') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!id) return { ok: false, error: 'id requerido.' };
   const err = validarInput(input);
@@ -206,6 +212,8 @@ export async function actualizarObligacion(id: string, input: ObligacionInput): 
 }
 
 export async function toggleActivoObligacion(id: string): Promise<ObligacionResult> {
+  const permiso = await autorizar('catalogos');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
   if (!airtable && writeSource('obligaciones') !== 'supabase') return { ok: false, error: 'Airtable no está configurado.' };
   if (!id) return { ok: false, error: 'id requerido.' };
   try {

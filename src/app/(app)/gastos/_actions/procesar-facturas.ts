@@ -27,6 +27,7 @@
  * Serial, no paralelo: Gemini tiene rate limits suaves y queremos respeto.
  */
 
+import { autorizar } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
 import { airtable } from '@/lib/db/airtable';
@@ -77,6 +78,8 @@ function esPdfPorMagicBytes(buffer: Buffer): boolean {
 }
 
 export async function procesarFacturasAction(formData: FormData): Promise<ResultadoProcesamiento> {
+  const permiso = await autorizar('registrar_gasto');
+  if (!permiso.ok) return { creadas: [], duplicadas: [], errores: [{ nombreArchivo: '—', motivo: permiso.error }] };
   const resultado: ResultadoProcesamiento = { creadas: [], duplicadas: [], errores: [] };
 
   const archivos = formData.getAll('archivos');

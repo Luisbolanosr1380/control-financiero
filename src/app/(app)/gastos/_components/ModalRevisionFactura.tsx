@@ -23,6 +23,7 @@
  *    aprobar y lo refleja en la respuesta.
  */
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -82,6 +83,12 @@ function sumarDias(fechaIso: string, dias: number): string {
 }
 
 export function ModalRevisionFactura({ factura, onClose }: Props) {
+  // F-GESTION-USUARIOS: aprobar y anular son de Admin/Contador (separación de
+  // funciones). Un auxiliar ve la factura pero no los botones; el servidor
+  // rechaza igual si alguien invoca la acción.
+  const puede = usePuede();
+  const puedeAprobarRol = puede('aprobar_gasto');
+  const puedeAnularRol = puede('anular');
   // F-ETIQUETAS: metadata libre del gasto (se aplican tras aprobar; sin efecto contable).
   const [etiquetasGasto, setEtiquetasGasto] = useState<string[]>([]);
   const [sugerenciasEtiquetas, setSugerenciasEtiquetas] = useState<Etiqueta[]>([]);
@@ -708,8 +715,13 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
 
         {/* Footer (ocupa 2 cols) */}
         <div style={{ gridColumn: '1 / -1', padding: '12px 20px', borderTop: '1px solid var(--line-2)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          {!puedeAprobarRol && (
+            <span style={{ marginRight: 'auto', alignSelf: 'center', fontSize: 12, color: 'var(--ink-3)' }}>
+              🔒 Solo un Contador o Admin puede aprobar o anular gastos.
+            </span>
+          )}
           <button type="button" className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancelar</button>
-          {!pidiendoMotivo ? (
+          {!puedeAnularRol ? null : !pidiendoMotivo ? (
             <button type="button" className="btn btn-ghost" style={{ color: 'var(--wine)' }} onClick={() => setPidiendoMotivo(true)} disabled={loading}>
               Anular…
             </button>
@@ -718,15 +730,17 @@ export function ModalRevisionFactura({ factura, onClose }: Props) {
               {loading ? 'Anulando…' : 'Confirmar anulación'}
             </button>
           )}
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={aprobar}
-            disabled={!puedeAprobar}
-            title={errores[0]}
-          >
-            {loading ? 'Aprobando…' : 'Aprobar'}
-          </button>
+          {puedeAprobarRol && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={aprobar}
+              disabled={!puedeAprobar}
+              title={errores[0]}
+            >
+              {loading ? 'Aprobando…' : 'Aprobar'}
+            </button>
+          )}
         </div>
       </div>
     </div>,

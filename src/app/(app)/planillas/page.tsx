@@ -1,3 +1,4 @@
+import { exigirPagina } from '@/lib/auth/guard';
 import { getPeriodos, previewGeneracion } from '@/lib/db/planillas';
 import { PlanillasListClient } from '@/components/planillas/planillas-list-client';
 
@@ -29,6 +30,8 @@ function siguienteQuincenaNoCreada(
 }
 
 export default async function PlanillasPage() {
+  // F-GESTION-USUARIOS: pantalla completa gateada por rol (las actions revalidan igual).
+  await exigirPagina('planilla');
   const [periodos, preview] = await Promise.all([
     getPeriodos({ estado: 'todos' }),
     previewGeneracion(),

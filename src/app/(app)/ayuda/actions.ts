@@ -20,19 +20,16 @@ import {
   type CrearArticuloInput,
   type EditarArticuloInput,
 } from '@/lib/db/ayuda';
-import { getRolUsuario } from '@/lib/auth/allowlist';
+import { autorizar, exigir } from '@/lib/auth/guard';
 
 function revalidarTodo() {
   revalidatePath('/ayuda');
   revalidatePath('/ayuda', 'layout');     // alcanza /ayuda/[slug]
 }
 
-async function exigirAdmin(): Promise<{ ok: true; email: string } | { ok: false; error: string }> {
-  const user = await currentUser();
-  const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
-  const rol = getRolUsuario(email);
-  if (rol !== 'admin') return { ok: false, error: 'Solo un administrador puede modificar el Centro de Ayuda.' };
-  return { ok: true, email };
+/** El Centro de Ayuda es configuración de la empresa → solo admin. */
+async function exigirAdmin() {
+  return autorizar('configurar_empresa');
 }
 
 export async function crearArticuloAction(input: CrearArticuloInput): Promise<ArticuloMutationResult> {
@@ -61,6 +58,7 @@ export async function desactivarArticuloAction(id: string): Promise<ArticuloMuta
 
 /** Lectura por tag para el HelpButton — abierta a cualquier usuario autenticado. */
 export async function buscarArticulosPorTagAction(tag: string): Promise<Articulo[]> {
+  await exigir('ver');
   const user = await currentUser();
   if (!user) return [];
   return getArticulosPorTag(tag);

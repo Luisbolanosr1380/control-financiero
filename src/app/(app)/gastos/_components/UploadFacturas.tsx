@@ -17,6 +17,7 @@
  *      es liviano; el detalle vive en el modal para no abarrotar.
  */
 
+import { usePuede } from '@/components/auth/permisos';
 import { useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -35,7 +36,7 @@ function bytesLegibles(b: number): string {
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
 
-export function UploadFacturas() {
+function UploadFacturasInner() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [arch, setArch] = useState<ArchivoSeleccionado[]>([]);
@@ -279,4 +280,10 @@ function Seccion({ titulo, colorTitulo, children }: { titulo: string; colorTitul
       <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 }}>{children}</ul>
     </div>
   );
+}
+
+/** F-GESTION-USUARIOS: solo si el rol puede 'registrar_gasto' (el servidor revalida). */
+export function UploadFacturas(props: Record<string, never>) {
+  const puede = usePuede();
+  return puede('registrar_gasto') ? <UploadFacturasInner {...props} /> : null;
 }

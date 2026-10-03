@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -58,7 +59,7 @@ function nuevoComponente(): ComponenteUI {
   };
 }
 
-export function RegistrarCobroButton({ noFactura, total, saldoPendiente, status, estadoBruto, bancos }: Props) {
+function RegistrarCobroButtonInner({ noFactura, total, saldoPendiente, status, estadoBruto, bancos }: Props) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
 
@@ -524,4 +525,10 @@ function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSucce
     </div>,
     document.body,
   );
+}
+
+/** F-GESTION-USUARIOS: solo se muestra si el rol puede 'registrar_cobro' (el servidor revalida). */
+export function RegistrarCobroButton(props: Props) {
+  const puede = usePuede();
+  return puede('registrar_cobro') ? <RegistrarCobroButtonInner {...props} /> : null;
 }

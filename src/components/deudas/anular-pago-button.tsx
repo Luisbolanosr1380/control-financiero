@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -19,7 +20,7 @@ interface Props {
 const formatFechaShort = (s: string): string =>
   !s ? '—' : formatearFecha(s, 'dd/MM/yyyy');
 
-export function AnularPagoButton({ pago, saldoActualDeuda, estadoActualDeuda }: Props) {
+function AnularPagoButtonInner({ pago, saldoActualDeuda, estadoActualDeuda }: Props) {
   const [open, setOpen] = useState(false);
 
   if (pago.estadoPago === 'Anulado') {
@@ -179,4 +180,10 @@ function AnularModal({ pago, saldoActualDeuda, estadoActualDeuda, onClose }: Mod
     </div>,
     document.body,
   );
+}
+
+/** F-GESTION-USUARIOS: solo se muestra si el rol puede 'anular' (el servidor revalida). */
+export function AnularPagoButton(props: Props) {
+  const puede = usePuede();
+  return puede('anular') ? <AnularPagoButtonInner {...props} /> : null;
 }

@@ -1,5 +1,6 @@
 'use client';
 
+import { usePuede } from '@/components/auth/permisos';
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
@@ -19,7 +20,7 @@ interface Props {
 const formatFechaShort = (s: string): string =>
   !s ? '—' : formatearFecha(s, 'dd/MM/yyyy');
 
-export function AnularCobroButton({ grupo, saldoActual, totalFactura }: Props) {
+function AnularCobroButtonInner({ grupo, saldoActual, totalFactura }: Props) {
   const [open, setOpen] = useState(false);
 
   if (grupo.estadoCobro === 'Anulado') {
@@ -189,4 +190,10 @@ function AnularModal({ grupo, saldoActual, totalFactura, onClose }: ModalProps) 
     </div>,
     document.body,
   );
+}
+
+/** F-GESTION-USUARIOS: solo se muestra si el rol puede 'anular' (el servidor revalida). */
+export function AnularCobroButton(props: Props) {
+  const puede = usePuede();
+  return puede('anular') ? <AnularCobroButtonInner {...props} /> : null;
 }
