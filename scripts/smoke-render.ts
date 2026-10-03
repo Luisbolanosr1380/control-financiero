@@ -80,17 +80,22 @@ const ok = (c: boolean, m: string) => { if (c) { pass++; console.log(`  🟢 ${m
     const pedir = async (ruta: string) => {
       for (let intento = 1; intento <= 3; intento++) {
         const jwt = await tokenSesion();
-        await new Promise(r => setTimeout(r, 1500));
+        // __client_uat debe ser ≤ iat del token: si es posterior, Clerk lo trata
+        // como "sesión vieja" y manda al handshake (session-token-iat-before-client-uat).
+        const iat = Number(JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString()).iat ?? Math.floor(Date.now() / 1000));
+        await new Promise(r => setTimeout(r, 1200));   // tolerancia de reloj del edge (nbf)
         const res = await fetch(`${BASE}${ruta}`, {
           redirect: 'manual',
           headers: {
             Accept: 'text/html,application/xhtml+xml',
             'User-Agent': 'Mozilla/5.0 smoke-render',
-            Cookie: `__session=${jwt}; __client_uat=${Math.floor(Date.now() / 1000)}; __clerk_db_jwt=${db.token ?? ''}`,
+            Cookie: `__session=${jwt}; __client_uat=${iat - 1}; __clerk_db_jwt=${db.token ?? ''}`,
           },
         });
         if (res.status >= 300 && res.status < 400 && intento < 3) {
-          console.log(`  · ${ruta}: ${res.status} → ${res.headers.get('location')} (autenticación; reintento ${intento})`);
+          const loc = res.headers.get('location') ?? '';
+          const razon = loc.match(/__clerk_hs_reason=([^&]+)/)?.[1] ?? new URL(loc, BASE).pathname;
+          console.log(`  · ${ruta}: ${res.status} (autenticación: ${razon}; reintento ${intento})`);
           continue;
         }
         return res;
@@ -104,7 +109,7 @@ const ok = (c: boolean, m: string) => { if (c) { pass++; console.log(`  🟢 ${m
       const digest = html.match(/digest["']?\s*[:=]\s*["']?(\d{6,})/)?.[1];
       const titulo = html.match(/<h1[^>]*>([^<]*)/)?.[1]?.trim();
       const sel = ruta === '/conciliacion' ? html.includes('Conciliación bancaria') && (html.includes('Cuadre al') || html.includes('No hay bancos activos')) : true;
-      ok(res.status === 200 && !digest && sel, `${ruta} → HTTP ${res.status}${digest ? ` · error digest ${digest}` : ''}${titulo ? ` · h1 "${titulo}"` : ''}${res.status >= 300 && res.status < 400 ? ` · redirige a ${res.headers.get('location')}` : ''}`);
+      ok(res.status === 200 && !digest && sel, `${ruta} → HTTP ${res.status}${digest ? ` · error digest ${digest}` : ''}${titulo ? ` · h1 "${titulo}"` : ''}${res.status >= 300 && res.status < 400 ? ` · redirige (${(res.headers.get('location') ?? '').match(/__clerk_hs_reason=([^&]+)/)?.[1] ?? new URL(res.headers.get('location') ?? '/', BASE).pathname})` : ''}`);
       if (ruta === '/conciliacion' && res.status === 200) {
         ok(html.includes('<select') && html.includes('Saldo según banco'), '/conciliacion muestra selector de banco y panel de cuadre');
       }
