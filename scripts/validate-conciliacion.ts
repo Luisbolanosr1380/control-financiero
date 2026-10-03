@@ -193,6 +193,9 @@ const ok = (c: boolean, m: string) => { if (c) { pass++; console.log(`  🟢 ${m
     ok(fa?.es_conciliado === true && (it ?? []).length === 1 && Number(it![0].monto_aplicado) === 1000, 'flag es_conciliado + 1 item de 1000');
     const r1b = await DB.conciliar({ movimientoId: movId('DEPOSITO AGRUPADO'), docKeys: [`cobro:${TAG}-G1`], usuario: USR });
     ok(!r1b.ok, `doble conciliación del mismo cobro rechazada: ${!r1b.ok ? r1b.error : ''}`);
+    // La defensa REAL: saltarse la app e insertar el item directo en la base.
+    const { error: eDup } = await sb.from('conciliacion_items').insert({ movimiento_id: movId('DEPOSITO AGRUPADO'), cobro_id: cobroA, monto_aplicado: 1000, created_by: USR });
+    ok(!!eDup && (eDup.code === '23505' || /uq_concitems_cobro/.test(eDup.message)), `inserción DIRECTA del mismo cobro en la base real → rechazada por el índice único parcial (${eDup?.code} ${eDup?.message?.slice(0, 60)})`);
 
     // 6. Depósito agrupado
     const r2 = await DB.conciliar({ movimientoId: movId('DEPOSITO AGRUPADO'), docKeys: [`cobro:${TAG}-G2`, `cobro:${TAG}-G3`], usuario: USR });

@@ -3,6 +3,8 @@
  *
  * Reglas:
  *  · Lecturas con fetchAll paginado (nunca .select() suelto: trunca a 1000).
+ *  · Embeds SIEMPRE con la FK explícita (tabla!fk): cobros↔facturas tiene
+ *    más de una relación para PostgREST (PGRST201) — hallado en el E2E.
  *  · El servidor RECALCULA documentos y montos desde la base para cada
  *    acción; lo que manda el cliente son solo ids/keys.
  *  · Toda escritura con efecto contable o de flags pasa por las RPCs
@@ -103,15 +105,15 @@ async function cargarMovimientos(bancoId: string): Promise<Movimiento[]> {
 async function cargarDocs(banco: BancoConciliacion): Promise<DocBanco[]> {
   const [cobros, pagos, gastos, items] = await Promise.all([
     fetchAll<Row>('cobros_clientes', {
-      select: 'id, cobro_grupo_id, fecha_cobro, referencia, metodo, estado_cobro, es_conciliado, monto_cobrado, monto_cobro_gtq, factura:facturas_clientes(no_factura, cliente:clientes(razon_social, nombre_empresa))',
+      select: 'id, cobro_grupo_id, fecha_cobro, referencia, metodo, estado_cobro, es_conciliado, monto_cobrado, monto_cobro_gtq, factura:facturas_clientes!cobros_clientes_factura_id_fkey(no_factura, cliente:clientes!facturas_clientes_cliente_id_fkey(razon_social, nombre_empresa))',
       eq: { cuenta_banco_id: banco.id },
     }),
     fetchAll<Row>('pagos_proveedores', {
-      select: 'id, fecha_pago, referencia, estado_pago, es_conciliado, monto_pago, monto_interes, monto_mora, monto_comision, tipo_cambio, deuda:deudas(nombre_deuda, acreedor:acreedores(nombre_acreedor))',
+      select: 'id, fecha_pago, referencia, estado_pago, es_conciliado, monto_pago, monto_interes, monto_mora, monto_comision, tipo_cambio, deuda:deudas!pagos_proveedores_deuda_id_fkey(nombre_deuda, acreedor:acreedores!deudas_acreedor_id_fkey(nombre_acreedor))',
       eq: { cuenta_banco_id: banco.id },
     }),
     fetchAll<Row>('gastos', {
-      select: 'id, fecha, monto, referencia_pago, estado, metodo_pago, es_conciliado, descripcion, proveedor:proveedores(nombre)',
+      select: 'id, fecha, monto, referencia_pago, estado, metodo_pago, es_conciliado, descripcion, proveedor:proveedores!gastos_proveedor_id_fkey(nombre)',
       eq: { banco_id: banco.id },
     }),
     fetchAll<Row>('conciliacion_items', { select: 'movimiento_id, cobro_id, pago_id, gasto_id' }),
