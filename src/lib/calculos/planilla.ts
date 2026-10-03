@@ -25,6 +25,7 @@
  */
 
 import { obtenerFechaHoyGuatemala } from '../utils/fechas';
+import { esHonorarios } from '../empleados/contrato';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -122,6 +123,8 @@ export interface EmpleadoParaCalculo {
   fechaIngreso: string | Date;
   salarioMensual: number;   // salario base + bonif + bono variable (Salario Mensual de Airtable)
   salarioBase: number;      // sin bonificaciones (para Bono 14 / Aguinaldo / Indemnización)
+  /** FIX-HONORARIOS: honorarios / servicios profesionales no acumulan prestaciones. */
+  tipoContrato?: string;
 }
 
 /**
@@ -144,7 +147,7 @@ export function calcularProvisionesAcumuladas(
 ): ProvisionesAcumuladas {
   const corte = parseFecha(fechaCorte) ?? parseFecha(obtenerFechaHoyGuatemala()) ?? new Date();
   const ingreso = parseFecha(emp.fechaIngreso);
-  if (!ingreso || corte < ingreso || !(emp.salarioMensual > 0)) {
+  if (!ingreso || corte < ingreso || !(emp.salarioMensual > 0) || esHonorarios(emp.tipoContrato)) {
     return {
       bono14: 0,
       aguinaldo: 0,

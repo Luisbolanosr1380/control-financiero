@@ -1197,6 +1197,9 @@ export const aiTools = {
           departamento: e.departamento,
           // F-051.7: empresa empleadora — otra empresa del grupo = intercompany.
           empresaEmpleadora: e.empresaEmpleadora,
+          // FIX-HONORARIOS: si es honorarios, costo = solo honorario, sin prestaciones.
+          tipoContrato: e.tipoContrato,
+          esHonorarios: e.esHonorarios,
           fechaIngreso: e.fechaIngreso,
           antiguedad: e.antiguedad.textoLegible,
           salarioMensual: e.salarioMensual,

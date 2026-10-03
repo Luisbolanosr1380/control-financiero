@@ -20,6 +20,7 @@ import { supabase } from '../supabase/client';
 import { getCentrosCosto } from './centros';
 import { getBancos } from './bancos';
 import { getDeudas, type Deuda } from './deudas';
+import { esHonorarios } from '../empleados/contrato';
 import {
   calcularAntiguedad,
   calcularProvisionesAcumuladas,
@@ -63,6 +64,8 @@ export interface Empleado {
   idPuesto?: string;
   departamento: string;
   tipoContrato?: string;
+  /** FIX-HONORARIOS: honorarios / servicios profesionales — sin prestaciones ni cargos laborales. */
+  esHonorarios: boolean;
   centroCostoId?: string;
   centroCostoNombre?: string;
 
@@ -205,8 +208,12 @@ export async function getEmpleados(filtros: EmpleadosFiltros = {}): Promise<Empl
       const bancoId  = arrFirst(f[FE.BANCO]);
 
       const antiguedad = calcularAntiguedad(fechaIngreso, new Date());
-      const provisionesAcumuladas = esActivo(status) && salarioMensual > 0 && fechaIngreso
-        ? calcularProvisionesAcumuladas({ fechaIngreso, salarioMensual, salarioBase }, new Date())
+      const tipoContrato = String(f[FE.TIPO_CONT] ?? '') || undefined;
+      const honorarios = esHonorarios(tipoContrato);
+      // FIX-HONORARIOS: un honorarios no acumula pasivo laboral (Bono 14,
+      // aguinaldo, vacaciones, indemnización).
+      const provisionesAcumuladas = !honorarios && esActivo(status) && salarioMensual > 0 && fechaIngreso
+        ? calcularProvisionesAcumuladas({ fechaIngreso, salarioMensual, salarioBase, tipoContrato }, new Date())
         : { bono14: 0, aguinaldo: 0, vacaciones: { diasAcumulados: 0, valorMonetario: 0 }, indemnizacionPotencial: 0, totalPasivoLaboral: 0 };
 
       // Salarios pendientes desde DEUDAS
@@ -236,7 +243,8 @@ export async function getEmpleados(filtros: EmpleadosFiltros = {}): Promise<Empl
         sede:           Array.isArray(f[FE.SEDE]) ? (f[FE.SEDE] as string[]).join(', ') : undefined,
         idPuesto:       String(f[FE.ID_PUESTO] ?? '') || undefined,
         departamento:   String(f[FE.DEPTO] ?? '') || 'Sin departamento',
-        tipoContrato:   String(f[FE.TIPO_CONT] ?? '') || undefined,
+        tipoContrato,
+        esHonorarios:   honorarios,
         centroCostoId:  ccId || undefined,
         centroCostoNombre: ccId ? ccNombrePorId.get(ccId) : undefined,
 
@@ -245,13 +253,15 @@ export async function getEmpleados(filtros: EmpleadosFiltros = {}): Promise<Empl
         bonoVariable:          num(f[FE.BONO_VAR]),
         salarioMensual,
 
-        igssPatronal:           num(f[FE.IGSS_PAT]),
-        provisionBono14:        num(f[FE.BONO_14]),
-        provisionAguinaldo:     num(f[FE.AGUINALDO]),
-        provisionVacaciones:    num(f[FE.VACACIONES]),
-        provisionIndemnizacion: num(f[FE.INDEM]),
-        costoTotalMensual:      num(f[FE.SAL_TOTAL]),
-        costoXHora:             num(f[FE.COSTO_HORA]),
+        // FIX-HONORARIOS: costo = solo el honorario, prestaciones en 0
+        // (independiente de lo que traiga la fuente).
+        igssPatronal:           honorarios ? 0 : num(f[FE.IGSS_PAT]),
+        provisionBono14:        honorarios ? 0 : num(f[FE.BONO_14]),
+        provisionAguinaldo:     honorarios ? 0 : num(f[FE.AGUINALDO]),
+        provisionVacaciones:    honorarios ? 0 : num(f[FE.VACACIONES]),
+        provisionIndemnizacion: honorarios ? 0 : num(f[FE.INDEM]),
+        costoTotalMensual:      honorarios ? salarioMensual : num(f[FE.SAL_TOTAL]),
+        costoXHora:             honorarios ? (salarioMensual ? salarioMensual / 240 : 0) : num(f[FE.COSTO_HORA]),
 
         bancoId:      bancoId || undefined,
         bancoNombre:  bancoId ? bancoNombrePorId.get(bancoId) : undefined,
@@ -343,7 +353,7 @@ export async function getKPIsPlanilla(): Promise<KPIsPlanilla> {
 
   // Proyección próximo Bono 14: 1 salario base × empleados activos con > 1 año.
   // Aproximación simple para mostrar al CFO; cálculo exacto se hará al ejecutar la nómina.
-  const proximoBono14Q = round2(activos.reduce((s, e) => s + (e.antiguedad.totalDias >= 365 ? e.salarioBase : (e.salarioBase * e.antiguedad.totalDias) / 365), 0));
+  const proximoBono14Q = round2(activos.filter(e => !e.esHonorarios).reduce((s, e) => s + (e.antiguedad.totalDias >= 365 ? e.salarioBase : (e.salarioBase * e.antiguedad.totalDias) / 365), 0));
 
   return {
     numActivos:   activos.length,

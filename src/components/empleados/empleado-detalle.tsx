@@ -121,7 +121,7 @@ export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, depart
       {/* KPIs */}
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 22 }}>
         <Kpi label="Salario mensual"        value={Q(e.salarioMensual)} />
-        <Kpi label="Costo total mensual"    value={Q(e.costoTotalMensual)} hint="con prestaciones e IGSS" />
+        <Kpi label="Costo total mensual"    value={Q(e.costoTotalMensual)} hint={e.esHonorarios ? 'solo el honorario — sin prestaciones' : 'con prestaciones e IGSS'} />
         <Kpi label="Indemnización potencial" value={Q(e.provisionesAcumuladas.indemnizacionPotencial)} hint="al día de hoy" />
         <Kpi label="Costo por hora"          value={Q(e.costoXHora)} />
       </div>
@@ -157,9 +157,21 @@ export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, depart
         </div>
       </div>
 
+      {/* FIX-HONORARIOS: aviso explícito en lugar de una grilla de ceros */}
+      {e.esHonorarios && (
+        <div className="card" style={{ marginBottom: 22, borderColor: 'var(--warn)', background: '#FBF1DC' }}>
+          <div className="card-pad" style={{ fontSize: 12.5, color: 'var(--ink-2)', lineHeight: 1.55 }}>
+            <strong>Contrato por honorarios ({e.tipoContrato}).</strong> No es relación de dependencia: el costo es
+            solo el honorario pactado. No lleva IGSS (patronal ni laboral), Bono 14, aguinaldo, vacaciones,
+            indemnización ni bonificación incentivo — pagarle prestaciones sería indicio de relación laboral encubierta.
+            El prestador factura su servicio.
+          </div>
+        </div>
+      )}
+
       {/* Composición salarial + provisión mensual */}
       <div className="card" style={{ marginBottom: 22 }}>
-        <div className="card-head"><div className="card-title">Composición salarial y prestaciones (mensual)</div></div>
+        <div className="card-head"><div className="card-title">{e.esHonorarios ? 'Composición del honorario (mensual)' : 'Composición salarial y prestaciones (mensual)'}</div></div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', borderTop: '1px solid var(--line-3)' }}>
           <Dato label="Salario base"            valor={Q(e.salarioBase)} />
           <Dato label="Bonificación incentivo"  valor={Q(e.bonificacionIncentivo)} />
@@ -170,12 +182,12 @@ export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, depart
           <Dato label="Aguinaldo (8.33%)"       valor={Q(e.provisionAguinaldo)} />
           <Dato label="Vacaciones (4.17%)"      valor={Q(e.provisionVacaciones)} />
           <Dato label="Indemnización (9.72%)"   valor={Q(e.provisionIndemnizacion)} />
-          <Dato label="Costo total mensual"     valor={Q(e.costoTotalMensual)} extra="con prestaciones" />
+          <Dato label="Costo total mensual"     valor={Q(e.costoTotalMensual)} extra={e.esHonorarios ? 'solo honorario' : 'con prestaciones'} />
         </div>
       </div>
 
-      {/* Provisiones ACUMULADAS al día */}
-      <div className="card" style={{ marginBottom: 22 }}>
+      {/* Provisiones ACUMULADAS al día (no aplica a honorarios) */}
+      {!e.esHonorarios && <div className="card" style={{ marginBottom: 22 }}>
         <div className="card-head">
           <div className="card-title">Prestaciones acumuladas al día</div>
           <div className="card-actions">
@@ -189,7 +201,7 @@ export function EmpleadoDetalle({ empleado: e, deudasSalariales, centros, depart
           <Dato label="Indemnización potencial" valor={Q(e.provisionesAcumuladas.indemnizacionPotencial)} extra="solo si despido sin responsabilidad" />
           <Dato label="Total pasivo laboral" valor={Q(e.provisionesAcumuladas.totalPasivoLaboral)} extra="suma de prestaciones" />
         </div>
-      </div>
+      </div>}
 
       {/* SALARIOS PENDIENTES (F-037) */}
       <div className="card" style={{ marginBottom: 22 }}>

@@ -185,6 +185,13 @@ PROACTIVIDAD CON 15+ DÍAS (F-038.4.bis):
 - 0-4 días normal: no mencionar a menos que pregunten.
 - 5-14 días amarilla/naranja: mencionar SOLO si pregunta sobre planilla, no proactivo.
 
+HONORARIOS vs DEPENDENCIA (FIX-HONORARIOS):
+- Empleados con tipoContrato "Honorarios" / "SERVICIOS PROFESIONALES" (esHonorarios=true) NO
+  están en relación de dependencia: su costo es SOLO el honorario. Cero IGSS, Bono 14,
+  aguinaldo, vacaciones, indemnización y bonificación incentivo. El sistema ya los calcula así.
+- Si preguntan por qué un honorarios no tiene prestaciones: pagárselas sería indicio de
+  relación laboral encubierta ante el Ministerio de Trabajo.
+
 PLANILLA POR CENTRO DE COSTO (F-042):
 - Los empleados están asignados a un Centro de Costo (las líneas de negocio
   de esta empresa, listadas arriba).

@@ -9,7 +9,14 @@
  *    >300,000 = 12,600 + 7% sobre el exceso. Se proyecta el ingreso quincenal
  *    a 24 quincenas, se calcula ISR anual y se divide entre 24.
  *  - Neto = ingresoBruto - igssLaboral - isr - otrosDescuentos.
+ *  - FIX-HONORARIOS: un contrato por HONORARIOS no es relación laboral —
+ *    se paga solo el honorario (ordinario = honorario/2): sin bonificación
+ *    incentivo, sin IGSS laboral y sin ISR de renta de trabajo (el
+ *    prestador factura; su ISR depende de su régimen y, si hay que
+ *    retenerlo, va como descuento manual).
  */
+
+import { esHonorarios } from '../empleados/contrato';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -20,6 +27,8 @@ export interface EmpleadoParaPlanilla {
   id: string;
   nombre: string;
   salarioBase: number;
+  /** FIX-HONORARIOS: si es honorarios, la quincena no lleva cargos laborales. */
+  tipoContrato?: string;
 }
 
 export interface DescuentoQuincena {
@@ -88,16 +97,17 @@ export function calcularQuincena(args: {
   const { empleado } = args;
   const ajustes = args.ajustes ?? {};
 
+  const honorarios     = esHonorarios(empleado.tipoContrato);
   const ordinario      = round2((empleado.salarioBase ?? 0) / 2);
-  const bonificacion   = BONIFICACION_QUINCENAL;
+  const bonificacion   = honorarios ? 0 : BONIFICACION_QUINCENAL;
   const extraordinario = round2(ajustes.extraordinario ?? 0);
   const comisiones     = round2(ajustes.bonoKPI ?? 0);
   const otrosIngresos  = round2(ajustes.otrosIngresos ?? 0);
 
   const ingresoBruto = round2(ordinario + bonificacion + extraordinario + comisiones + otrosIngresos);
 
-  const igssLaboral = round2(ordinario * IGSS_LABORAL_PCT);
-  const isr         = calcularISR(empleado.salarioBase, ingresoBruto);
+  const igssLaboral = honorarios ? 0 : round2(ordinario * IGSS_LABORAL_PCT);
+  const isr         = honorarios ? 0 : calcularISR(empleado.salarioBase, ingresoBruto);
 
   const otrosDescuentos = round2((ajustes.descuentos ?? []).reduce((s, d) => s + (d.monto || 0), 0));
   const netoPagar       = round2(ingresoBruto - igssLaboral - isr - otrosDescuentos);

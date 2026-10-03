@@ -31,8 +31,9 @@ export default async function PlanillaDetallePage({ params }: { params: Promise<
   // IGSS patronal estimado: salarioBase × 0.1267 / 2 por cada empleado activo del período.
   // Se calcula desde los empleados (no desde las líneas) porque la cuota patronal NO se
   // descuenta del neto del trabajador y por lo tanto no se almacena en PLANILLA.
+  // FIX-HONORARIOS: los honorarios no cotizan IGSS patronal → base 0.
   const empleados = await getEmpleados({ status: 'ACTIVO' });
-  const empleadoSalarioById = new Map(empleados.map(e => [e.id, e.salarioBase]));
+  const empleadoSalarioById = new Map(empleados.map(e => [e.id, e.esHonorarios ? 0 : e.salarioBase]));
   const igssPatronalEstimado = Math.round(
     datos.lineas.reduce((s, l) => {
       const base = empleadoSalarioById.get(l.empleadoId) ?? 0;

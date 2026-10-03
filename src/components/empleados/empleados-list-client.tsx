@@ -137,7 +137,7 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
       {/* HERO — 6 KPIs */}
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 22 }}>
         <Kpi label="👥 Plantilla" value={`${kpis.numActivos} activos`} hint={`${kpis.numInactivos} inactivos`} />
-        <Kpi label="💰 Costo mensual" value={Q(kpis.costoMensualTotal)} hint="con prestaciones e IGSS patronal" />
+        <Kpi label="💰 Costo mensual" value={Q(kpis.costoMensualTotal)} hint="con prestaciones e IGSS patronal (honorarios: solo el honorario)" />
         <Kpi label="📊 Pasivo laboral" value={Q(kpis.pasivoLaboral.total)} hint="provisiones acumuladas + salarios pendientes" />
         <Kpi
           label="⚠️ Salarios pendientes"
@@ -276,6 +276,12 @@ export function EmpleadosListClient({ empleados, kpis, centros, planillaPorCC, r
                         verticalAlign: 'middle',
                       }} title={`Empresa empleadora: ${e.empresaEmpleadora}`}>
                         {e.empresaEmpleadora}
+                      </span>
+                    )}
+                    {e.esHonorarios && (
+                      <span className="badge badge-warn" style={{ marginLeft: 6, fontSize: 10, padding: '1px 6px', verticalAlign: 'middle' }}
+                        title="Contrato por honorarios: costo = solo el honorario, sin prestaciones">
+                        Honorarios
                       </span>
                     )}
                   </td>

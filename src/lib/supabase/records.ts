@@ -25,6 +25,7 @@
 import { fetchAll } from './client';
 import { obtenerFechaHoyGuatemala, diferenciaDias } from '../utils/fechas';
 import { CUENTAS_FIELDS } from '../contabilidad/cuentas-sistema';
+import { esHonorarios } from '../empleados/contrato';
 import { OBLIGACIONES_RECURRENTES_FIELDS as FO } from '../airtable/obligaciones-recurrentes-fields';
 
 export interface PseudoRecord {
@@ -484,17 +485,18 @@ export async function sbEmpleadosRecords(): Promise<PseudoRecord[]> {
   });
   const out: PseudoRecord[] = rows.map(r => {
     const sm = n(r.salario_mensual) ?? 0;
+    // FIX-HONORARIOS: honorarios / servicios profesionales NO llevan
+    // ninguna prestación — cada componente en 0, no solo el total (antes
+    // los componentes quedaban llenos y se sumaban en la vista por CC).
+    const factor = esHonorarios(s(r.tipo_contrato)) ? 0 : 1;
     // Las fórmulas de Airtable NO redondean (verificado vs API: Salario
     // Total 6653.628828); el redondeo era solo formato de display.
-    const igss       = sm * PCT.IGSS_PATRONAL;
-    const bono14     = sm * PCT.BONO14;
-    const aguinaldo  = sm * PCT.AGUINALDO;
-    const vacaciones = sm * PCT.VACACIONES;
-    const indem      = sm * PCT.INDEMNIZACION;
-    // 'Salario Total' de Airtable es condicional: SERVICIOS PROFESIONALES
-    // (por factura) no carga prestaciones (verificado vs API).
-    const esServiciosProf = String(r.tipo_contrato ?? '').trim().toUpperCase() === 'SERVICIOS PROFESIONALES';
-    const salarioTotal = esServiciosProf ? sm : sm + igss + bono14 + aguinaldo + vacaciones + indem;
+    const igss       = sm * PCT.IGSS_PATRONAL * factor;
+    const bono14     = sm * PCT.BONO14 * factor;
+    const aguinaldo  = sm * PCT.AGUINALDO * factor;
+    const vacaciones = sm * PCT.VACACIONES * factor;
+    const indem      = sm * PCT.INDEMNIZACION * factor;
+    const salarioTotal = sm + igss + bono14 + aguinaldo + vacaciones + indem;
     return {
       id: String(r.airtable_id),
       fields: compact({

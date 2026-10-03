@@ -52,11 +52,11 @@ export function ModalDarDeBaja({ empleado, onClose }: Props) {
 
   const liquidacion = useMemo(
     () => calcularLiquidacion(
-      { fechaIngreso: empleado.fechaIngreso, salarioMensual: empleado.salarioMensual, salarioBase: empleado.salarioBase },
+      { fechaIngreso: empleado.fechaIngreso, salarioMensual: empleado.salarioMensual, salarioBase: empleado.salarioBase, tipoContrato: empleado.tipoContrato },
       motivo,
       fecha,
     ),
-    [empleado.fechaIngreso, empleado.salarioMensual, empleado.salarioBase, motivo, fecha],
+    [empleado.fechaIngreso, empleado.salarioMensual, empleado.salarioBase, empleado.tipoContrato, motivo, fecha],
   );
 
   const onConfirm = async () => {

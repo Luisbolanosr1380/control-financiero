@@ -63,6 +63,8 @@ export interface LineaPlanilla {
   periodoId: string;
   empleadoId: string;
   empleadoNombre: string;
+  /** FIX-HONORARIOS: tipo de contrato del empleado (recálculo local de la quincena). */
+  empleadoTipoContrato?: string;
   centroCostoId?: string;
 
   ordinario: number;
@@ -208,7 +210,11 @@ function parsePeriodoNombre(nombre: string): { quincena: 1 | 2; mes: number; ani
  * Lectura
  * ============================================================ */
 
-function recordToLinea(record: { id: string; fields: Record<string, unknown> }, empleadoNombreById: Map<string, string>): LineaPlanilla {
+function recordToLinea(
+  record: { id: string; fields: Record<string, unknown> },
+  empleadoNombreById: Map<string, string>,
+  tipoContratoById: Map<string, string | undefined> = new Map(),
+): LineaPlanilla {
   const f = record.fields;
   const empleadoId = arrFirst(f[FL.EMPLEADO]);
   const periodoId  = arrFirst(f[FL.PERIODO]);
@@ -217,6 +223,7 @@ function recordToLinea(record: { id: string; fields: Record<string, unknown> }, 
     periodoId,
     empleadoId,
     empleadoNombre: empleadoNombreById.get(empleadoId) ?? '',
+    empleadoTipoContrato: tipoContratoById.get(empleadoId),
     centroCostoId: arrFirst(f[FL.CENTRO_COSTO]) || undefined,
 
     ordinario:       num(f[FL.ORDINARIO]),
@@ -248,6 +255,7 @@ async function getLineasPorPeriodo(periodoId: string | null): Promise<LineaPlani
   if (src !== 'supabase' && !airtable) return [];
   const empleados = await getEmpleados({ status: 'todos' });
   const empleadoNombreById = new Map(empleados.map(e => [e.id, e.nombre]));
+  const tipoContratoById = new Map(empleados.map(e => [e.id, e.tipoContrato]));
 
   // F-038.3: NO usar filterByFormula con ARRAYJOIN({PERIODO}) — Airtable
   // devuelve display names (primary field "Q1-junio-2026"), no record IDs,
@@ -258,7 +266,7 @@ async function getLineasPorPeriodo(periodoId: string | null): Promise<LineaPlani
     ? await sbPlanillaRecords()
     : (await airtable!(TABLES.PLANILLA).select().all())
         .map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
-  const lineas = records.map(r => recordToLinea(r, empleadoNombreById));
+  const lineas = records.map(r => recordToLinea(r, empleadoNombreById, tipoContratoById));
   return periodoId ? lineas.filter(l => l.periodoId === periodoId) : lineas;
 }
 
@@ -448,7 +456,7 @@ export async function generarPlanilla(periodoId: string): Promise<GenerarPlanill
       let montoTotalSb = 0;
       for (const emp of empleados) {
         const calc = calcularQuincena({
-          empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase },
+          empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase, tipoContrato: emp.tipoContrato },
         });
         montoTotalSb += calc.netoPagar;
         filas.push({
@@ -480,7 +488,7 @@ export async function generarPlanilla(periodoId: string): Promise<GenerarPlanill
     let montoTotal = 0;
     for (const emp of empleados) {
       const calc = calcularQuincena({
-        empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase },
+        empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase, tipoContrato: emp.tipoContrato },
       });
       montoTotal += calc.netoPagar;
       const fields: Record<string, AField> = {
@@ -554,7 +562,7 @@ export async function ajustarLineaPlanilla(lineaId: string, ajustes: AjustesQuin
     if (!emp) return { ok: false, error: 'Empleado de la línea no encontrado.' };
 
     const calc = calcularQuincena({
-      empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase },
+      empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase, tipoContrato: emp.tipoContrato },
       ajustes,
     });
 
@@ -1023,7 +1031,7 @@ export async function previewGeneracion(): Promise<PreviewGeneracion> {
   const empleados = await getEmpleados({ status: 'ACTIVO' });
   let monto = 0;
   const detalle = empleados.map(emp => {
-    const calc = calcularQuincena({ empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase } });
+    const calc = calcularQuincena({ empleado: { id: emp.id, nombre: emp.nombre, salarioBase: emp.salarioBase, tipoContrato: emp.tipoContrato } });
     monto += calc.netoPagar;
     return {
       id: emp.id,

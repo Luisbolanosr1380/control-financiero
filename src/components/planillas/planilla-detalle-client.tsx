@@ -196,7 +196,7 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
       // del server; el useEffect respeta el draft cuando saveState='saving',
       // así que no hay race.
       const calc = calcularQuincena({
-        empleado: { id: linea.empleadoId, nombre: linea.empleadoNombre, salarioBase: round2(linea.ordinario * 2) },
+        empleado: { id: linea.empleadoId, nombre: linea.empleadoNombre, salarioBase: round2(linea.ordinario * 2), tipoContrato: linea.empleadoTipoContrato },
         ajustes,
       });
       setLineasUI(prev => prev.map(l => l.id !== lineaId ? l : {
@@ -241,7 +241,7 @@ export function PlanillaDetalleClient({ periodo, lineas, igssPatronalEstimado, b
         return;
       }
       const calc = calcularQuincena({
-        empleado: { id: linea.empleadoId, nombre: linea.empleadoNombre, salarioBase: round2(linea.ordinario * 2) },
+        empleado: { id: linea.empleadoId, nombre: linea.empleadoNombre, salarioBase: round2(linea.ordinario * 2), tipoContrato: linea.empleadoTipoContrato },
         ajustes,
       });
       setLineasUI(prev => prev.map(l => l.id !== lineaId ? l : {
@@ -529,7 +529,7 @@ function netoLocal(linea: LineaUI): number {
   const haDraft = Object.keys(linea.draft).length > 0;
   if (!haDraft) return linea.netoPagar;
   const calc = calcularQuincena({
-    empleado: { id: linea.empleadoId, nombre: linea.empleadoNombre, salarioBase: round2(linea.ordinario * 2) },
+    empleado: { id: linea.empleadoId, nombre: linea.empleadoNombre, salarioBase: round2(linea.ordinario * 2), tipoContrato: linea.empleadoTipoContrato },
     ajustes: {
       extraordinario: linea.extraordinario,
       bonoKPI:        linea.draft.comisiones    ?? linea.comisiones,

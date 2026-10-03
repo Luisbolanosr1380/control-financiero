@@ -57,6 +57,7 @@ import {
 import { TABLES } from '@/lib/db/airtable';
 import { dataSource, writeSource } from '@/lib/config/data-source';
 import { getCentrosCosto } from '@/lib/db/centros';
+import { esHonorarios } from '@/lib/empleados/contrato';
 import { supabase } from '@/lib/supabase/client';
 import { rpc, uuidRequerido, uuidOpcional } from '@/lib/supabase/writes';
 
@@ -87,6 +88,8 @@ export interface EmpleadoInput {
   empresaEmpleadora?: EmpresaEmpleadora | string;
   /** IGSS patronal MENSUAL del empleado. Se divide /2 para la quincena. */
   igssPatronal: number;
+  /** FIX-HONORARIOS: un honorarios NO genera IGSS patronal ni provisiones. */
+  tipoContrato?: string;
   /** Centro de costo del empleado (override si la línea no lo tiene). */
   centroCostoId?: string;
 }
@@ -322,7 +325,7 @@ function baseGastoGolden(linea: LineaPlanillaInput, emp: EmpleadoInput | undefin
     + linea.extraordinario
     + linea.comisiones
     + linea.otrosIngresos;
-  const igssPatronalQuincena = (emp?.igssPatronal ?? 0) / 2;
+  const igssPatronalQuincena = emp && esHonorarios(emp.tipoContrato) ? 0 : (emp?.igssPatronal ?? 0) / 2;
   return round2(sueldoBruto + igssPatronalQuincena);
 }
 

@@ -147,6 +147,7 @@ async function armarInputAsiento(periodoId: string, bancoId: string) {
     nombre:             e.nombre,
     empresaEmpleadora:  e.empresaEmpleadora,
     igssPatronal:       e.igssPatronal,
+    tipoContrato:       e.tipoContrato,
     centroCostoId:      e.centroCostoId,
   }));
   const lineasMin = datos.lineas
