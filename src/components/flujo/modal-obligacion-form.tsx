@@ -199,7 +199,7 @@ export function ModalObligacionForm({ obligacion, onCerrar, onGuardado, opciones
 
           <Field
             label="Por cuenta de"
-            hint="HIT / Poligrafy = pago intercompany (sale de caja de Golden pero no es gasto propio)."
+            hint="Otra empresa del grupo = pago intercompany (sale de nuestra caja pero no es gasto propio)."
           >
             <select
               value={porCuentaDe}

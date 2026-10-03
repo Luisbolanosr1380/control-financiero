@@ -11,17 +11,15 @@ import { InfoTooltip } from '@/components/common/info-tooltip';
 import { ModalListaClientes, type FilaCliente } from '@/components/common/modal-lista-clientes';
 import { Q, formatDate } from '@/lib/utils';
 import { explicar, guiaAnalitica, type GuiaSeccion } from '@/lib/explicaciones';
+import { colorServicio } from '@/lib/db/lineas-negocio';
 import type { AnaliticaIngresos, AnaliticaVariantes, FiltroNaturaleza, MoverCliente } from '@/lib/db/analitica';
 
 const PROVISIONAL_MESES = 3;   // últimos 3 meses se consideran provisionales para "apagados"
 
-const SERVICIO_COLOR: Record<string, string> = {
-  Poligrafia:       'var(--line-poligrafo)',
-  Socioeconomicos:  'var(--line-socio)',
-  TalentTrackAI:    'var(--line-talenttrack)',
-  Administrativo:   'var(--line-ventas)',
-  Otros:            'var(--ink-4)',
-};
+// FIX-DASHBOARD-ANALITICA-HIT: el color sale del helper central —
+// nombres históricos de Golden conservan su color; líneas nuevas (HIT u
+// otras empresas) reciben uno estable por hash.
+const SERVICIO_COLOR = (servicio: string): string => colorServicio(servicio);
 
 function labelMes(ym: string): string {
   const [y, m] = ym.split('-').map(Number);
@@ -152,8 +150,8 @@ export function AnaliticaClient({ variantes }: Props) {
                 style={{ padding: '5px 12px', fontSize: 12 }}
                 onClick={() => setFiltro(s)}
               >
-                {s !== 'Todos' && SERVICIO_COLOR[s] && (
-                  <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: SERVICIO_COLOR[s], marginRight: 6 }} />
+                {s !== 'Todos' && (
+                  <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 4, background: SERVICIO_COLOR(s), marginRight: 6 }} />
                 )}
                 {s}
               </button>
@@ -173,7 +171,7 @@ export function AnaliticaClient({ variantes }: Props) {
               </button>
             ))}
             <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--ink-4)' }}>
-              Recurrentes = Polígrafo/Socio, mes a mes · Por proyecto = reclutamiento, facturación intermitente
+              Recurrentes = servicios que facturan mes a mes · Por proyecto = facturación episódica/intermitente
             </span>
           </div>
         </div>
@@ -258,7 +256,7 @@ export function AnaliticaClient({ variantes }: Props) {
                       key={sv}
                       type="monotone"
                       dataKey={sv}
-                      stroke={SERVICIO_COLOR[sv] ?? 'var(--ink-3)'}
+                      stroke={SERVICIO_COLOR(sv)}
                       strokeWidth={2}
                       dot={false}
                       connectNulls={false}
@@ -285,7 +283,7 @@ export function AnaliticaClient({ variantes }: Props) {
                 <tr key={v.servicio}>
                   <td>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                      <span style={{ width: 8, height: 8, borderRadius: 4, background: SERVICIO_COLOR[v.servicio] ?? 'var(--ink-4)' }} />
+                      <span style={{ width: 8, height: 8, borderRadius: 4, background: SERVICIO_COLOR(v.servicio) }} />
                       {v.servicio}
                     </span>
                   </td>

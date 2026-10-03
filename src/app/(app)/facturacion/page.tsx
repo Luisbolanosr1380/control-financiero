@@ -1,6 +1,7 @@
 import { getFacturasPagina, getFacturasLiviano, computeTopClientesDelMes, type FiltroTabFactura } from '@/lib/db/facturas';
 import { getClientes } from '@/lib/db/clientes';
 import { getKPIsNotasCredito } from '@/lib/db/notas-credito';
+import { getCentrosCosto } from '@/lib/db/centros';
 import { FacturasListClient, type FacturasTab } from '@/components/facturas/list-client';
 import { parseMesParam } from '@/lib/utils/mes-activo';
 
@@ -21,12 +22,14 @@ export default async function FacturacionPage({
   // F-BF-002a: el selector global de mes filtra tab+listado+livianas.
   const mes = parseMesParam(mesRaw);
 
-  const [pagina, livianas, clientes, ncsKpis] = await Promise.all([
+  const [pagina, livianas, clientes, ncsKpis, centros] = await Promise.all([
     getFacturasPagina({ limit: 50, filtro, mes }),
     getFacturasLiviano({ mes }),
     getClientes(),
     getKPIsNotasCredito(),   // F-045: para mostrar facturado bruto vs neto
+    getCentrosCosto(),       // FIX-DASHBOARD-ANALITICA-HIT: líneas reales de la base
   ]);
+  const nombresCC = Object.fromEntries(centros.map(c => [c.id, c.nombre.trim()]));
   // F-BF-002b: top clientes del mes (no toca Airtable — usa el dataset liviano).
   const topClientes = computeTopClientesDelMes(livianas, clientes, 5);
   return (
@@ -42,6 +45,7 @@ export default async function FacturacionPage({
       topClientes={topClientes.items}
       totalMesQ={topClientes.totalMesQ}
       ncsActivasAnio={ncsKpis.montoActivasAnio}
+      nombresCC={nombresCC}
     />
   );
 }

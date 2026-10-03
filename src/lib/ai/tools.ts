@@ -167,7 +167,7 @@ export const aiTools = {
 
   getFacturadoPorPeriodo: tool({
     description:
-      'Facturado del período desglosado por servicio (Poligrafia, Socioeconomicos, TalentTrackAI, Administrativo, Otros). ' +
+      'Facturado del período desglosado por servicio (las líneas de negocio ACTIVAS de esta empresa + Otros). ' +
       'USAR cuando el usuario pregunte "cuánto facturé este mes/el mes pasado/el año" o quiera el split por servicio en un período. ' +
       'Más preciso que getKPIs cuando lo que importa es el facturado y su composición.',
     parameters: periodoParams,
@@ -184,14 +184,14 @@ export const aiTools = {
       'por línea de negocio y por mes. Es el mismo motor de /reportes/facturacion. Universo = todas las facturas ' +
       'MENOS anuladas y refacturadas (se cuentan aparte en num_anuladas); cada factura cuenta por su TOTAL en su ' +
       'mes de emisión. NO es cobranza: para saldos pendientes/vencidos usar getFacturasPendientesCobro. ' +
-      '\n\n`cliente` opcional (nombre, match parcial) filtra a un cliente — "¿cuánto le facturamos a Génesis en el Q2?". ' +
-      '`lineas` opcional filtra por líneas de negocio — "¿cuánto facturó TalentTrack este año?". Combinables. ' +
+      '\n\n`cliente` opcional (nombre, match parcial) filtra a un cliente — "¿cuánto le facturamos a X en el Q2?". ' +
+      '`lineas` opcional filtra por líneas de negocio (las de esta empresa) — "¿cuánto facturó la línea X este año?". Combinables. ' +
       'USAR para informes de ventas: "cuánto facturamos en X período", rankings de clientes, mezcla de líneas, evolución mensual.',
     parameters: periodoParams.extend({
       cliente: z.string().optional()
-        .describe('Nombre del cliente (match parcial, ej: "genesis"). Si es ambiguo, la tool devuelve candidatos.'),
+        .describe('Nombre del cliente (match parcial). Si es ambiguo, la tool devuelve candidatos.'),
       lineas: z.array(z.string()).optional()
-        .describe('Líneas de negocio, ej: ["poligrafia"], ["talenttrack", "socioeconomicos"].'),
+        .describe('Líneas de negocio de esta empresa (nombre completo o parcial, sin acentos).'),
     }),
     execute: async ({ periodo, desde, hasta, cliente, lineas }) => {
       const m = meta({ periodo, desde, hasta });
@@ -273,7 +273,7 @@ export const aiTools = {
 
   getServiciosPerformance: tool({
     description:
-      'Variación de facturación por servicio (Poligrafia / Socioeconomicos / TalentTrackAI / Administrativo / Otros) entre el período pedido y el período IGUAL inmediatamente anterior. ' +
+      'Variación de facturación por servicio (las líneas activas de esta empresa + Otros) entre el período pedido y el período IGUAL inmediatamente anterior. ' +
       'Ej: mes_actual compara mayo (en curso) vs abril; ultimos_3_meses compara feb-abr vs nov-ene. ' +
       'Si el periodo es "en_curso" (mes_actual / ytd), incluí en tu respuesta la advertencia: el período no está cerrado.',
     parameters: periodoParams,
@@ -1195,7 +1195,7 @@ export const aiTools = {
           nombre: e.nombre,
           status: e.status,
           departamento: e.departamento,
-          // F-051.7: empresa empleadora — HIT / Poligrafy / BYDSA = intercompany.
+          // F-051.7: empresa empleadora — otra empresa del grupo = intercompany.
           empresaEmpleadora: e.empresaEmpleadora,
           fechaIngreso: e.fechaIngreso,
           antiguedad: e.antiguedad.textoLegible,
@@ -1213,7 +1213,7 @@ export const aiTools = {
   getEmpleadosPorDepartamento: tool({
     description:
       'Lista de empleados activos por departamento, con costo individual y antigüedad. ' +
-      'F-051.7: incluye empresa_empleadora — distingue Golden Talent de intercompany (HIT/Poligrafy/BYDSA). ' +
+      'F-051.7: incluye empresa_empleadora — distingue empleados propios de intercompany (otra empresa del grupo). ' +
       'USAR cuando el usuario pregunte "¿quiénes están en X departamento?", "lista de operaciones / ventas / etc".',
     parameters: z.object({
       departamento: z.string().describe('Nombre exacto o parcial del departamento.'),
@@ -1516,14 +1516,14 @@ export const aiTools = {
 
   getPlanillaPorCentroCosto: tool({
     description:
-      'F-042: distribución de la planilla MENSUAL agrupada por Centro de Costo (Polígrafo, ' +
-      'Socioeconómico, TalentTrack, Ventas, Administración, etc.). Por cada CC devuelve cantidad ' +
+      'F-042: distribución de la planilla MENSUAL agrupada por Centro de Costo (las líneas ' +
+      'de negocio de esta empresa). Por cada CC devuelve cantidad ' +
       'de empleados activos, salarios base, prestaciones (IGSS+Bono14+Aguinaldo+Vac+Indem), ' +
       'costo total mensual con prestaciones, costo total anual proyectado (*12) y porcentaje ' +
       'de prestaciones sobre salarios. Ordenado por costoTotalMensual DESC. ' +
       'CRÍTICO para CFO: permite calcular margen real por línea de negocio ' +
       '(facturación CC / planilla CC). ' +
-      'USAR cuando el usuario pregunte: "¿cuánto cuesta la planilla de Polígrafo/Socioeconómico/etc.?", ' +
+      'USAR cuando el usuario pregunte: "¿cuánto cuesta la planilla de [línea/centro de costo]?", ' +
       '"¿qué centro tiene más costo de planilla?", "¿cómo se reparte la planilla por línea?", ' +
       '"¿cuál es el costo anual de planilla de X?".',
     parameters: z.object({}),
@@ -1829,7 +1829,7 @@ export const aiTools = {
   gastosPorCC: tool({
     description:
       'F-050: total de gasto por centro de costo en un mes (o mes actual si no se pasa). ' +
-      'USAR para "cuánto gastó Polígrafo este mes" o reportes de margen por línea.',
+      'USAR para "cuánto gastó [línea] este mes" o reportes de margen por línea.',
     parameters: z.object({
       centroCostoId: z.string().describe('Record ID del centro de costo (rec...).'),
       anio: z.number().int().optional(),
@@ -1953,9 +1953,9 @@ export const aiTools = {
   obligacionesRecurrentes: tool({
     description:
       'F-051: lista las OBLIGACIONES_RECURRENTES activas con su monto mensual equivalente. ' +
-      'F-051.6: incluye desglose por empresa (por_cuenta_de): Golden Talent vs. intercompany (HIT/Poligrafy). ' +
+      'F-051.6: incluye desglose por empresa (por_cuenta_de): la empresa propia vs. intercompany (otras del grupo). ' +
       'Los pagos intercompany SALEN de la caja de Golden pero contablemente no son gasto propio. ' +
-      'USAR cuando el usuario pregunte "cuáles son mis gastos fijos", "cuánto pago mensualmente recurrente", "qué tengo configurado como recurrente", "cuánto sale a HIT/Poligrafy".',
+      'USAR cuando el usuario pregunte "cuáles son mis gastos fijos", "cuánto pago mensualmente recurrente", "qué tengo configurado como recurrente", "cuánto sale a [otra empresa del grupo]".',
     parameters: z.object({}),
     execute: async () => {
       const todas = await getObligacionesRecurrentes(false);
@@ -2045,14 +2045,14 @@ export const aiTools = {
       '(ambos YYYY-MM-DD, inclusive). Excluye facturas ANULADO y REFACTURADO del cálculo, ' +
       'pero reporta `num_anuladas` aparte. ' +
       '\n\nF-BF-002d — filtro por LÍNEA DE NEGOCIO (centro de costo): si el usuario menciona una ' +
-      'o más líneas (polígrafos, socioeconómicos, talenttrack, ventas, etc.), pasar `lineas`. ' +
-      'Match parcial sin acentos: "poligrafos" → "Poligrafia", "socio" → "Socioeconomicos", ' +
-      '"talenttrack"/"tt" → "TalentTrackAI". Si se pasan VARIAS líneas, se devuelve un ranking ' +
+      'o más líneas (las activas de esta empresa), pasar `lineas`. ' +
+      'Match parcial sin acentos contra los nombres de los CCs de la base. ' +
+      'Si se pasan VARIAS líneas, se devuelve un ranking ' +
       'POR CADA línea (no mezclado), cada uno con su total y top. Una factura multi-servicio ' +
       'aporta SOLO la porción correspondiente a cada CC (no su TOTAL completo). ' +
       'Si alguna línea no matchea, se devuelve `lineas_no_resueltas` con candidatos. ' +
-      '\n\nUSAR para "top 5 del último trimestre", "mejores clientes en socioeconomicos", ' +
-      '"top 3 en polígrafos y socio de mayo". Para un solo mes exacto SIN línea, ' +
+      '\n\nUSAR para "top 5 del último trimestre", "mejores clientes en [línea]", ' +
+      '"top 3 en [línea A] y [línea B] de mayo". Para un solo mes exacto SIN línea, ' +
       'usar topClientesDelMes.',
     parameters: z.object({
       desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('Fecha inicial inclusive YYYY-MM-DD.'),
@@ -2135,13 +2135,13 @@ export const aiTools = {
   facturadoCliente: tool({
     description:
       'F-BF-002c/d: cuánto se facturó a un cliente específico en un rango [desde, hasta]. ' +
-      'Match parcial case-insensitive sobre el nombre (quita acentos: "genesis" matchea "GÉNESIS"). ' +
+      'Match parcial case-insensitive sobre el nombre (quita acentos). ' +
       'Si el match es ambiguo, devuelve la lista de candidatos para que el usuario desambigüe. ' +
       'Excluye anuladas/refacturadas del total pero reporta cuántas hubo. ' +
       '\n\nF-BF-002d — `lineas` opcional: filtrar a una o varias líneas de negocio ' +
       '(centros de costo). Si se pasa, suma SOLO la porción correspondiente a esos CCs. ' +
-      'USAR para "¿cuánto le facturamos a X en abril?", "facturación de Génesis YTD", ' +
-      '"¿qué le emitimos a Cuscatlán en polígrafos este año?".',
+      'USAR para "¿cuánto le facturamos a X en abril?", "facturación de X YTD", ' +
+      '"¿qué le emitimos a X en [línea] este año?".',
     parameters: z.object({
       nombreCliente: z.string().min(2).describe('Nombre o fragmento del cliente.'),
       desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -2212,8 +2212,8 @@ export const aiTools = {
       '\n\nModo "fiscal" (default) incluye todas las partidas (lo que ve SAT). ' +
       'Modo "operativo" excluye partidas cuyo gasto tiene TIPO_OPERATIVO="No Operativo" — ' +
       'mejor lente para el desempeño del giro real. La diferencia entre ambos = Σ gastos No Operativo del mes. ' +
-      '\n\n`centroCostoId` opcional filtra a una línea de negocio específica (Poligrafia / Socioeconomicos / etc.). ' +
-      'USAR para "¿cómo cerró el ER de mayo?", "margen operativo de Poligrafía", ' +
+      '\n\n`centroCostoId` opcional filtra a una línea de negocio específica (cualquiera de las activas de esta empresa). ' +
+      'USAR para "¿cómo cerró el ER de mayo?", "margen operativo de [línea]", ' +
       '"compará la utilidad neta de abril vs marzo", "¿cuál es mi EBITDA YTD?".',
     parameters: z.object({
       periodo: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/)

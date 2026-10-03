@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
 import { Q, formatDateDDMMYYYY } from '@/lib/utils';
 import { LINES } from '@/lib/mock-data';
+import { colorServicio } from '@/lib/db/lineas-negocio';
 import { cargarMasFacturasAction } from '@/app/(app)/facturacion/actions';
 import { HelpButton } from '@/components/ayuda/help-button';
 import type { Invoice, Customer } from '@/lib/types';
@@ -232,14 +233,20 @@ interface Props {
   topClientes?: TopClienteMes[];
   /** F-BF-002b: facturado total del mes (sin anuladas/refacturadas), denominador del %. */
   totalMesQ?: number;
+  /** FIX-DASHBOARD-ANALITICA-HIT: ccId → nombre, para mostrar las líneas REALES de la base. */
+  nombresCC?: Record<string, string>;
 }
 
 export function FacturasListClient({
   initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes,
   initialTab = 'todas', ncsActivasAnio = 0, mesActivo,
-  topClientes = [], totalMesQ = 0,
+  topClientes = [], totalMesQ = 0, nombresCC = {},
 }: Props) {
   const router = useRouter();
+  // Nombre de línea = CC real de la base; fallback legacy a LINES solo si
+  // la línea no trae centroCostoId (datos viejos sin CC).
+  const nombreLinea = (l: { line: Invoice['line']; centroCostoId?: string }): string =>
+    (l.centroCostoId && nombresCC[l.centroCostoId]) || LINES[l.line].name;
   // F-034: el tab manda en URL — el componente se re-monta vía key={tab} cuando
   // cambia, así initialInvoices ya viene del server filtrado por el tab activo.
   const tab: FacturasTab = initialTab;
@@ -433,7 +440,7 @@ export function FacturasListClient({
               </td></tr>
             ) : rows.map(inv => {
               const cust = custById[inv.custId];
-              const line = LINES[inv.line];
+              const lineaPrincipal = nombreLinea(inv.lineas[0] ?? { line: inv.line });
               const agingDays = inv.dueAgo;
               let agingBadge: { cls: string; text: string };
               if (inv.status === 'cobrado')       agingBadge = { cls: 'badge-olive', text: 'Pagada' };
@@ -483,7 +490,7 @@ export function FacturasListClient({
                     {inv.isMixed ? (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
                         {inv.lineas.map((l, idx) => (
-                          <span key={idx} className={'dot ' + LINES[l.line].dot} title={LINES[l.line].name}></span>
+                          <span key={idx} className="dot" style={{ background: colorServicio(nombreLinea(l)) }} title={nombreLinea(l)}></span>
                         ))}
                         <span style={{ marginLeft: 4, fontSize: 11, color: 'var(--ink-3)', fontStyle: 'italic' }}>
                           {inv.lineas.length} líneas
@@ -491,7 +498,7 @@ export function FacturasListClient({
                       </span>
                     ) : (
                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                        <span className={'dot ' + line.dot}></span>{line.name}
+                        <span className="dot" style={{ background: colorServicio(lineaPrincipal) }}></span>{lineaPrincipal}
                       </span>
                     )}
                   </td>

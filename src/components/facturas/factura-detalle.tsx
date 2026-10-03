@@ -3,6 +3,7 @@ import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
 import { formatearFecha } from '@/lib/utils/fechas';
 import { LINES } from '@/lib/mock-data';
+import { colorServicio } from '@/lib/db/lineas-negocio';
 import { AdjuntoViewer } from '@/components/facturas/adjunto-viewer';
 import { AnularFacturaButton } from '@/components/facturas/anular-factura-button';
 import { EditarFacturaButton } from '@/components/facturas/editar-factura-button';
@@ -35,6 +36,8 @@ interface Props {
   cobros: GrupoCobro[];     // F-035: historial agrupado de cobros
   notasCredito: NotaCredito[];   // F-045
   esAdmin: boolean;              // F-045: solo admin aprueba NCs > Q5K
+  /** FIX-DASHBOARD-ANALITICA-HIT: ccId → nombre, para las líneas REALES de la base. */
+  nombresCC?: Record<string, string>;
 }
 
 const formatFechaShort = (s: string): string =>
@@ -67,8 +70,11 @@ function dedupeComponentes(g: GrupoCobro): { metodo: string; bancoNombre: string
   return [...buckets.values()];
 }
 
-export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros, notasCredito, esAdmin }: Props) {
+export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros, notasCredito, esAdmin, nombresCC = {} }: Props) {
   const badge = STATUS_BADGE[inv.status] ?? { cls: 'badge-mute', text: inv.status };
+  // Línea = CC real de la base; fallback legacy a LINES si no hay centroCostoId.
+  const nombreLinea = (l: { line: Invoice['line']; centroCostoId?: string }): string =>
+    (l.centroCostoId && nombresCC[l.centroCostoId]) || LINES[l.line].name;
 
   const sumIva = inv.lineas.reduce((s, l) => s + (l.iva ?? 0), 0);
   const sumTotal = inv.lineas.reduce((s, l) => s + l.amount, 0);
@@ -95,12 +101,12 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
             <span className={'badge ' + badge.cls} style={{ fontSize: 11.5, padding: '3px 10px' }}>{badge.text}</span>
             {inv.isMixed ? (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--ink-3)' }}>
-                {inv.lineas.map((l, i) => <span key={i} className={'dot ' + LINES[l.line].dot} title={LINES[l.line].name}></span>)}
+                {inv.lineas.map((l, i) => <span key={i} className="dot" style={{ background: colorServicio(nombreLinea(l)) }} title={nombreLinea(l)}></span>)}
                 <span style={{ marginLeft: 4, fontStyle: 'italic' }}>{inv.lineas.length} líneas</span>
               </span>
             ) : (
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink-3)' }}>
-                <span className={'dot ' + LINES[inv.line].dot}></span>{LINES[inv.line].name}
+                <span className="dot" style={{ background: colorServicio(nombreLinea(inv.lineas[0] ?? { line: inv.line })) }}></span>{nombreLinea(inv.lineas[0] ?? { line: inv.line })}
               </span>
             )}
           </div>
@@ -210,7 +216,7 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
                 <tr key={i}>
                   <td>
                     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                      <span className={'dot ' + LINES[l.line].dot}></span>{LINES[l.line].name}
+                      <span className="dot" style={{ background: colorServicio(nombreLinea(l)) }}></span>{nombreLinea(l)}
                     </span>
                   </td>
                   <td className="num">{Q(sub)}</td>

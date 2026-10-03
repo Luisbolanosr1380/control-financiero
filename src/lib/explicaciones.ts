@@ -79,7 +79,7 @@ export const explicar = {
     'Cómo evolucionó tu facturación mes a mes. Las barras grises son "sin datos" (anteriores al inicio del registro). La barra roja marca el mes de mayor caída.',
 
   facturacionPorServicio: () =>
-    'Cada línea es un servicio (Polígrafo, Socioeconómicos, etc.). Sirve para ver si una caída general es realmente del negocio entero, o solo de un servicio específico.',
+    'Cada línea es un servicio del negocio (un centro de costo activo). Sirve para ver si una caída general es realmente del negocio entero, o solo de un servicio específico.',
 
   variacionPorServicio: () =>
     'Para cada servicio: cuánto facturó en los últimos 3 meses vs los 3 meses anteriores. Verde = creció. Rojo = cayó. Si uno solo cayó fuerte, ahí está el problema concentrado.',
@@ -124,7 +124,7 @@ export function guiaAnalitica(args: {
     },
     {
       titulo: 'Filtro por servicio',
-      cuerpo: 'Arriba podés aislar un servicio (ej. TalentTrackAI) para ver SU curva mensual y descubrir si la caída general viene de un solo lado. "Todos" muestra el total combinado.',
+      cuerpo: 'Arriba podés aislar un servicio para ver SU curva mensual y descubrir si la caída general viene de un solo lado. "Todos" muestra el total combinado.',
     },
     {
       titulo: 'Mes pico / valle / caída MoM mayor / promedio',

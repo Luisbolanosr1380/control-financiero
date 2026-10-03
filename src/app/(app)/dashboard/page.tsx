@@ -6,8 +6,24 @@ import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
 import { getKPIsDeudas } from '@/lib/db/deudas';
 import { getKPIsPagosPendientes } from '@/lib/db/planillas';
 import { getKPIsNotasCredito } from '@/lib/db/notas-credito';
+import { getEvolucion12m, construirAlertasVivas } from '@/lib/db/dashboard-live';
+import { empresaConfig } from '@/lib/config/empresa';
 import { getRolUsuario } from '@/lib/auth/allowlist';
 import { DashboardClient } from '@/components/dashboard/dashboard-client';
+
+// Saludo real por hora/fecha de Guatemala (UTC-6 fija) — antes era un
+// texto quemado del prototipo ("Martes 19 de mayo, 2026").
+function saludoGuatemala(dueno: string) {
+  const gt = new Date(Date.now() - 6 * 3600_000);
+  const h = gt.getUTCHours();
+  const saludo = h < 12 ? 'Buenos días' : h < 19 ? 'Buenas tardes' : 'Buenas noches';
+  const dias = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+  const meses = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  const dia = gt.getUTCDate();
+  const ultimoDia = new Date(gt.getUTCFullYear(), gt.getUTCMonth() + 1, 0).getDate();
+  const fecha = `${dias[gt.getUTCDay()]} ${dia} de ${meses[gt.getUTCMonth()]}, ${gt.getUTCFullYear()} · Día ${dia} del mes · ${ultimoDia - dia} día${ultimoDia - dia === 1 ? '' : 's'} para el cierre`;
+  return { saludo, nombre: dueno, fecha };
+}
 
 export const revalidate = 60;
 
@@ -20,7 +36,7 @@ export default async function DashboardPage() {
 
   const [facturas, clientes] = await Promise.all([getFacturas(), getClientes()]);
 
-  const [kpis, lineStats, aging, topDeudores, analisis, deudasKpis, pendientesKpis, ncsKpis] = await Promise.all([
+  const [kpis, lineStats, aging, topDeudores, analisis, deudasKpis, pendientesKpis, ncsKpis, evolucion] = await Promise.all([
     getDashboardKPIs(facturas),
     getLineStats(facturas),
     getAging(facturas),
@@ -29,6 +45,7 @@ export default async function DashboardPage() {
     getKPIsDeudas(),
     getKPIsPagosPendientes(),   // F-038.4
     getKPIsNotasCredito(),      // F-045
+    getEvolucion12m(facturas),  // FIX-DASHBOARD-ANALITICA-HIT: antes mock MONTHLY
   ]);
 
   // F-045: alerta NCs pendientes solo a admin (es el único que las aprueba).
@@ -60,6 +77,10 @@ export default async function DashboardPage() {
     .sort((a, b) => b.montoPromedio - a.montoPromedio)
     .slice(0, 8);
 
+  // FIX-DASHBOARD-ANALITICA-HIT: alertas EN VIVO desde la base del deploy
+  // (antes: AI_INSIGHTS mock con clientes/líneas de Golden).
+  const alertas = construirAlertasVivas({ kpis, lineStats, aging, topDeudores, clientesRiesgo });
+
   return (
     <DashboardClient
       kpis={kpis}
@@ -71,6 +92,9 @@ export default async function DashboardPage() {
       pendientesKpis={pendientesKpis}
       esOperativo={esOperativo}
       alertaNCsPendientes={alertaNCsPendientes}
+      evolucion={evolucion}
+      alertas={alertas}
+      saludo={saludoGuatemala(empresaConfig().dueno)}
     />
   );
 }

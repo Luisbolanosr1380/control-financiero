@@ -6,15 +6,15 @@ import { InfoTooltip } from '@/components/common/info-tooltip';
 import { BannerOperativo } from '@/components/dashboard/banner-operativo';
 import { Q } from '@/lib/utils';
 import { explicar } from '@/lib/explicaciones';
-import { LINES, MONTHLY, AI_INSIGHTS } from '@/lib/mock-data';
-import type { LineStats, AgingEntry, MonthlyEntry, AIInsight } from '@/lib/types';
-import type { DashboardKPIs, TopDeudor } from '@/lib/db/kpis';
+import { colorServicio } from '@/lib/db/lineas-negocio';
+import type { AgingEntry, MonthlyEntry, AIInsight } from '@/lib/types';
+import type { DashboardKPIs, TopDeudor, LineStatsCC } from '@/lib/db/kpis';
 import type { AnalisisCliente, ClienteClasificacion, Tendencia } from '@/lib/db/clientes-analisis';
 import type { KPIsPagosPendientes } from '@/lib/db/planillas';
 
 interface Props {
   kpis: DashboardKPIs;
-  lineStats: LineStats[];
+  lineStats: LineStatsCC[];
   aging: AgingEntry[];
   topDeudores: TopDeudor[];
   clientesRiesgo: AnalisisCliente[];
@@ -27,6 +27,12 @@ interface Props {
   esOperativo?: boolean;
   /** F-045: NCs pendientes de aprobación — solo se pasa si el usuario es admin. */
   alertaNCsPendientes?: { cantidad: number; monto: number } | null;
+  /** FIX-DASHBOARD-ANALITICA-HIT: serie real facturado/cobrado 12m (antes mock MONTHLY). */
+  evolucion: MonthlyEntry[];
+  /** FIX-DASHBOARD-ANALITICA-HIT: alertas calculadas en vivo (antes mock AI_INSIGHTS). */
+  alertas: AIInsight[];
+  /** Saludo real por deploy: dueño de la config + fecha de Guatemala. */
+  saludo: { saludo: string; nombre: string; fecha: string };
 }
 
 const RIESGO_BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
@@ -44,7 +50,7 @@ function TendenciaIcon({ t }: { t: Tendencia }) {
   return <span style={{ display: 'inline-block', width: 9, height: 2, background: 'var(--ink-4)', borderRadius: 1 }} />;
 }
 
-export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo, alertaDeudasVencidas, pendientesKpis, esOperativo, alertaNCsPendientes }: Props) {
+export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesRiesgo, alertaDeudasVencidas, pendientesKpis, esOperativo, alertaNCsPendientes, evolucion, alertas, saludo }: Props) {
   const router = useRouter();
 
   const agingTotal = aging.reduce((s, b) => s + b.amount, 0);
@@ -111,8 +117,8 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
       {/* Header / saludo */}
       <div className="page-header">
         <div>
-          <h1 className="page-title">Buenos días, <em>Stark</em>.</h1>
-          <div className="page-subtitle">Martes 19 de mayo, 2026 · Día 14 del cierre · 11 días para el corte</div>
+          <h1 className="page-title">{saludo.saludo}, <em>{saludo.nombre}</em>.</h1>
+          <div className="page-subtitle">{saludo.fecha}</div>
         </div>
         <div className="page-actions">
           <button className="btn btn-secondary"><I.Refresh size={13} /> Sincronizar</button>
@@ -204,19 +210,21 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
           <div className="card-head">
             <div className="card-title">Líneas de negocio<InfoTooltip text={explicar.lineasNegocio()} /></div>
             <div className="card-actions">
-              <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>4 líneas activas</span>
+              <span style={{ fontSize: 11, color: 'var(--ink-4)', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                {lineStats.filter(l => l.ccId !== null).length} líneas activas
+              </span>
             </div>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)' }}>
-            {lineStats.map((ln) => <LineCard key={ln.line} ln={ln} />)}
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.min(Math.max(lineStats.length, 1), 4)}, 1fr)` }}>
+            {lineStats.map((ln) => <LineCard key={ln.ccId ?? 'otros'} ln={ln} />)}
           </div>
         </div>
 
-        {/* Alertas — TODO F-009: insights reales (hoy mock) */}
+        {/* Alertas calculadas en vivo desde la base del deploy */}
         <div className="card">
           <div className="card-head">
             <div className="card-title">Alertas activas<InfoTooltip text={explicar.alertasAi()} /></div>
-            <span className="badge badge-wine">3</span>
+            {alertas.length > 0 && <span className="badge badge-wine">{alertas.length}</span>}
             <div className="card-actions">
               <button className="btn btn-ghost" style={{ padding: '3px 8px', fontSize: 11 }} onClick={() => router.push('/ai')}>
                 Ver todas <I.Chevron size={11} />
@@ -224,16 +232,22 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
             </div>
           </div>
           <div style={{ padding: 0 }}>
-            {AI_INSIGHTS.map((al, i) => (
-              <AlertRow key={al.id} alert={al} last={i === AI_INSIGHTS.length - 1} />
-            ))}
+            {alertas.length === 0 ? (
+              <div style={{ padding: '26px 20px', textAlign: 'center', fontSize: 12.5, color: 'var(--ink-4)' }}>
+                Sin alertas activas — la cartera está bajo control.
+              </div>
+            ) : (
+              alertas.map((al, i) => (
+                <AlertRow key={al.id} alert={al} last={i === alertas.length - 1} />
+              ))
+            )}
           </div>
         </div>
       </div>
 
       {/* Chart + Aging */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 460px', gap: 20, marginBottom: 22 }}>
-        {/* Evolución — TODO F-002: agrupar por mes desde facturas (hoy mock) */}
+        {/* Evolución real: facturado por mes de emisión, cobrado por mes de cobro */}
         <div className="card">
           <div className="card-head">
             <div className="card-title">Evolución 12 meses<InfoTooltip text={explicar.evolucion12m()} /></div>
@@ -245,7 +259,7 @@ export function DashboardClient({ kpis, lineStats, aging, topDeudores, clientesR
             </div>
           </div>
           <div className="card-pad">
-            <TrendChart data={MONTHLY} />
+            <TrendChart data={evolucion} />
           </div>
         </div>
 
@@ -402,14 +416,15 @@ function Kpi({ label, value, format = 'currency', tone, note, info }: KpiProps) 
   );
 }
 
-function LineCard({ ln }: { ln: LineStats }) {
-  const lineMeta = LINES[ln.line];
-  const healthDot = { good: 'var(--olive)', warn: 'var(--amber)', bad: 'var(--wine)' }[ln.health];
-  const healthLabel = { good: 'Saludable', warn: 'Riesgo', bad: 'Crítico' }[ln.health];
+function LineCard({ ln }: { ln: LineStatsCC }) {
+  const color = colorServicio(ln.name);
+  const sinMovimiento = ln.facturado === 0 && ln.count === 0;
+  const healthDot = sinMovimiento ? 'var(--ink-4)' : { good: 'var(--olive)', warn: 'var(--amber)', bad: 'var(--wine)' }[ln.health];
+  const healthLabel = sinMovimiento ? 'Sin movimiento' : { good: 'Saludable', warn: 'Riesgo', bad: 'Crítico' }[ln.health];
   return (
     <div style={{ padding: 18, borderRight: '1px solid var(--line-3)', position: 'relative' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-        <span className={'dot ' + lineMeta.dot}></span>
+        <span className="dot" style={{ background: color }}></span>
         <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{ln.name}</span>
         <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--ink-4)', fontFamily: 'var(--mono)' }}>{ln.count}</span>
       </div>
@@ -460,7 +475,8 @@ function AlertRow({ alert, last }: { alert: AIInsight; last: boolean }) {
 
 function TrendChart({ data }: { data: MonthlyEntry[] }) {
   const W = 720, H = 220, P = { l: 40, r: 12, t: 16, b: 28 };
-  const maxV = Math.max(...data.flatMap(d => [d.fact, d.cob])) * 1.05;
+  // Base vacía → serie en Q0: evitar división por cero (escala mínima Q1K).
+  const maxV = Math.max(Math.max(...data.flatMap(d => [d.fact, d.cob])), 1000) * 1.05;
   const xs = (i: number) => P.l + ((W - P.l - P.r) * i) / (data.length - 1);
   const ys = (v: number) => H - P.b - ((H - P.t - P.b) * v) / maxV;
   const pathFact = data.map((d, i) => `${i === 0 ? 'M' : 'L'} ${xs(i)} ${ys(d.fact)}`).join(' ');

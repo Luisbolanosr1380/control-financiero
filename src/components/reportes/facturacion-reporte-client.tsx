@@ -28,6 +28,7 @@ import {
   reportePorMes, rangoAnterior, type EstadoFiltroReporte,
 } from '@/lib/facturacion/reporte';
 import { construirCsvReporte, nombreArchivoExport } from '@/lib/facturacion/reporte-csv';
+import { colorServicio } from '@/lib/db/lineas-negocio';
 // F-EXPORT-CONFIG: selector de período compartido con el export de cobros.
 import { PeriodoSelector, rangoDePreset, type PresetPeriodo, type RangoPeriodo } from '@/components/common/periodo-selector';
 
@@ -47,14 +48,9 @@ const VISTAS: Array<{ key: Vista; label: string }> = [
   { key: 'detalle', label: 'Detalle' },
 ];
 
-// Mismos colores de serie que la analítica (color sigue a la entidad).
-const CC_COLOR: Record<string, string> = {
-  'Poligrafia':      'var(--line-poligrafo)',
-  'Poligrafia Xela': 'var(--line-poligrafo)',
-  'Socioeconomicos': 'var(--line-socio)',
-  'TalentTrackAI':   'var(--line-talenttrack)',
-  'Administrativo':  'var(--line-ventas)',
-};
+// Mismos colores de serie que la analítica (helper central: nombres
+// históricos conservan su color; líneas nuevas, hash estable).
+const CC_COLOR = (nombre: string): string => colorServicio(nombre);
 
 const ESTADO_BADGE: Record<string, { cls: string; text: string }> = {
   cobrado:         { cls: 'badge-olive',   text: 'Cobrada' },
@@ -383,7 +379,7 @@ export function FacturacionReporteClient({ facturas, clientes, centros }: Props)
                         <td>
                           <span style={{
                             display: 'inline-block', width: 8, height: 8, borderRadius: 2, marginRight: 8,
-                            background: CC_COLOR[nomCC(g.key)] ?? 'var(--ink-4)',
+                            background: CC_COLOR(nomCC(g.key)),
                           }} />
                           {nomCC(g.key)}
                         </td>
@@ -415,7 +411,7 @@ export function FacturacionReporteClient({ facturas, clientes, centros }: Props)
                         <Tooltip formatter={(v) => Q(Number(v))} contentStyle={tooltipStyle} />
                         <Bar dataKey="monto" radius={[2, 2, 0, 0]} maxBarSize={48}>
                           {porCC.map((g, i) => (
-                            <Cell key={i} fill={CC_COLOR[nomCC(g.key)] ?? 'var(--ink-4)'} />
+                            <Cell key={i} fill={CC_COLOR(nomCC(g.key))} />
                           ))}
                         </Bar>
                       </BarChart>

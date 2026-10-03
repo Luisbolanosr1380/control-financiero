@@ -6,8 +6,8 @@
 
 import { getFacturas } from './facturas';
 import { getClientes } from './clientes';
-import { LINES } from '../mock-data';
-import type { Invoice, Customer, LineKey, LineStats, AgingEntry, HealthStatus } from '../types';
+import { getCentrosCosto } from './centros';
+import type { Invoice, Customer, AgingEntry, HealthStatus } from '../types';
 
 // F-032: usar estadoBruto directo para excluir anuladas Y refacturadas
 // (antes solo se excluían anuladas vía `status !== 'anulado'`, pero las
@@ -82,41 +82,80 @@ function healthFor(tasa: number): HealthStatus {
   return 'bad';
 }
 
-export async function getLineStats(facturas?: Invoice[]): Promise<LineStats[]> {
-  const activas = (facturas ?? await getFacturas()).filter(isActiva);
+/**
+ * FIX-DASHBOARD-ANALITICA-HIT: las líneas del widget "Líneas de negocio"
+ * se derivan de los centros_costo ACTIVOS de la base del deploy (en
+ * Golden sus 4 históricas; en HIT sus 6). El monto se atribuye por LÍNEA
+ * de factura al centro real (centroCostoId); lo que no mapea a un CC
+ * activo cae al bucket "Otros" (solo aparece si tiene movimiento).
+ */
+export interface LineStatsCC {
+  ccId: string | null;          // null = bucket "Otros"
+  name: string;
+  count: number;
+  facturado: number;
+  cobrado: number;
+  porCobrar: number;
+  tasa: number;
+  health: HealthStatus;
+}
 
-  const order: LineKey[] = ['poligrafo', 'socio', 'talenttrack', 'administrativo'];
-  const acc: Record<LineKey, { facturado: number; porCobrar: number; count: number }> = {
-    poligrafo:      { facturado: 0, porCobrar: 0, count: 0 },
-    socio:          { facturado: 0, porCobrar: 0, count: 0 },
-    talenttrack:    { facturado: 0, porCobrar: 0, count: 0 },
-    administrativo: { facturado: 0, porCobrar: 0, count: 0 },
+export async function getLineStats(facturas?: Invoice[]): Promise<LineStatsCC[]> {
+  const [all, centros] = await Promise.all([
+    facturas ? Promise.resolve(facturas) : getFacturas(),
+    getCentrosCosto(),
+  ]);
+  const activas = all.filter(isActiva);
+  const servicios = centros
+    .filter(c => c.activo && c.nombre.trim())
+    .map(c => ({ id: c.id, nombre: c.nombre.trim() }));
+
+  const acc = new Map<string, { facturado: number; porCobrar: number; count: number }>();
+  const bucket = (key: string) => {
+    let b = acc.get(key);
+    if (!b) { b = { facturado: 0, porCobrar: 0, count: 0 }; acc.set(key, b); }
+    return b;
   };
+  const activosSet = new Set(servicios.map(s => s.id));
 
-  // Atribuir por LÍNEA, no por inv.line (una factura puede ser mixta)
-  for (const inv of activas) {
-    for (const l of inv.lineas) {
-      acc[l.line].facturado += l.amount;
-      acc[l.line].porCobrar += l.balance;
-      acc[l.line].count += 1;
+  // Alias histórico (mismo criterio que la analítica): 'Poligrafia Xela'
+  // (CC inactivo, oficina cerrada) suma a 'Poligrafia' cuando esa línea
+  // sigue activa — antes el mapeo fijo hacía exactamente eso.
+  const idActivoPorNombre = new Map(servicios.map(s => [s.nombre, s.id]));
+  const redirigir = new Map<string, string>();
+  for (const c of centros) {
+    if (c.activo) continue;
+    if (c.nombre.trim() === 'Poligrafia Xela' && idActivoPorNombre.has('Poligrafia')) {
+      redirigir.set(c.id, idActivoPorNombre.get('Poligrafia')!);
     }
   }
 
-  return order.map(line => {
-    const a = acc[line];
+  // Atribuir por LÍNEA, no por inv.line (una factura puede ser mixta).
+  for (const inv of activas) {
+    for (const l of inv.lineas) {
+      const ccId = l.centroCostoId ? (redirigir.get(l.centroCostoId) ?? l.centroCostoId) : undefined;
+      const key = ccId && activosSet.has(ccId) ? ccId : 'otros';
+      const b = bucket(key);
+      b.facturado += l.amount;
+      b.porCobrar += l.balance;
+      b.count += 1;
+    }
+  }
+
+  const fila = (ccId: string | null, name: string, a: { facturado: number; porCobrar: number; count: number }): LineStatsCC => {
     const cobrado = a.facturado - a.porCobrar;
     const tasa = a.facturado > 0 ? (cobrado / a.facturado) * 100 : 0;
-    return {
-      line,
-      name:      LINES[line].name,
-      count:     a.count,
-      facturado: a.facturado,
-      cobrado,
-      porCobrar: a.porCobrar,
-      tasa,
-      health:    healthFor(tasa),
-    };
-  });
+    return { ccId, name, count: a.count, facturado: a.facturado, cobrado, porCobrar: a.porCobrar, tasa, health: healthFor(tasa) };
+  };
+
+  // Todos los CCs activos SIEMPRE aparecen (aunque estén en Q0 — base nueva);
+  // "Otros" solo si acumuló algo.
+  const vacio = { facturado: 0, porCobrar: 0, count: 0 };
+  const out = servicios.map(sv => fila(sv.id, sv.nombre, acc.get(sv.id) ?? vacio));
+  out.sort((a, b) => b.facturado - a.facturado || a.name.localeCompare(b.name));
+  const otros = acc.get('otros');
+  if (otros && (otros.facturado !== 0 || otros.count > 0)) out.push(fila(null, 'Otros', otros));
+  return out;
 }
 
 export async function getAging(facturas?: Invoice[]): Promise<AgingEntry[]> {

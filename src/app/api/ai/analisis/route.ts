@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { currentUser } from '@clerk/nextjs/server';
 import { getAnaliticaIngresos } from '@/lib/db/analitica';
 import { getAnalisisClientes } from '@/lib/db/clientes-analisis';
+import { getServiciosActivos, describirLineasParaPrompt } from '@/lib/db/lineas-negocio';
 import { guardarAnalisis, calcularCostoUSD } from '@/lib/db/ai-analisis';
 import { Q } from '@/lib/utils';
 import { getRolUsuario } from '@/lib/auth/allowlist';
@@ -70,11 +71,15 @@ export async function POST() {
 
   try {
     const t0 = Date.now();
-    const [analitica, retencion] = await Promise.all([
+    const [analitica, retencion, servicios] = await Promise.all([
       getAnaliticaIngresos(),
       getAnalisisClientes(),
+      getServiciosActivos().catch(() => []),
     ]);
     const tCalc = Date.now() - t0;
+    // FIX-DASHBOARD-ANALITICA-HIT: las líneas estratégicas y su naturaleza
+    // vienen de los CCs activos de la base del deploy (antes: Golden quemado).
+    const lineasPrompt = describirLineasParaPrompt(servicios);
 
     // ===== Serializar los insights del sistema (números confiables) =====
     const insights = serializarInsights(analitica, retencion);
@@ -95,13 +100,13 @@ REGLAS ESTRICTAS:
 JERARQUÍA DE LA CONCLUSIÓN (clave para el diagnóstico):
 - ANTES de redactar, mirá la variación por servicio en su conjunto. Si hay líneas estratégicas creciendo y otras cayendo, el TITULAR es que el problema está LOCALIZADO en un servicio específico, NO que el negocio entero cae. Decilo así en la PRIMERA FRASE del diagnóstico.
 - Si todas las líneas estratégicas caen, recién ahí el titular es una caída general.
-- Líneas ESTRATÉGICAS: Poligrafia, Socioeconomicos, TalentTrackAI (y Administrativo si tiene actividad). Estas se mencionan por nombre y se comparan entre sí.
+- Líneas ESTRATÉGICAS = las líneas activas de ESTA empresa (abajo). Estas se mencionan por nombre y se comparan entre sí.
 - "Otros" = ingresos SIN CLASIFICAR (categoría residual de centros pequeños o sin asignar). NO la pongas al mismo nivel ni junto a las estratégicas. Si tiene una caída/crecimiento relevante, mencionalo APARTE como observación, no como protagonista del diagnóstico.
 
-NATURALEZA DE LOS SERVICIOS (crítico para no sobre-contar fugas):
-- TalentTrackAI = reclutamiento, POR PROYECTO/episódico. Un cliente pide candidatos hoy (Q25-30K típico) y puede pasar 3-4 meses sin pedir. Eso es NORMAL, no es fuga. No asumas que un cliente de TalentTrack "se fue" por no facturar unos meses.
-- Polígrafo y Socioeconómico = RECURRENTES (mes a mes). Ahí dejar de facturar SÍ es fuga real y hay que accionar.
-- Administrativo = por proyecto / interno; tratalo como TalentTrack.
+NATURALEZA DE LOS SERVICIOS (crítico para no sobre-contar fugas; derivada de la base de esta empresa):
+${lineasPrompt}
+- En las líneas POR PROYECTO, no asumas que un cliente "se fue" por no facturar unos meses — es su ciclo normal.
+- En las líneas RECURRENTES, dejar de facturar SÍ es fuga real y hay que accionar.
 - Cuando un cliente aparece como FUGA o EN RIESGO en los insights, mirá su "naturalezaDominante": si es 'proyecto', NO lo trates como fuga (es episódico). Si es 'recurrente', sí es fuga real.
 
 CONTEXTO COMERCIAL POR CLIENTE:

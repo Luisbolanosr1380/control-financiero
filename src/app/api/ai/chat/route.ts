@@ -9,6 +9,7 @@ import { tienePermiso, getLimiteAuros } from '@/lib/auth/permissions';
 import { registrarUsoAuros, getConsumoMensual } from '@/lib/db/uso-auros';
 import { partesFechaHoy } from '@/lib/utils/fechas';
 import { empresaConfig } from '@/lib/config/empresa';
+import { getServiciosActivos, describirLineasParaPrompt } from '@/lib/db/lineas-negocio';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
@@ -38,7 +39,7 @@ Trimestre: Q${trimestre} ${partes.anio}.
 Cuando hables de fechas con el usuario, siempre en zona Guatemala — nunca menciones UTC.`;
 }
 
-function buildSystemPrompt(hoy: Date = new Date()): string {
+function buildSystemPrompt(hoy: Date = new Date(), lineasPrompt = ''): string {
   // MULTI-EMPRESA 1-D: identidad de la empresa desde la config del deploy.
   const emp = empresaConfig();
   return `Sos Auros, el asistente financiero de ${emp.dueno} en ${emp.nombre} (${emp.descripcion}). Hablás con el DUEÑO, que NO es financiero. Hablás en primera persona como Auros cuando es natural ("Te recomiendo...", "Mirando tus datos..."), pero sin saludar ni firmar cada respuesta. Sos directo, preciso y conciso. Español, "vos", sin jerga, oraciones cortas. NUNCA inventás números — siempre los pedís a las funciones.
@@ -61,9 +62,8 @@ REGLAS GENERALES:
 - Montos siempre con prefijo "Q" y separador de miles con coma (ej: Q184,000 — NUNCA "184Kq" ni "Q184K").
 - Respuestas cortas (3-6 frases). Si el usuario pide detalle, lo expandís.
 
-CONOCIMIENTO DE NEGOCIO:
-- Polígrafo y Socioeconómicos son RECURRENTES (mes a mes). Si un cliente recurrente deja de facturar 2+ meses, es señal real.
-- TalentTrackAI y Administrativo son POR PROYECTO/episódicos. Un cliente puede pasar 3-4 meses sin pedir y es NORMAL, NO fuga.
+CONOCIMIENTO DE NEGOCIO (líneas derivadas de la base de ESTA empresa — nunca asumas las de otra):
+${lineasPrompt}
 - Cuando hables de un cliente "en riesgo" o "perdido", revisá su naturaleza primero (getAnalisisClienteDetalle te la da).
 
 REGLAS DE DIAGNÓSTICO (heredadas del análisis semanal):
@@ -186,8 +186,8 @@ PROACTIVIDAD CON 15+ DÍAS (F-038.4.bis):
 - 5-14 días amarilla/naranja: mencionar SOLO si pregunta sobre planilla, no proactivo.
 
 PLANILLA POR CENTRO DE COSTO (F-042):
-- Los empleados están asignados a un Centro de Costo (Polígrafo, Socioeconómico,
-  TalentTrack, Ventas, Administración).
+- Los empleados están asignados a un Centro de Costo (las líneas de negocio
+  de esta empresa, listadas arriba).
 - El costo de planilla por centro de costo es información CRÍTICA CFO porque
   permite calcular el margen real por línea: facturación CC / planilla CC.
 - Cuando el usuario pregunte "cuánto cuesta la planilla de X" debe responder con
@@ -317,18 +317,16 @@ TOP CLIENTES (F-BF-002b/c):
   '2026-04-01', '2026-04-30').
 
 LÍNEAS DE NEGOCIO (centros de costo, F-BF-002d):
-- Las facturas pueden venir de distintas líneas: Poligrafia,
-  Socioeconomicos, TalentTrackAI, y otras activas del momento.
-- Si el usuario menciona una o más líneas (polígrafos, socio,
-  socioeconómicos, talenttrack, tt, ventas, etc.), pasá el
-  parámetro lineas[] a topClientes / facturadoCliente. La tool
-  matchea por nombre parcial sin acentos.
-- Si pidió VARIAS líneas (ej. "top en socio y polígrafos"):
+- Las facturas pueden venir de las distintas líneas activas de ESTA
+  empresa (listadas en CONOCIMIENTO DE NEGOCIO, arriba).
+- Si el usuario menciona una o más líneas por nombre (completo o
+  parcial), pasá el parámetro lineas[] a topClientes /
+  facturadoCliente. La tool matchea por nombre parcial sin acentos.
+- Si pidió VARIAS líneas (ej. "top en dos líneas"):
   · La tool devuelve UN RANKING POR CADA línea, no mezclado.
   · Presentá los rankings POR SEPARADO con el total de cada línea
-    al inicio: "Socioeconomicos (Q128,800): 1. Génesis Q43,800
-    (34%) · …  /  Poligrafia (Q83,800): 1. GTLogistics Q6,800
-    (8%) · …".
+    al inicio: "Línea A (Qtotal): 1. Cliente Qx (y%) · …  /
+    Línea B (Qtotal): 1. Cliente Qx (y%) · …".
   · Después, mirá si ALGÚN cliente aparece en MÁS DE UNA línea
     del set devuelto. Si sí, marcalo al final como oportunidad de
     venta cruzada: "X aparece en ambas líneas — cross-sell".
@@ -349,9 +347,9 @@ ESTADO DE RESULTADOS (F-058):
   neta", "compará abril vs marzo", llamá la tool. SIEMPRE mencioná el modo
   (fiscal/operativo) en la respuesta — el usuario suele no aclararlo y la
   diferencia importa.
-- Si una línea de negocio se menciona (Polígrafos, Socioeconómicos,
-  TalentTrackAI, Administrativo), pasar centroCostoId. El ER por CC
-  sólo incluye partidas con ese CC.
+- Si una línea de negocio se menciona (cualquiera de las activas de
+  esta empresa), pasar centroCostoId. El ER por CC sólo incluye
+  partidas con ese CC.
 - IMPORTANTE: si control.cuadra=false, MARCALO al inicio de la respuesta:
   "ojo, el balance de comprobación no cuadra este mes (Δ=X) — las cifras
   pueden ser inexactas hasta corregir asientos". No silenciar nunca.
@@ -401,19 +399,18 @@ BALANCE GENERAL (F-059):
 - Cifras redondeadas a Q enteros. Sin inventar decimales.
 
 MULTI-EMPRESA (F-051.6 / F-051.7):
-- El grupo opera con varias empresas: Golden Talent (principal), HIT,
-  Poligrafy, BYDSA. La caja única vive en Golden.
-- OBLIGACIONES_RECURRENTES tienen por_cuenta_de: pagos de HIT/Poligrafy
-  son intercompany — salen de la caja de Golden pero NO son gasto de
-  Golden (son CxC contra la otra empresa). Igual cuentan al cash-flow
-  porque la liquidez sale.
-- EMPLEADOS tienen empresa_empleadora: empleados HIT/Poligrafy/BYDSA
-  NO se proyectan en planillaProyectada del flujo (se cuentan via las
-  obligaciones recurrentes intercompany para evitar doble conteo).
+- Este deploy pertenece a ${emp.nombre}${emp.esGrupo ? ' (empresa principal del grupo — su caja puede pagar por cuenta de las hermanas)' : ''}. El grupo tiene otras empresas relacionadas (catálogo empresas_relacionadas de la base).
+- OBLIGACIONES_RECURRENTES tienen por_cuenta_de: un pago hecho por cuenta
+  de OTRA empresa del grupo es intercompany — sale de la caja de esta
+  empresa pero NO es gasto propio (es CxC contra la otra). Igual cuenta
+  al cash-flow porque la liquidez sale.
+- EMPLEADOS tienen empresa_empleadora: empleados de OTRAS empresas del
+  grupo NO se proyectan en planillaProyectada del flujo (se cuentan via
+  las obligaciones recurrentes intercompany para evitar doble conteo).
 - Cuando el usuario pregunte por un empleado/obligación, mencionar la
-  empresa empleadora SOLO si no es Golden Talent (es información
+  empresa empleadora SOLO si no es ${emp.nombre} (es información
   relevante para distinguir gasto propio vs. intercompany).
-- Si preguntan "¿cuánto sale a HIT/Poligrafy?", usar
+- Si preguntan "¿cuánto sale a [otra empresa del grupo]?", usar
   obligacionesRecurrentes y filtrar por empresa.
 
 FACTURAS IN — bandeja de gastos por procesar (F-049):
@@ -568,9 +565,14 @@ export async function POST(req: Request) {
 
   try {
     const t0 = Date.now();
+    // FIX-DASHBOARD-ANALITICA-HIT: las líneas y su naturaleza entran al
+    // prompt desde los CCs activos de la base del deploy (fail-soft).
+    const lineasPrompt = await getServiciosActivos()
+      .then(describirLineasParaPrompt)
+      .catch(() => describirLineasParaPrompt([]));
     const result = await generateText({
       model: google(MODELO),
-      system: buildSystemPrompt(),
+      system: buildSystemPrompt(new Date(), lineasPrompt),
       messages,
       tools: aiTools,
       maxSteps: MAX_STEPS,

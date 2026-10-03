@@ -19,8 +19,31 @@ export interface AnaliticaVariantes {
   proyecto:   AnaliticaIngresos;
 }
 
-export const CENTROS_SERVICIOS = ['Poligrafia', 'Socioeconomicos', 'TalentTrackAI', 'Administrativo'] as const;
+// FIX-DASHBOARD-ANALITICA-HIT: los servicios YA NO son una lista fija de
+// Golden — son los centros de costo ACTIVOS de la base del deploy. "Otros"
+// agrupa lo que no mapea a un CC activo (residual sin clasificar).
 export const OTROS_SERVICIO = 'Otros';
+
+/** Nombres de servicio = CCs activos de la base (orden alfabético estable). */
+function serviciosDeCentros(centros: CentroCosto[]): string[] {
+  return [...new Set(centros.filter(c => c.activo && c.nombre.trim()).map(c => c.nombre.trim()))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * ccId → nombre de servicio. Alias histórico: 'Poligrafia Xela' (oficina
+ * cerrada, CC inactivo en Golden) se reporta como 'Poligrafia' cuando esa
+ * línea existe activa — mismo comportamiento que el mapeo fijo anterior.
+ */
+function construirNameKey(centros: CentroCosto[], servicios: string[]): (ccId: string | undefined) => string {
+  const idToName = new Map(centros.map(c => [c.id, c.nombre.trim()]));
+  const activos = new Set(servicios);
+  return (ccId: string | undefined): string => {
+    const n = ccId ? idToName.get(ccId) ?? null : null;
+    if (n === 'Poligrafia Xela' && activos.has('Poligrafia')) return 'Poligrafia';
+    return n && activos.has(n) ? n : OTROS_SERVICIO;
+  };
+}
 
 const MS_PER_MONTH = 30 * 24 * 60 * 60 * 1000;
 const ymKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
@@ -103,16 +126,10 @@ function computarAnalitica(
   centros: CentroCosto[],
   filtroNaturaleza: FiltroNaturaleza,
 ): AnaliticaIngresos {
-  // Centro id → bucket de servicio (los 4 spec'd + Otros)
-  // Poligrafia Xela (oficina cerrada) → mismo bucket que Poligrafia.
-  const idToName = new Map(centros.map(c => [c.id, c.nombre]));
-  const SERVICIOS: string[] = [...CENTROS_SERVICIOS, OTROS_SERVICIO];
-  const includeSet = new Set<string>(CENTROS_SERVICIOS);
-  const nameKey = (ccId: string | undefined): string => {
-    const n = ccId ? idToName.get(ccId) ?? null : null;
-    if (n === 'Poligrafia Xela') return 'Poligrafia';   // mismo servicio, oficina cerrada
-    return n && includeSet.has(n) ? n : OTROS_SERVICIO;
-  };
+  // Centro id → bucket de servicio: CCs ACTIVOS de la base + Otros.
+  const serviciosBase = serviciosDeCentros(centros);
+  const SERVICIOS: string[] = [...serviciosBase, OTROS_SERVICIO];
+  const nameKey = construirNameKey(centros, serviciosBase);
   const nombreCliente = new Map(clientes.map(c => [c.id, c.name]));
 
   // Ventana: 12 buckets, este mes y los 11 anteriores
@@ -301,8 +318,15 @@ function computarAnalitica(
     clientes80: sortedClientes.slice(0, clientes80),
   };
 
+  // Filtros/leyendas: líneas con más facturación primero; Otros al final.
+  const totalServ = (s: string) => serieMensualPorServicio[s].reduce((acc, x) => acc + x.monto, 0);
+  const serviciosOrdenados = [
+    ...serviciosBase.slice().sort((a, b) => totalServ(b) - totalServ(a) || a.localeCompare(b)),
+    OTROS_SERVICIO,
+  ];
+
   return {
-    servicios: SERVICIOS,
+    servicios: serviciosOrdenados,
     serieMensualTotal,
     serieMensualPorServicio,
     mesQuiebre,
@@ -317,9 +341,8 @@ function computarAnalitica(
 
 // ===========================================================================
 // Facturado por rango de fechas (filtro por FECHA_EMISION), desglosado en los
-// mismos servicios que usa getAnaliticaIngresos: Poligrafia, Socioeconomicos,
-// TalentTrackAI, Administrativo, Otros. Una factura mixta se reparte por
-// línea según centroCostoId.
+// mismos servicios que usa getAnaliticaIngresos (CCs activos de la base +
+// Otros). Una factura mixta se reparte por línea según centroCostoId.
 // ===========================================================================
 
 export interface FacturadoServicio {
@@ -335,14 +358,9 @@ export interface FacturadoPorRango {
 
 export async function getFacturadoPorRango(desde: string, hasta: string): Promise<FacturadoPorRango> {
   const [facturas, centros] = await Promise.all([getFacturas(), getCentrosCosto()]);
-  const idToName = new Map(centros.map(c => [c.id, c.nombre]));
-  const includeSet = new Set<string>(CENTROS_SERVICIOS);
-  const SERVICIOS: string[] = [...CENTROS_SERVICIOS, OTROS_SERVICIO];
-  const nameKey = (ccId: string | undefined): string => {
-    const n = ccId ? idToName.get(ccId) ?? null : null;
-    if (n === 'Poligrafia Xela') return 'Poligrafia';
-    return n && includeSet.has(n) ? n : OTROS_SERVICIO;
-  };
+  const serviciosBase = serviciosDeCentros(centros);
+  const SERVICIOS: string[] = [...serviciosBase, OTROS_SERVICIO];
+  const nameKey = construirNameKey(centros, serviciosBase);
 
   const en = (f: string | undefined) => !!f && f.slice(0, 10) >= desde && f.slice(0, 10) <= hasta;
   const activas = facturas.filter(i => i.status !== 'anulado' && en(i.fechaEmision));

@@ -5,6 +5,7 @@ import { getClientes } from '@/lib/db/clientes';
 import { getBancosActivos } from '@/lib/db/bancos';
 import { getSaldoPendiente, getCobrosDeFactura } from '@/lib/db/cobros';
 import { getNotasCreditoFactura } from '@/lib/db/notas-credito';
+import { getCentrosCosto } from '@/lib/db/centros';
 import { getRolUsuario } from '@/lib/auth/allowlist';
 import { FacturaDetalle } from '@/components/facturas/factura-detalle';
 import { I } from '@/components/common/icons';
@@ -35,13 +36,15 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
   const email = user?.emailAddresses?.[0]?.emailAddress ?? '';
   const rol = getRolUsuario(email);
 
-  const [clientes, bancos, saldoInfo, cobrosFactura, notasCredito] = await Promise.all([
+  const [clientes, bancos, saldoInfo, cobrosFactura, notasCredito, centros] = await Promise.all([
     getClientes(),
     getBancosActivos(),
     getSaldoPendiente(factura.noFactura),
     getCobrosDeFactura(factura.noFactura),
     getNotasCreditoFactura(factura.id),
+    getCentrosCosto(),
   ]);
+  const nombresCC = Object.fromEntries(centros.map(c => [c.id, c.nombre.trim()]));
 
   const cliente = clientes.find(c => c.id === factura.custId);
   const saldoPendiente = saldoInfo?.saldoPendiente ?? factura.balance;
@@ -55,6 +58,7 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
       cobros={cobrosFactura}
       notasCredito={notasCredito}
       esAdmin={rol === 'admin'}
+      nombresCC={nombresCC}
     />
   );
 }
