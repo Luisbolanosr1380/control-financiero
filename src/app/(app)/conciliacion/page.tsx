@@ -1,6 +1,8 @@
 import { exigirPagina } from '@/lib/auth/guard';
 import { getBancosConciliacion, getCuentasAjuste, getDatosConciliacion } from '@/lib/db/conciliacion';
-import { rangoDePreset } from '@/components/common/periodo-selector';
+// Server component: importar el helper del módulo server-safe, NUNCA de
+// periodo-selector.tsx ('use client') — eso lanzaba 500 en producción.
+import { rangoDePreset } from '@/components/common/periodo-rango';
 import { ConciliacionClient } from '@/components/conciliacion/conciliacion-client';
 
 export const dynamic = 'force-dynamic';
