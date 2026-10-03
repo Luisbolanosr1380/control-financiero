@@ -72,12 +72,34 @@ const ok = (c: boolean, m: string) => { if (c) { pass++; console.log(`  🟢 ${m
       return (t as { jwt?: string }).jwt ?? String(t);
     };
 
+    // Pedir como navegador: así un fallo de AUTENTICACIÓN en el middleware de
+    // Clerk se ve como redirect a sign-in/handshake (3xx) y no como un 404
+    // indistinguible de un not-found de la app. El JWT recién acuñado puede
+    // caer fuera de la tolerancia de reloj del edge (nbf): breve espera y, solo
+    // ante 3xx, reintento con token fresco. Un 404/500 de la app NO se reintenta.
+    const pedir = async (ruta: string) => {
+      for (let intento = 1; intento <= 3; intento++) {
+        const jwt = await tokenSesion();
+        await new Promise(r => setTimeout(r, 1500));
+        const res = await fetch(`${BASE}${ruta}`, {
+          redirect: 'manual',
+          headers: {
+            Accept: 'text/html,application/xhtml+xml',
+            'User-Agent': 'Mozilla/5.0 smoke-render',
+            Cookie: `__session=${jwt}; __client_uat=${Math.floor(Date.now() / 1000)}; __clerk_db_jwt=${db.token ?? ''}`,
+          },
+        });
+        if (res.status >= 300 && res.status < 400 && intento < 3) {
+          console.log(`  · ${ruta}: ${res.status} → ${res.headers.get('location')} (autenticación; reintento ${intento})`);
+          continue;
+        }
+        return res;
+      }
+      throw new Error('inalcanzable');
+    };
+
     for (const ruta of RUTAS) {
-      const jwt = await tokenSesion();
-      const res = await fetch(`${BASE}${ruta}`, {
-        redirect: 'manual',
-        headers: { Cookie: `__session=${jwt}; __client_uat=${Math.floor(Date.now() / 1000)}; __clerk_db_jwt=${db.token}` },
-      });
+      const res = await pedir(ruta);
       const html = await res.text();
       const digest = html.match(/digest["']?\s*[:=]\s*["']?(\d{6,})/)?.[1];
       const titulo = html.match(/<h1[^>]*>([^<]*)/)?.[1]?.trim();
