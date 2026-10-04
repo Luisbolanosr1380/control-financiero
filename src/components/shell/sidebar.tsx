@@ -60,6 +60,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
     { group: 'Gastos', items: [
       { href: '/gastos',       label: 'Gastos',         icon: 'Expense' },
       { href: '/flujo',        label: 'Centro de Pagos',icon: 'Calendar' },  // F-051
+      ...(p('flujo') ? [{ href: '/tesoreria', label: 'Flujo de caja proyectado', icon: 'TrendUp' as IconName }] : []),   // TESORERÍA
       { href: '/conciliacion', label: 'Conciliación bancaria', icon: 'Bank' },   // reemplaza al placeholder "Bancos"
       { href: '/factoraje',    label: 'Factoraje',      icon: 'Receipt' },        // FACTORAJE
       ...(p('planilla') ? [

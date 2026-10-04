@@ -271,7 +271,7 @@ async function getLineasPorPeriodo(periodoId: string | null): Promise<LineaPlani
 }
 
 export async function getLineasPlanilla(periodoId: string): Promise<LineaPlanilla[]> {
-  if (USE_MOCK || !airtable) return [];
+  if (dataSource('planilla') !== 'supabase' && (USE_MOCK || !airtable)) return [];
   try {
     return await getLineasPorPeriodo(periodoId);
   } catch (err) {

@@ -19,6 +19,7 @@ const ROUTE_CRUMBS: Record<string, string[]> = {
   '/gastos':      ['Gastos'],
   '/conciliacion': ['Gastos', 'Conciliación bancaria'],
   '/factoraje':   ['Gastos', 'Factoraje'],
+  '/tesoreria':   ['Gastos', 'Flujo de caja proyectado'],
   '/planilla':    ['Gastos', 'Planilla'],
   '/deudas':      ['Gastos', 'Deudas'],
   '/asientos':    ['Contabilidad', 'Asientos'],
