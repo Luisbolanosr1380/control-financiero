@@ -20,7 +20,7 @@ interface Props {
 }
 
 type SortKey = 'diasVencidos' | 'saldo' | 'cliente' | 'fechaEmision' | 'fechaVencimiento' | 'pagoPrometido';
-type EstatusFiltro = 'todas' | 'vencidas' | 'por_vencer';
+type EstatusFiltro = 'todas' | 'vencidas' | 'por_vencer' | 'propias' | 'cedidas';
 type GestionFiltro = 'todas' | 'sin_gestion' | 'promesa_vencida';
 
 const BUCKET_COLOR: Record<AgingBucket, string> = {
@@ -111,6 +111,9 @@ export function PendientesCobroClient({ data, gestiones, etiquetasFacturas = {} 
     if (bucket)  rows = rows.filter(f => f.bucket === bucket);
     if (estatus === 'vencidas')   rows = rows.filter(f => f.vencida);
     if (estatus === 'por_vencer') rows = rows.filter(f => !f.vencida);
+    // FACTORAJE: separar cartera propia de la cedida al financiador.
+    if (estatus === 'propias')    rows = rows.filter(f => !f.cedida);
+    if (estatus === 'cedidas')    rows = rows.filter(f => !!f.cedida);
     // F-COBRANZA: "sin gestión reciente" = nunca contactado o hace más de 7 días.
     if (gestionF === 'sin_gestion') rows = rows.filter(f => {
       const g = ultimaGestionDe(f);
@@ -154,7 +157,7 @@ export function PendientesCobroClient({ data, gestiones, etiquetasFacturas = {} 
     const encabezado = [
       'No. Factura', 'Cliente', 'Fecha emisión', 'Mes', 'Total', 'Saldo por cobrar',
       'Días crédito', 'Fecha vencimiento', 'Días vencidos', 'Estatus', 'Tramo', 'Centro de costo',
-      'Pago prometido', 'Última gestión', 'Etiquetas',
+      'Pago prometido', 'Última gestión', 'Etiquetas', 'Cedida a factoraje',
     ];
     const lineas = filas.map(f => [
       f.noFactura, f.cliente, f.fechaEmision, f.mesEmision, f.total.toFixed(2), f.saldo.toFixed(2),
@@ -162,6 +165,7 @@ export function PendientesCobroClient({ data, gestiones, etiquetasFacturas = {} 
       AGING_LABEL[f.bucket], f.centros.join(' + '),
       promesaDe(f)?.fecha ?? '', ultimaGestionDe(f)?.ultimaGestion ?? '',
       (etiquetasFacturas[f.id] ?? []).map(e => e.nombre).join(' | '),
+      f.cedida ? `${f.cedida.financiador} (${f.cedida.montoCedido.toFixed(2)})` : '',
     ].map(csvEscape).join(','));
     // BOM para que Excel abra el UTF-8 con acentos bien.
     const blob = new Blob(['﻿' + [encabezado.join(','), ...lineas].join('\n')], { type: 'text/csv;charset=utf-8' });
@@ -198,6 +202,9 @@ export function PendientesCobroClient({ data, gestiones, etiquetasFacturas = {} 
             Vencido: <span className="num" style={{ color: 'var(--wine)' }}>{Q(data.totales.saldoVencidoQ)}</span> ({data.totales.numVencidas})
             {' · '}
             Por vencer: <span className="num" style={{ color: 'var(--olive)' }}>{Q(data.totales.saldoPorVencerQ)}</span> ({data.totales.numPorVencer})
+            {data.totales.numCedidas > 0 && (
+              <>{' · '}Cedidas a factoraje: <span className="num" style={{ color: '#6d28d9' }}>{Q(data.totales.saldoCedidoQ)}</span> ({data.totales.numCedidas}) — las cobra el financiador, no suman al por cobrar propio</>
+            )}
           </div>
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignSelf: 'flex-start' }}>
@@ -242,6 +249,8 @@ export function PendientesCobroClient({ data, gestiones, etiquetasFacturas = {} 
           <option value="todas">Vencidas y por vencer</option>
           <option value="vencidas">Solo vencidas</option>
           <option value="por_vencer">Solo por vencer</option>
+          <option value="propias">Solo cartera propia (sin cedidas)</option>
+          <option value="cedidas">Solo cedidas a factoraje</option>
         </select>
         <select className="input" style={{ width: 'auto' }} value={gestionF} onChange={e => setGestionF(e.target.value as GestionFiltro)}>
           <option value="todas">Gestión: todas</option>
@@ -290,6 +299,12 @@ export function PendientesCobroClient({ data, gestiones, etiquetasFacturas = {} 
               <tr key={f.id} className="clickable" onClick={() => router.push(`/facturacion/${f.id}`)}>
                 <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>
                   {f.noFactura}{f.esParcial && <span className="badge badge-mute" style={{ marginLeft: 6 }}>parcial</span>}
+                  {f.cedida && (
+                    <span className="badge" style={{ marginLeft: 6, color: '#6d28d9', background: 'rgba(124, 58, 237, 0.10)', fontSize: 10 }}
+                      title={`Cedida a factoraje: ${f.cedida.financiador} · ${Q(f.cedida.montoCedido)} el ${f.cedida.fechaCesion}. Su cobro corresponde al financiador.`}>
+                      Cedida · {f.cedida.financiador}
+                    </span>
+                  )}
                   {(etiquetasFacturas[f.id] ?? []).slice(0, 2).map(e => (
                     <span key={e.id} style={{ marginLeft: 4 }}><ChipEtiqueta etiqueta={e} size={9.5} /></span>
                   ))}

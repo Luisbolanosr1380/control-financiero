@@ -60,8 +60,8 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
     { group: 'Gastos', items: [
       { href: '/gastos',       label: 'Gastos',         icon: 'Expense' },
       { href: '/flujo',        label: 'Centro de Pagos',icon: 'Calendar' },  // F-051
-      { href: '/bancos',       label: 'Bancos',         icon: 'Bank' },
-      { href: '/conciliacion', label: 'Conciliación bancaria', icon: 'Check' as IconName },   // CONCILIACIÓN
+      { href: '/conciliacion', label: 'Conciliación bancaria', icon: 'Bank' },   // reemplaza al placeholder "Bancos"
+      { href: '/factoraje',    label: 'Factoraje',      icon: 'Receipt' },        // FACTORAJE
       ...(p('planilla') ? [
         { href: '/empleados',    label: 'Empleados',      icon: 'Users' as IconName },   // F-037
         { href: '/planillas',    label: 'Planillas',      icon: 'Payroll' as IconName }, // F-038

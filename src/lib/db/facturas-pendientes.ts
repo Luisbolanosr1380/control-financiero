@@ -15,6 +15,7 @@
 import { getFacturas } from './facturas';
 import { getClientes } from './clientes';
 import { getCentrosCosto } from './centros';
+import { getCesionesActivasPorFactura, type CesionActiva } from './factoraje-cesiones';   // sin 'server-only': este módulo entra al bundle del cliente
 import type { AgingBucket, Invoice } from '../types';
 
 export const AGING_BUCKETS: readonly AgingBucket[] = ['corriente', '1-30', '31-60', '61-90', '90+'];
@@ -44,6 +45,9 @@ export interface FacturaPendiente {
   esParcial: boolean;         // ya tuvo cobros (estadoBruto = cobrado_parcial)
   centros: string[];          // nombres de centro de costo de sus líneas
   adjuntoUrl?: string;
+  /** FACTORAJE — control de doble cobro: la factura está cedida a un
+   *  financiador; su cobro le corresponde a él, NO suma al por cobrar propio. */
+  cedida?: CesionActiva;
 }
 
 export interface TramoAging {
@@ -56,12 +60,14 @@ export interface TramoAging {
 export interface PendientesCobro {
   filas: FacturaPendiente[];        // ordenadas por diasVencidos DESC
   totales: {
-    saldoTotalQ: number;
+    saldoTotalQ: number;          // por cobrar PROPIO (excluye cedidas a factoraje)
     numFacturas: number;
     saldoVencidoQ: number;
     numVencidas: number;
     saldoPorVencerQ: number;
     numPorVencer: number;
+    saldoCedidoQ: number;         // FACTORAJE: saldo de facturas cedidas (lo cobra el financiador)
+    numCedidas: number;
   };
   aging: TramoAging[];              // los 5 tramos, siempre presentes
   porCentro: Array<{ centro: string; saldoQ: number; cantidad: number }>;
@@ -87,8 +93,8 @@ function diasVencidosDe(inv: Invoice): number {
 }
 
 export async function getFacturasPendientesCobro(): Promise<PendientesCobro> {
-  const [facturas, clientes, centros] = await Promise.all([
-    getFacturas(), getClientes(), getCentrosCosto(),
+  const [facturas, clientes, centros, cedidas] = await Promise.all([
+    getFacturas(), getClientes(), getCentrosCosto(), getCesionesActivasPorFactura(),
   ]);
   const clientePorId = new Map(clientes.map(c => [c.id, c]));
   const centroPorId = new Map(centros.map(c => [c.id, c.nombre]));
@@ -117,6 +123,7 @@ export async function getFacturasPendientesCobro(): Promise<PendientesCobro> {
         esParcial: f.estadoBruto === 'cobrado_parcial',
         centros: nombresCC,
         adjuntoUrl: f.adjuntoUrl,
+        cedida: cedidas[f.id],
       };
     })
     .sort((a, b) => b.diasVencidos - a.diasVencidos);
@@ -130,8 +137,12 @@ export async function getFacturasPendientesCobro(): Promise<PendientesCobro> {
   const porBucket = new Map(aging.map(t => [t.bucket, t]));
   const porCentroMap = new Map<string, { centro: string; saldoQ: number; cantidad: number }>();
 
-  let saldoTotalQ = 0, saldoVencidoQ = 0, numVencidas = 0;
+  // FACTORAJE (control de doble cobro): las facturas cedidas van APARTE —
+  // su cobro corresponde al financiador, así que no suman al por cobrar
+  // propio, al aging ni al saldo por centro (igual que la NC dejó de sumar).
+  let saldoTotalQ = 0, saldoVencidoQ = 0, numVencidas = 0, saldoCedidoQ = 0, numCedidas = 0;
   for (const fila of filas) {
+    if (fila.cedida) { saldoCedidoQ += fila.saldo; numCedidas++; continue; }
     saldoTotalQ += fila.saldo;
     if (fila.vencida) { saldoVencidoQ += fila.saldo; numVencidas++; }
     const t = porBucket.get(fila.bucket)!;
@@ -148,11 +159,13 @@ export async function getFacturasPendientesCobro(): Promise<PendientesCobro> {
     filas,
     totales: {
       saldoTotalQ,
-      numFacturas: filas.length,
+      numFacturas: filas.length - numCedidas,
       saldoVencidoQ,
       numVencidas,
       saldoPorVencerQ: saldoTotalQ - saldoVencidoQ,
-      numPorVencer: filas.length - numVencidas,
+      numPorVencer: filas.length - numCedidas - numVencidas,
+      saldoCedidoQ,
+      numCedidas,
     },
     aging,
     porCentro: [...porCentroMap.values()].sort((a, b) => b.saldoQ - a.saldoQ),

@@ -57,6 +57,9 @@ function archivosUseServer(dir: string): string[] {
     deshacerConciliacionAction: 'conciliar',
     contabilizarMovimientoAction: 'conciliar',
     importarMovimientosAction: 'registrar_movimiento',
+    cederFacturasAction: 'ceder_factura',
+    cambiarEstadoCesionAction: 'factoraje',
+    contabilizarFactorajeAction: 'factoraje',
   };
   const sinGuard: string[] = [];
   let totalActions = 0;
