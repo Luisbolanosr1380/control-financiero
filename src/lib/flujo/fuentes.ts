@@ -1,10 +1,10 @@
 /**
  * F-051 — Fuentes existentes (READ-ONLY) que alimentan el cash-flow planner.
  *
- *  a) CxP    — GASTOS con estado "Por pagar".
+ *  a) CxP    — GASTOS no pagados ni anulados (Supabase).
  *  b) Deudas — DEUDAS activas con saldo > 0 y próximo pago calculable.
  *  c) Planilla — quincenas proyectadas desde la última planilla pagada.
- *  d) Cobros esperados — FACTURAS_CLIENTES con saldo pendiente (ingreso).
+ *  d) Cobros esperados — facturas con saldo pendiente, sin las cedidas (ingreso).
  *
  * Convención de fecha (lección F-041):
  *  - Toda comparación contra "hoy" usa obtenerFechaHoyGuatemala().
@@ -14,13 +14,11 @@
  * el error y devolvemos []. El cash-flow se renderiza con las fuentes vivas.
  */
 
-import { airtable } from '@/lib/db/airtable';
-import { getGastos } from '@/lib/db/gastos';
+import { fetchAll } from '@/lib/supabase/client';
+import { getFacturasPendientesCobro } from '@/lib/db/facturas-pendientes';
 import { getDeudas } from '@/lib/db/deudas';
 import { getEmpleados } from '@/lib/db/empleados';
 import { getPeriodos, getLineasPlanilla } from '@/lib/db/planillas';
-import { TABLES } from '@/lib/db/airtable';
-import { F } from '@/lib/db/mappers';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { sumarDias } from './proyectar-recurrentes';
 import type { EventoFlujo } from './types';
@@ -37,28 +35,33 @@ const CXP_VENCIMIENTO_DEFAULT_DIAS = 30;
 
 export async function cxpDesdeGastos(fechaDesde: string, fechaHasta: string): Promise<EventoFlujo[]> {
   try {
-    const gastos = await getGastos({ estado: 'Por pagar' });
+    // gastos vive en Supabase (flag 'gastos'); getGastos() es la lectura legacy de Airtable.
+    const gastos = await fetchAll<Record<string, unknown>>('gastos', { select: 'airtable_id, fecha, fecha_vencimiento, monto, estado' });
     const out: EventoFlujo[] = [];
     for (const g of gastos) {
-      let fecha = g.fechaVencimiento?.trim() || '';
+      if (/^(pagado|anulado)$/i.test(String(g.estado ?? '').trim())) continue;
+      const monto = Number(g.monto ?? 0);
+      if (!(monto > 0)) continue;
+      let fecha = String(g.fecha_vencimiento ?? '').slice(0, 10);
       let fechaAjustada = false;
       if (!fecha) {
         if (!g.fecha) continue;
         // F-051: si falta vencimiento, asumir 30 días desde emisión.
-        fecha = sumarDias(g.fecha, CXP_VENCIMIENTO_DEFAULT_DIAS);
+        fecha = sumarDias(String(g.fecha).slice(0, 10), CXP_VENCIMIENTO_DEFAULT_DIAS);
         fechaAjustada = true;
       }
       if (fecha < fechaDesde || fecha > fechaHasta) continue;
+      const id = String(g.airtable_id ?? '');
       out.push({
         fecha,
         tipo: 'egreso',
         fuente: 'cxp',
-        descripcion: `CxP gasto ${g.id.slice(-6)}`,
-        monto: g.total,
+        descripcion: `CxP gasto ${id.slice(-6)}`,
+        monto,
         prioridad: 'Alta',
         esEstimado: false,
         fechaAjustada,
-        linkId: g.id,
+        linkId: id,
         linkTipo: 'gasto',
       });
     }
@@ -200,58 +203,37 @@ export async function planillaProyectada(fechaDesde: string, fechaHasta: string)
 }
 
 /* ============================================================
- * d) Cobros esperados — FACTURAS_CLIENTES con saldo > 0
+ * d) Cobros esperados — facturas con saldo > 0 (getFacturasPendientesCobro:
+ * consolidada por factura, saldo = total − cobros − NC activas).
  *
- * Leemos directo de FACTURAS_CLIENTES (no consolidamos lineaPorLínea —
- * cada línea con saldo > 0 es un cobro esperado). Saldo desde
- * `Saldo_Por_Cobrar` (formula). Fecha desde `Fecha vencimiento`; si está
- * vencida sin cobrar, empujamos a hoy + 7.
- *
- * NOTA: el campo "Fecha confirmación pago ETA" mencionado en la spec no
- * existe en el schema actual de FACTURAS_CLIENTES. Si se agrega después,
- * acá es donde se debe leer ANTES del vencimiento.
+ * Las facturas CEDIDAS a factoraje no son ingreso propio (las cobra el
+ * financiador) → fuera. Vencida sin cobrar: se empuja a hoy + 7.
  * ============================================================ */
 
 export async function cobrosEsperados(fechaDesde: string, fechaHasta: string): Promise<EventoFlujo[]> {
-  const { dataSource } = await import('@/lib/config/data-source');
-  if (dataSource('facturas_clientes') !== 'supabase' && !airtable) return [];
   try {
-    const records = dataSource('facturas_clientes') === 'supabase'
-      ? await (await import('@/lib/supabase/records')).sbFacturasRecords()
-      : (await airtable!(TABLES.FACTURAS)
-          .select({
-            fields: [F.NO_FACTURA, F.FECHA_VENCE, F.SALDO, F.TOTAL, F.ESTADO, F.CLIENTE, F.RAZON_SOCIAL],
-          })
-          .all()).map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
+    const { filas } = await getFacturasPendientesCobro();
     const hoy = obtenerFechaHoyGuatemala();
     const out: EventoFlujo[] = [];
-    for (const r of records) {
-      const f = r.fields as Record<string, unknown>;
-      const estadoRaw = String(f[F.ESTADO] ?? '').toUpperCase().trim();
-      if (estadoRaw === 'ANULADO' || estadoRaw === 'ANULADA' || estadoRaw === 'REFACTURADO' || estadoRaw === 'REFACTURADA') continue;
-      const saldo = Number(f[F.SALDO] ?? 0);
-      if (!(saldo > 0.01)) continue;
-      const venc = String(f[F.FECHA_VENCE] ?? '').slice(0, 10);
-      let fecha = venc;
+    for (const f of filas) {
+      if (f.cedida || !(f.saldo > 0.01)) continue;
+      let fecha = f.fechaVencimiento;
       let fechaAjustada = false;
       if (!fecha || fecha < hoy) {
         fecha = sumarDias(hoy, 7);
         fechaAjustada = true;
       }
       if (fecha < fechaDesde || fecha > fechaHasta) continue;
-      const razonRaw = f[F.RAZON_SOCIAL];
-      const razon = Array.isArray(razonRaw) ? String(razonRaw[0] ?? '') : String(razonRaw ?? '');
-      const noFactura = String(f[F.NO_FACTURA] ?? '').trim() || r.id.slice(-6);
       out.push({
         fecha,
         tipo: 'ingreso',
         fuente: 'cobro_esperado',
-        descripcion: `Cobro ${razon || 'cliente'} (Fact ${noFactura})`,
-        monto: saldo,
+        descripcion: `Cobro ${f.cliente || 'cliente'} (Fact ${f.noFactura || f.id.slice(-6)})`,
+        monto: f.saldo,
         prioridad: 'Media',
         esEstimado: true,
         fechaAjustada,
-        linkId: r.id,
+        linkId: f.id,
         linkTipo: 'factura_cliente',
       });
     }

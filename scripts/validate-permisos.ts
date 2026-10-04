@@ -96,7 +96,7 @@ function archivosUseServer(dir: string): string[] {
   }
   const usuariosActions = fs.readFileSync('src/app/(app)/admin/usuarios/actions.ts', 'utf8');
   ok(/async function contexto\(\) \{\n  const permiso = await autorizar\('gestionar_usuarios'\);/.test(usuariosActions), 'helper contexto() exige gestionar_usuarios antes de todo');
-  for (const [p, acc] of [['planillas', 'planilla'], ['empleados', 'planilla'], ['facturacion/nueva', 'emitir_factura'], ['admin/catalogos', 'catalogos']] as const) {
+  for (const [p, acc] of [['planillas', 'planilla'], ['empleados', 'planilla'], ['facturacion/nueva', 'emitir_factura'], ['admin/catalogos', 'catalogos'], ['tesoreria', 'flujo']] as const) {
     const s = fs.readFileSync(`src/app/(app)/${p}/page.tsx`, 'utf8');
     ok(s.includes(`exigirPagina('${acc}')`), `página /${p} exige '${acc}'`);
   }
@@ -116,6 +116,7 @@ function archivosUseServer(dir: string): string[] {
     ['planilla', 'Procesar planilla', true, true, false, false],
     ['cerrar_periodo', 'Cerrar períodos / asientos', true, true, false, false],
     ['catalogos', 'Crear/editar catálogos', true, true, false, false],
+    ['flujo', 'Flujo de caja proyectado', true, true, false, false],
     ['gestionar_usuarios', 'Gestionar usuarios', true, false, false, false],
     ['configurar_empresa', 'Configurar empresa', true, false, false, false],
   ];

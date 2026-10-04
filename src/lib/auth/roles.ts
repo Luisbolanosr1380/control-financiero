@@ -56,6 +56,7 @@ export type Accion =
   | 'conciliar'
   | 'ceder_factura'
   | 'factoraje'
+  | 'flujo'
   | 'gestionar_usuarios'
   | 'configurar_empresa';
 
@@ -82,6 +83,7 @@ export const MATRIZ: Record<Accion, readonly Rol[]> = {
   conciliar:          CONTROL,     // conciliar / deshacer / contabilizar movimiento: separación de funciones
   ceder_factura:      REGISTRAN,   // registrar la cesión de facturas a un factoraje (tracking)
   factoraje:          CONTROL,     // crear factoraje, liberar/recomprar/pagar cesiones, contabilizar
+  flujo:              CONTROL,     // ver flujo de caja proyectado (posición de caja y compromisos)
   gestionar_usuarios: SOLO_ADMIN,
   configurar_empresa: SOLO_ADMIN,
 };
@@ -103,6 +105,7 @@ export const ACCION_LABEL: Record<Accion, string> = {
   conciliar:          'conciliar movimientos bancarios',
   ceder_factura:      'ceder facturas a factoraje',
   factoraje:          'gestionar factorajes',
+  flujo:              'ver el flujo de caja proyectado',
   gestionar_usuarios: 'gestionar usuarios',
   configurar_empresa: 'configurar la empresa',
 };
