@@ -79,9 +79,14 @@ const fin = () => { console.log(`\n== ${pass} 🟢 / ${fail} 🔴 ==\n`); proces
     await crear('notas_credito', { factura_id: fIds[1], monto: 1000, estado: 'Activa', fecha_creacion: '2026-09-25' }).catch(() => ok(false, 'no se pudo crear la NC de prueba'));
 
     // Financiador (acreedor) + factoraje = deuda vía el alta EXISTENTE (reuso, no tabla paralela)
-    const acr = await crear('acreedores', { nombre_acreedor: `${TAG} FINANCIERA`, nombre_legal: `${TAG} FINANCIERA S.A.`, tipo_producto: 'Factoraje', tipo_acreedor: 'Financiera' });
-    const { data: acrRow } = await sb.from('acreedores').select('airtable_id').eq('id', acr).single();
-    const rd = await D.crearDeuda({ acreedorId: String(acrRow!.airtable_id), nombreDeuda: `${TAG} Factoraje`, tipoDocumento: 'Factoraje', fechaEmision: '2026-10-01', moneda: 'Q', montoOriginal: 12000, fechaVencimiento: '2026-11-30', tasaComision: 0.02, reserva: 0.1, tasaInteresAnual: 0.18, conRecurso: false });
+    // Financiador vía el alta de acreedores EXISTENTE (como lo haría un usuario).
+    const A2 = await import('../src/lib/db/acreedores');
+    const ra = await A2.crearAcreedor({ nombreAcreedor: `${TAG} FINANCIERA`, tipoProducto: 'Factoraje', tipoAcreedor: 'Financiera' });
+    ok(ra.ok, `financiador creado con el alta de acreedores existente: ${ra.ok ? ra.acreedorId : ra.error}`);
+    if (!ra.ok) throw new Error('sin financiador');
+    const { data: acrRow } = await sb.from('acreedores').select('id').eq('airtable_id', ra.acreedorId).single();
+    creados.push(['acreedores', String(acrRow!.id)]);
+    const rd = await D.crearDeuda({ acreedorId: ra.acreedorId, nombreDeuda: `${TAG} Factoraje`, tipoDocumento: 'Factoraje', fechaEmision: '2026-10-01', moneda: 'Q', montoOriginal: 12000, fechaVencimiento: '2026-11-30', tasaComision: 0.02, reserva: 0.1, tasaInteresAnual: 0.18, conRecurso: false });
     ok(rd.ok, `factoraje creado con el alta de deudas existente: ${rd.ok ? rd.deudaId : rd.error}`);
     if (!rd.ok) throw new Error('sin factoraje');
     const factorajeId = rd.deudaId;
@@ -145,7 +150,7 @@ const fin = () => { console.log(`\n== ${pass} 🟢 / ${fail} 🔴 ==\n`); proces
     await sb.from('notas_credito').delete().in('factura_id', creados.filter(([t]) => t === 'facturas_clientes').map(([, id]) => id));
     for (const [tabla, id] of creados.reverse()) await sb.from(tabla).delete().eq('id', id);
     const { data: resto } = await sb.from('clientes').select('id').like('razon_social', 'E2E-FACT-%');
-    const { data: restoA } = await sb.from('acreedores').select('id').like('nombre_acreedor', 'E2E-FACT-%');
+    const { data: restoA } = await sb.from('acreedores').select('id').or('nombre_acreedor.like.E2E-FACT-%,nombre_legal.like.E2E-FACT-%');
     ok((resto ?? []).length === 0 && (restoA ?? []).length === 0, 'limpieza: 0 datos de prueba en la base');
   }
   fin();
