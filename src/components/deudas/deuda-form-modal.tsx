@@ -54,6 +54,10 @@ interface Props {
   deudaActual?: Deuda;          // requerido si modo='editar'
   numPagos?: number;             // si > 0 deshabilita cambio de tipoDocumento
   onClose: () => void;
+  /** FACTORAJE: preselecciona el tipo (ej. 'Factoraje') al crear. */
+  tipoInicial?: TipoDocumento;
+  /** FACTORAJE: si se pasa, al crear NO navega a /deudas/[id]; devuelve el id al caller. */
+  onCreado?: (deudaId: string) => void;
 }
 
 // Tipos de documento que requieren cada bloque de campos. Mapeo de UI.
@@ -63,7 +67,7 @@ const CONTEXT_FACTORAJE: TipoDocumento[] = ['Factoraje'];
 const CONTEXT_FACTURA: TipoDocumento[] = ['Factura', 'Nota Débito', 'Nota de Crédito'];
 const CONTEXT_PERIODICO: TipoDocumento[] = ['Obligación Seguridad Social', 'Devengo de Nómina', 'Provisión'];
 
-export function DeudaFormModal({ acreedores, centros, modo, deudaActual, numPagos = 0, onClose }: Props) {
+export function DeudaFormModal({ acreedores, centros, modo, deudaActual, numPagos = 0, onClose, tipoInicial, onCreado }: Props) {
   const router = useRouter();
   const today = obtenerFechaHoyGuatemala();
 
@@ -79,7 +83,7 @@ export function DeudaFormModal({ acreedores, centros, modo, deudaActual, numPago
   const [acreedorId, setAcreedorId] = useState(deudaActual?.acreedorId ?? '');
   const [acreedorSearch, setAcreedorSearch] = useState('');
   const [showAcreedorList, setShowAcreedorList] = useState(false);
-  const [tipoDoc, setTipoDoc] = useState<TipoDocumento>(deudaActual?.tipoDocumento as TipoDocumento || 'Préstamo');
+  const [tipoDoc, setTipoDoc] = useState<TipoDocumento>(deudaActual?.tipoDocumento as TipoDocumento || tipoInicial || 'Préstamo');
   const [centroId, setCentroId] = useState(deudaActual?.centroCostoId ?? '');
   const [fechaEmision, setFechaEmision] = useState(deudaActual?.fechaEmision?.slice(0, 10) || today);
   const [moneda, setMoneda] = useState<'Q' | 'USD'>(deudaActual?.moneda === 'USD' ? 'USD' : 'Q');
@@ -170,7 +174,8 @@ export function DeudaFormModal({ acreedores, centros, modo, deudaActual, numPago
         if (res.ok) {
           toast.success(res.mensaje);
           onClose();
-          router.push(`/deudas/${res.deudaId}`);
+          if (onCreado) onCreado(res.deudaId);
+          else router.push(`/deudas/${res.deudaId}`);
         } else {
           toast.error(res.error);
         }

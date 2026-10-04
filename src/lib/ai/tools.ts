@@ -428,7 +428,8 @@ export const aiTools = {
       'Cartera completa pendiente de cobro (TODOS los meses juntos) con aging de cobranza: total por cobrar, ' +
       'tramos Por vencer / 1-30 / 31-60 / 61-90 / +90 días vencidos (cantidad y monto por tramo), y las facturas ' +
       'más vencidas. USAR para "¿cuánto me deben?", "¿cómo está la cartera?", "¿qué facturas están vencidas +60 días?", ' +
-      '"aging de cobranza". Es STOCK del momento — no depende de período. Para el detalle de UN cliente usar getFacturasPorCliente.',
+      '"aging de cobranza". Es STOCK del momento — no depende de período. Para el detalle de UN cliente usar getFacturasPorCliente. ' +
+      'FACTORAJE: porCobrarQ es el por cobrar PROPIO — excluye las facturas cedidas a un financiador (esas las cobra él; van aparte en cedidasFactoraje y cada factura trae cedidaA).',
     parameters: z.object({
       minDiasVencidos: z.number().int().optional()
         .describe('Solo facturas con días vencidos >= este valor (ej. 61 para "+60 días"). Omitir para toda la cartera.'),
@@ -449,6 +450,7 @@ export const aiTools = {
         tramo: AGING_LABEL[f.bucket],
         esParcial: f.esParcial,
         centros: f.centros,
+        cedidaA: f.cedida ? `${f.cedida.financiador} (Q${f.cedida.montoCedido.toFixed(2)})` : null,
       });
       return {
         totales: {
@@ -458,6 +460,7 @@ export const aiTools = {
           numVencidas: data.totales.numVencidas,
           porVencerQ: Math.round(data.totales.saldoPorVencerQ * 100) / 100,
         },
+        cedidasFactoraje: { saldoQ: Math.round(data.totales.saldoCedidoQ * 100) / 100, numFacturas: data.totales.numCedidas, nota: 'Facturas cedidas a factoraje: su cobro corresponde al financiador, no suman al por cobrar propio.' },
         aging: data.aging.map(t => ({ tramo: t.etiqueta, cantidad: t.cantidad, montoQ: Math.round(t.montoQ * 100) / 100 })),
         porCentroCosto: data.porCentro.map(c => ({ centro: c.centro, saldoQ: Math.round(c.saldoQ * 100) / 100, cantidad: c.cantidad })),
         ...(minDiasVencidos !== undefined

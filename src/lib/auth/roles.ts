@@ -54,6 +54,8 @@ export type Accion =
   | 'gestionar_deudas'
   | 'registrar_movimiento'
   | 'conciliar'
+  | 'ceder_factura'
+  | 'factoraje'
   | 'gestionar_usuarios'
   | 'configurar_empresa';
 
@@ -78,6 +80,8 @@ export const MATRIZ: Record<Accion, readonly Rol[]> = {
   gestionar_deudas:   CONTROL,     // pasivos/préstamos: no es "meter gastos"
   registrar_movimiento: REGISTRAN, // cargar movimientos del banco (manual / estado de cuenta)
   conciliar:          CONTROL,     // conciliar / deshacer / contabilizar movimiento: separación de funciones
+  ceder_factura:      REGISTRAN,   // registrar la cesión de facturas a un factoraje (tracking)
+  factoraje:          CONTROL,     // crear factoraje, liberar/recomprar/pagar cesiones, contabilizar
   gestionar_usuarios: SOLO_ADMIN,
   configurar_empresa: SOLO_ADMIN,
 };
@@ -97,6 +101,8 @@ export const ACCION_LABEL: Record<Accion, string> = {
   gestionar_deudas:   'gestionar deudas',
   registrar_movimiento: 'cargar movimientos bancarios',
   conciliar:          'conciliar movimientos bancarios',
+  ceder_factura:      'ceder facturas a factoraje',
+  factoraje:          'gestionar factorajes',
   gestionar_usuarios: 'gestionar usuarios',
   configurar_empresa: 'configurar la empresa',
 };
