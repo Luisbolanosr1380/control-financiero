@@ -57,6 +57,9 @@ export type Accion =
   | 'ceder_factura'
   | 'factoraje'
   | 'flujo'
+  | 'ver_presupuesto'
+  | 'presupuesto'
+  | 'reabrir_presupuesto'
   | 'gestionar_usuarios'
   | 'configurar_empresa';
 
@@ -84,6 +87,9 @@ export const MATRIZ: Record<Accion, readonly Rol[]> = {
   ceder_factura:      REGISTRAN,   // registrar la cesión de facturas a un factoraje (tracking)
   factoraje:          CONTROL,     // crear factoraje, liberar/recomprar/pagar cesiones, contabilizar
   flujo:              CONTROL,     // ver flujo de caja proyectado (posición de caja y compromisos)
+  ver_presupuesto:    TODOS,       // ver presupuesto y comparativo (para sacar al auxiliar: REGISTRAN → CONTROL+lectura acá)
+  presupuesto:        CONTROL,     // crear, editar celdas, precargar y aprobar el presupuesto
+  reabrir_presupuesto: SOLO_ADMIN, // reabrir un presupuesto aprobado por la junta (queda en el log)
   gestionar_usuarios: SOLO_ADMIN,
   configurar_empresa: SOLO_ADMIN,
 };
@@ -106,6 +112,9 @@ export const ACCION_LABEL: Record<Accion, string> = {
   ceder_factura:      'ceder facturas a factoraje',
   factoraje:          'gestionar factorajes',
   flujo:              'ver el flujo de caja proyectado',
+  ver_presupuesto:    'ver el presupuesto',
+  presupuesto:        'editar y aprobar el presupuesto',
+  reabrir_presupuesto: 'reabrir un presupuesto aprobado',
   gestionar_usuarios: 'gestionar usuarios',
   configurar_empresa: 'configurar la empresa',
 };

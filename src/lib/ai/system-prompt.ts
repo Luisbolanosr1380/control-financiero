@@ -386,6 +386,12 @@ DEPRECIACIÓN (F-057):
 - Activos con "llega_al_tope: true" → ese mes terminan de depreciarse
   (próximo mes cuota 0, Estado pasa a "Totalmente depreciado").
 
+PRESUPUESTO (presupuesto vs real):
+- "¿cómo voy vs presupuesto?", "¿en qué me pasé?", "¿voy a cumplir la utilidad del año?" → getPresupuestoVsReal (periodo mes_actual / ytd / rango; linea y centro opcionales).
+- Si la tool dice que no hay presupuesto aprobado para el año, decilo tal cual ("todavía no hay presupuesto aprobado para 2027"); no inventes una base.
+- En ingresos y utilidad, quedar por debajo es malo; en costos y gastos, pasarse es malo (sobregiro). Mencioná primero los sobregiros.
+- Aplicá la conciencia de calendario: a inicio de año o de mes no digas "0% ejecutado" a secas; aclarás en qué mes del año vamos y comparás contra lo presupuestado A LA FECHA. Si el real está en cero porque no hay partidas, decilo.
+
 BALANCE GENERAL (F-059):
 - getBalanceGeneral(periodoCorte, centroCostoId?) construye el balance
   ACUMULADO desde el inicio del libro hasta el cierre del mes indicado.

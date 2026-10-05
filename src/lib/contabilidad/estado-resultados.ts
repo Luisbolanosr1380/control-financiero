@@ -37,6 +37,7 @@ import { PARTIDAS_TABLE_ID, PARTIDAS_FIELDS, ASIENTOS_TABLE_ID } from '@/lib/air
 import { MAPEO_ER_TABLE_ID, MAPEO_ER_FIELDS, type SignoLinea, type TipoLineaMapeo } from '@/lib/airtable/mapeo-er-fields';
 import { CUENTAS_TABLE_ID, CUENTAS_FIELDS } from '@/lib/contabilidad/cuentas-sistema';
 import { GASTOS_TABLE_ID, GASTOS_FIELDS } from '@/lib/airtable/gastos-fields';
+import { calcularSubtotales, valorCalculada, esSignoNegativo, type SubtotalesER } from '@/lib/contabilidad/er-formulas';
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 
@@ -317,7 +318,8 @@ async function leerMapeoER(): Promise<LineaMapeo[]> {
         nombre: String(r.linea ?? '').trim(),
         orden: Number(r.orden ?? 0),
         tipo: (tipoRaw === 'Calculada' ? 'Calculada' : 'Suma cuentas') as TipoLineaMapeo,
-        signo: (signoRaw === '+' || signoRaw === '–' ? signoRaw : '') as SignoLinea,
+        // HIT escribe "-" y Golden "–": ambos son resta (antes "-" se ignoraba).
+        signo: (signoRaw === '+' ? '+' : esSignoNegativo(signoRaw) ? '–' : '') as SignoLinea,
         cuentasLink: Array.isArray(r.cuentas) ? (r.cuentas as Array<{ airtable_id?: string }>).map(c => String(c.airtable_id ?? '')).filter(Boolean) : [],
         prefijos: String(r.prefijos ?? '').trim(),
         centroCostoFijo: undefined,   // vacío en los 25 mapeos (verificado)
@@ -337,7 +339,7 @@ async function leerMapeoER(): Promise<LineaMapeo[]> {
       const tipoRaw = selectName(f[MAPEO_ER_FIELDS.tipo]).trim();
       const tipo: TipoLineaMapeo = tipoRaw === 'Calculada' ? 'Calculada' : 'Suma cuentas';
       const signoRaw = selectName(f[MAPEO_ER_FIELDS.signo]).trim();
-      const signo: SignoLinea = signoRaw === '+' || signoRaw === '–' ? (signoRaw as SignoLinea) : '';
+      const signo: SignoLinea = signoRaw === '+' ? '+' : esSignoNegativo(signoRaw) ? '–' : '';
       out.push({
         id:               r.id,
         nombre:           str(f[MAPEO_ER_FIELDS.linea]).trim(),
@@ -429,6 +431,7 @@ function resolverSumaCuentas(
   linea: LineaMapeo,
   saldos: Map<string, number>,
   cuentasMeta: Map<string, CuentaMeta>,
+  brutos?: Map<string, number>,
 ): { monto: number; cuentasIncluidas: string[] } {
   // Mecanismo 1 (real hoy): link explícito a cuentas.
   let cuentaIds = linea.cuentasLink.filter(Boolean);
@@ -445,6 +448,17 @@ function resolverSumaCuentas(
       .map(c => c.id);
   }
 
+  // Línea que RESTA (Descuentos y NC): sus cuentas son contra-cuentas de
+  // ingreso (código 4-… pero saldo deudor). Con naturaleza_er vacía el
+  // fallback por código las trataba como acreedoras y el signo dependía de
+  // cómo cada base escribe el "–" (Golden sumaba el descuento al ingreso).
+  // Se toma el saldo deudor (Σdebe − Σhaber) y se resta: un descuento de X
+  // da −X en cualquier base, sin depender de naturaleza_er.
+  if (linea.signo === '–' && brutos) {
+    let deudor = 0;
+    for (const id of cuentaIds) deudor += brutos.get(id) ?? 0;
+    return { monto: round2(-deudor), cuentasIncluidas: cuentaIds };
+  }
   let sumaBruta = 0;
   for (const id of cuentaIds) {
     sumaBruta += saldos.get(id) ?? 0;
@@ -475,70 +489,7 @@ function resolverSumaCuentas(
  * documentada en el comentario del módulo y arriba de cada bloque.
  * ========================================================================= */
 
-function sumarRango(montosPorOrden: Map<number, number>, desde: number, hasta: number): number {
-  let s = 0;
-  for (const [orden, monto] of montosPorOrden) {
-    if (orden >= desde && orden <= hasta) s += monto;
-  }
-  return round2(s);
-}
-
-function montoExacto(montosPorOrden: Map<number, number>, orden: number): number {
-  return round2(montosPorOrden.get(orden) ?? 0);
-}
-
-interface SubtotalesER {
-  ingresosBrutos: number;
-  descuentosNC: number;
-  ingresosNetos: number;
-  costoVentas: number;
-  utilidadBruta: number;
-  gastosOperativos: number;
-  ebitda: number;
-  depreciacion: number;
-  utilidadOperativa: number;
-  gastosFinancieros: number;
-  isr: number;
-  otrosGastos: number;
-  utilidadNeta: number;
-}
-
-function calcularSubtotales(montosPorOrden: Map<number, number>): SubtotalesER {
-  const ingresosBrutos    = sumarRango(montosPorOrden, 10, 60);
-  // 70 ya viene con signo '–' aplicado por resolverSumaCuentas (monto ya negativo).
-  const descuentosNC      = montoExacto(montosPorOrden, 70);
-  const ingresosNetos     = round2(ingresosBrutos + descuentosNC);
-  const costoVentas       = sumarRango(montosPorOrden, 110, 160);
-  const utilidadBruta     = round2(ingresosNetos - costoVentas);
-  const gastosOperativos  = sumarRango(montosPorOrden, 210, 240);
-  const ebitda            = round2(utilidadBruta - gastosOperativos);
-  const depreciacion      = montoExacto(montosPorOrden, 260);
-  const utilidadOperativa = round2(ebitda - depreciacion);
-  const gastosFinancieros = montoExacto(montosPorOrden, 250);
-  const isr               = montoExacto(montosPorOrden, 270);
-  const otrosGastos       = montoExacto(montosPorOrden, 280);
-  const utilidadNeta      = round2(utilidadOperativa - gastosFinancieros - isr - otrosGastos);
-  return {
-    ingresosBrutos, descuentosNC, ingresosNetos,
-    costoVentas, utilidadBruta,
-    gastosOperativos, ebitda,
-    depreciacion, utilidadOperativa,
-    gastosFinancieros, isr, otrosGastos, utilidadNeta,
-  };
-}
-
-/** Mapea un nombre de línea "Calculada" al subtotal correspondiente. */
-function valorCalculada(nombre: string, subt: SubtotalesER): number {
-  const n = nombre.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-  if (n.includes('ingresos netos'))                       return subt.ingresosNetos;
-  if (n.includes('utilidad bruta'))                       return subt.utilidadBruta;
-  if (n.includes('ebitda'))                               return subt.ebitda;
-  if (n.includes('utilidad operativa') || n.includes('utilidad de operacion')) return subt.utilidadOperativa;
-  if (n.includes('utilidad neta'))                        return subt.utilidadNeta;
-  if (n.includes('costo de ventas'))                      return subt.costoVentas;
-  if (n.includes('gastos operativos'))                    return subt.gastosOperativos;
-  return 0;
-}
+// Fórmulas (sumarRango, calcularSubtotales, valorCalculada) en er-formulas.ts: compartidas con el Presupuesto.
 
 /* =========================================================================
  * 8) Orquestador por período individual (devuelve montos por orden)
@@ -564,13 +515,17 @@ function calcularPeriodo(
   const totalDebe  = round2(partidasDelPeriodo.reduce((s, p) => s + p.debe, 0));
   const totalHaber = round2(partidasDelPeriodo.reduce((s, p) => s + p.haber, 0));
   const saldos = saldoNaturalPorCuenta(partidasDelPeriodo, cuentasMeta);
+  const brutos = new Map<string, number>();
+  for (const p of partidasDelPeriodo) {
+    if (p.cuentaId) brutos.set(p.cuentaId, (brutos.get(p.cuentaId) ?? 0) + p.debe - p.haber);
+  }
 
   // Resolver primero todas las líneas "Suma cuentas" → mapa por orden.
   const montosPorOrden = new Map<number, number>();
   const cuentasPorOrden = new Map<number, string[]>();
   for (const linea of mapeo) {
     if (linea.tipo !== 'Suma cuentas') continue;
-    const r = resolverSumaCuentas(linea, saldos, cuentasMeta);
+    const r = resolverSumaCuentas(linea, saldos, cuentasMeta, brutos);
     montosPorOrden.set(linea.orden, r.monto);
     cuentasPorOrden.set(linea.orden, r.cuentasIncluidas);
   }
@@ -687,5 +642,75 @@ export async function generarEstadoResultados(input: GenerarERInput): Promise<Es
       partidasMesAnterior: resMesAnt.numPartidas,
       partidasYTD:         resYTD.numPartidas,
     },
+  };
+}
+
+/* =========================================================================
+ * 10) Real por celda (Presupuesto vs Real)
+ *
+ * El MISMO cálculo del ER (calcularPeriodo: mapeo, naturaleza, signos y
+ * subtotales) aplicado a cada mes × centro de costo de un año, leyendo
+ * las partidas una sola vez. Así el real de una celda del presupuesto es,
+ * por construcción, lo que muestra el ER en vivo para esa línea, centro y
+ * mes (generarEstadoResultados({ periodo, centroCostoId })).
+ * ========================================================================= */
+
+export interface RealPorCelda {
+  anio: number;
+  /** orden → mes(1-12) → centro (airtable_id; '' = sin centro) → monto con signo del ER. */
+  porOrden: Map<number, Map<number, Map<string, number>>>;
+  /** orden → mes → monto consolidado (todas las partidas, con o sin centro) — igual al ER sin filtro. */
+  consolidado: Map<number, Map<number, number>>;
+  lineas: Array<{ orden: number; nombre: string; tipo: TipoLineaMapeo; signo: SignoLinea }>;
+  numPartidas: number;
+  /** Monto de partidas de ER sin centro de costo (no asignables a una celda del presupuesto). */
+  partidasSinCentro: number;
+}
+
+export async function generarRealPorCelda(input: { anio: number; modo?: ModoER }): Promise<RealPorCelda> {
+  const modo: ModoER = input.modo ?? 'fiscal';
+  const periodos = Array.from({ length: 12 }, (_, i) => `${input.anio}-${String(i + 1).padStart(2, '0')}`);
+  const [mapeo, cuentasMeta, partidasAnio, noOpAsientos] = await Promise.all([
+    leerMapeoER(),
+    leerCuentasMeta(),
+    leerPartidasDelPeriodo(periodos),
+    modo === 'operativo' ? asientosNoOperativos() : Promise.resolve(new Set<string>()),
+  ]);
+  const partidas = partidasAnio.filter(p => !(modo === 'operativo' && p.asientoId && noOpAsientos.has(p.asientoId)));
+
+  const porOrden = new Map<number, Map<number, Map<string, number>>>();
+  const consolidado = new Map<number, Map<number, number>>();
+  const grupos = new Map<string, PartidaCruda[]>();
+  const porMes = new Map<number, PartidaCruda[]>();
+  for (const p of partidas) {
+    const mes = Number(p.periodo.slice(5, 7));
+    const k = `${mes}|${p.centroCostoId}`;
+    (grupos.get(k) ?? grupos.set(k, []).get(k)!).push(p);
+    (porMes.get(mes) ?? porMes.set(mes, []).get(mes)!).push(p);
+  }
+  for (const [k, ps] of grupos) {
+    const [mesTxt, centro] = [k.slice(0, k.indexOf('|')), k.slice(k.indexOf('|') + 1)];
+    const r = calcularPeriodo(ps, mapeo, cuentasMeta);
+    for (const [orden, monto] of r.montosPorOrden) {
+      const pm = porOrden.get(orden) ?? porOrden.set(orden, new Map()).get(orden)!;
+      const pc = pm.get(Number(mesTxt)) ?? pm.set(Number(mesTxt), new Map()).get(Number(mesTxt))!;
+      pc.set(centro, round2((pc.get(centro) ?? 0) + monto));
+    }
+  }
+  for (const [mes, ps] of porMes) {
+    const r = calcularPeriodo(ps, mapeo, cuentasMeta);
+    for (const [orden, monto] of r.montosPorOrden) {
+      const pm = consolidado.get(orden) ?? consolidado.set(orden, new Map()).get(orden)!;
+      pm.set(mes, monto);
+    }
+  }
+  const sinCentro = partidas.filter(p => !p.centroCostoId);
+  return {
+    anio: input.anio,
+    porOrden,
+    consolidado,
+    lineas: mapeo.map(l => ({ orden: l.orden, nombre: l.nombre, tipo: l.tipo, signo: l.signo })),
+    numPartidas: partidas.length,
+    partidasSinCentro: round2(sinCentro.reduce((s, p) => s + Math.abs(p.debe - p.haber), 0)),
   };
 }
