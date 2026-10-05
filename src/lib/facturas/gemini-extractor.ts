@@ -130,7 +130,8 @@ export interface ResultadoExtractor {
   tokensOutput?: number;
 }
 
-export async function extraerFacturaConGemini(pdfBuffer: Buffer): Promise<ResultadoExtractor> {
+/** `mimeType`: PDF (default) o una foto (image/jpeg|png|webp) tomada con el teléfono. */
+export async function extraerFacturaConGemini(pdfBuffer: Buffer, mimeType = 'application/pdf'): Promise<ResultadoExtractor> {
   if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
     return { ok: false, error: 'GOOGLE_GENERATIVE_AI_API_KEY no configurada en el server.' };
   }
@@ -146,11 +147,9 @@ export async function extraerFacturaConGemini(pdfBuffer: Buffer): Promise<Result
           role: 'user',
           content: [
             { type: 'text', text: 'Extrae los datos de esta factura DTE guatemalteca.' },
-            {
-              type: 'file',
-              data: pdfBuffer,
-              mimeType: 'application/pdf',
-            },
+            mimeType.startsWith('image/')
+              ? { type: 'image' as const, image: pdfBuffer, mimeType }
+              : { type: 'file' as const, data: pdfBuffer, mimeType: 'application/pdf' },
           ],
         },
       ],

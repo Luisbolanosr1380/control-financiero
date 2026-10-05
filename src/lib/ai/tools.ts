@@ -72,6 +72,8 @@ import { construirFlujo } from '@/lib/flujo/construir-flujo';
 import { getObligacionesRecurrentes } from '@/lib/flujo/obligaciones';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
+import { ventanasCalendario, metricaCalendario, bloqueCalendario, type VentanasCalendario } from '@/lib/ai/contexto-calendario';
 
 const ESTADOS = ['vencido', 'por_cobrar', 'cobrado', 'anulado', 'pendiente', 'emitida', 'contabilizado'] as const;
 
@@ -114,7 +116,50 @@ const periodoParams = z.object({
 });
 type PeriodoInput = z.infer<typeof periodoParams>;
 function meta(input: PeriodoInput): PeriodoMetadata {
-  return resolverPeriodo(input.periodo as PeriodoNombre, new Date(), { desde: input.desde, hasta: input.hasta });
+  // Zona Guatemala: en Vercel (UTC) "hoy" se adelanta un día desde las 6 PM.
+  const g = obtenerFechaHoyGuatemala().split('-').map(Number);
+  return resolverPeriodo(input.periodo as PeriodoNombre, new Date(g[0], g[1] - 1, g[2], 12), { desde: input.desde, hasta: input.hasta });
+}
+
+/**
+ * Conciencia de calendario: facturado (mismo universo que el reporte de
+ * facturación — sin anuladas/refacturadas) y cobrado (cobros activos) del mes
+ * en curso, el mes anterior y el mes anterior al mismo día.
+ */
+async function cargarCalendario(): Promise<{ v: VentanasCalendario; bloque: ReturnType<typeof bloqueCalendario> }> {
+  const v = ventanasCalendario(obtenerFechaHoyGuatemala());
+  const [facturas, cobros] = await Promise.all([getFacturasReporte(), getCobrosCompletos()]);
+  const { filtradas } = filtrarReporte(facturas, { desde: v.mesAnterior.desde, hasta: v.hoy });
+  const facturado = metricaCalendario(filtradas.map(x => ({ fecha: x.f.fecha, monto: x.totalQ })), v);
+  const cobrado = metricaCalendario(
+    cobros.filter(c => c.estadoCobro === 'Activo').map(c => ({ fecha: c.fechaCobro, monto: c.monto })), v,
+  );
+  return { v, bloque: bloqueCalendario(v, { facturado, cobrado }) };
+}
+
+const mesEnCurso = () => obtenerFechaHoyGuatemala().slice(0, 7);
+/** El rango [desde, hasta] es (parte de) el mes en curso. */
+const esRangoMesEnCurso = (desde: string, hasta: string) => desde.slice(0, 7) === mesEnCurso() && hasta.slice(0, 7) === mesEnCurso();
+
+/** Top N del mes anterior completo (para comparar un ranking del mes que recién arranca). */
+async function topMesAnterior(v: VentanasCalendario, limite: number, orden: 'desc' | 'asc' = 'desc') {
+  const [livianas, clientes] = await Promise.all([
+    getFacturasLiviano({ desde: v.mesAnterior.desde, hasta: v.mesAnterior.hasta }),
+    getClientes(),
+  ]);
+  const r = computeTopClientesRango(livianas, clientes, limite, undefined, orden);
+  return {
+    mes: v.mesAnterior.etiqueta,
+    total_Q: Math.round(r.totalFacturadoRango),
+    top: r.items.map(c => ({ cliente: c.nombre, monto_Q: Math.round(c.montoQ), num_facturas: c.numFacturas })),
+  };
+}
+
+/** Última factura válida (sin anuladas/refacturadas) de un cliente, de toda su historia. */
+async function ultimaFacturaCliente(custId: string) {
+  const facturas = (await getFacturas({ custId })).filter(i => i.status !== 'anulado' && i.fechaEmision);
+  const ult = facturas.reduce<Invoice | null>((m, i) => (!m || (i.fechaEmision ?? '') > (m.fechaEmision ?? '') ? i : m), null);
+  return ult ? { noFactura: ult.noFactura, fecha: ult.fechaEmision, total_Q: Math.round(ult.total), estado: ult.status } : null;
 }
 
 // ===========================================================================
@@ -122,6 +167,22 @@ function meta(input: PeriodoInput): PeriodoMetadata {
 // ===========================================================================
 
 export const aiTools = {
+  getMesEnCursoConReferencia: tool({
+    description:
+      'CONCIENCIA DE CALENDARIO: en UNA llamada, facturado y cobrado del mes en curso hasta hoy + el mes anterior completo + ' +
+      'el mes anterior acumulado AL MISMO DÍA (ritmo comparable), con el día del mes y si el mes recién empieza. ' +
+      'USAR siempre que pregunten por "este mes" (cómo voy, cuánto facturé/cobré, estoy ganando) y especialmente a inicio de mes ' +
+      'o si otra tool devolvió ~0 para el mes en curso. Con `incluirTopClientes` trae además el top del mes anterior.',
+    parameters: z.object({
+      incluirTopClientes: z.boolean().default(false).describe('true para "¿quién facturó más/menos este mes?": agrega el ranking del mes anterior.'),
+      orden: z.enum(['desc', 'asc']).default('desc').describe('desc = quién facturó más; asc = quién facturó menos.'),
+    }),
+    execute: async ({ incluirTopClientes, orden }) => {
+      const { v, bloque } = await cargarCalendario();
+      return incluirTopClientes ? { ...bloque, top_mes_anterior: await topMesAnterior(v, 5, orden) } : bloque;
+    },
+  }),
+
   getKPIs: tool({
     description:
       'KPIs del período: facturado y cobrado del rango, tasa de cobranza del período. ' +
@@ -146,8 +207,10 @@ export const aiTools = {
       const porCobrarLifetimeQ = Math.round(activas.filter(i => i.status === 'vencido' || i.status === 'por_cobrar').reduce((s, i) => s + i.balance, 0));
       const vencidoLifetimeQ   = Math.round(activas.filter(i => i.status === 'vencido').reduce((s, i) => s + i.balance, 0));
 
+      const calendario = input.periodo === 'mes_actual' ? (await cargarCalendario()).bloque : undefined;
       return {
         metadata: m,
+        ...(calendario ? { contexto_calendario: calendario } : {}),
         flujo_del_periodo: {
           facturadoQ: facturadoPeriodoQ,
           cobradoQ: cobradoPeriodoQ,
@@ -174,7 +237,8 @@ export const aiTools = {
     execute: async (input) => {
       const m = meta(input);
       const r = await getFacturadoPorRango(m.fecha_desde, m.fecha_hasta);
-      return { metadata: m, ...r };
+      const calendario = input.periodo === 'mes_actual' ? (await cargarCalendario()).bloque : undefined;
+      return { metadata: m, ...(calendario ? { contexto_calendario: calendario } : {}), ...r };
     },
   }),
 
@@ -336,8 +400,10 @@ export const aiTools = {
       const nombreById = new Map(clientes.map(c => [c.id, c.name]));
       const enRangoCobros = cobros.filter(c => enRango(c.fechaCobro, m.fecha_desde, m.fecha_hasta));
       enRangoCobros.sort((a, b) => b.fechaCobro.localeCompare(a.fechaCobro));
+      const calendario = periodo === 'mes_actual' ? (await cargarCalendario()).bloque : undefined;
       return {
         metadata: m,
+        ...(calendario ? { contexto_calendario: calendario } : {}),
         total: enRangoCobros.length,
         sumaQ: Math.round(enRangoCobros.reduce((s, c) => s + c.monto, 0)),
         cobros: enRangoCobros.slice(0, limite).map(c => ({
@@ -354,7 +420,7 @@ export const aiTools = {
   }),
 
   getFacturasPorCliente: tool({
-    description: 'Lista las facturas de un cliente identificado por nombre (match parcial, case-insensitive). Si el match es ambiguo, devuelve la lista de candidatos. No filtra por período (devuelve la historia del cliente).',
+    description: 'Lista las facturas de un cliente identificado por nombre (match parcial, case-insensitive). Si el match es ambiguo, devuelve la lista de candidatos. No filtra por período (devuelve la historia del cliente). Incluye `ultima_factura` (número, fecha, monto) para "¿cuándo fue la última factura de X?".',
     parameters: z.object({
       nombreCliente: z.string().describe('Nombre o fragmento del nombre del cliente'),
       limite: z.number().int().positive().max(50).default(20).describe('Máximo de facturas a devolver (default 20, más recientes)'),
@@ -366,6 +432,7 @@ export const aiTools = {
       return {
         ok: true,
         cliente: { id: r.id, nombre: r.nombreEncontrado },
+        ultima_factura: await ultimaFacturaCliente(r.id),
         totalFacturas: facturas.length,
         facturas: facturas.slice(0, limite).map(proyectarFactura),
       };
@@ -2030,8 +2097,14 @@ export const aiTools = {
         getClientes(),
       ]);
       const r = computeTopClientesDelMes(livianas, clientes, topN);
+      let calendario: Record<string, unknown> | undefined;
+      if (mes === mesEnCurso()) {
+        const c = await cargarCalendario();
+        calendario = { ...c.bloque, top_mes_anterior: await topMesAnterior(c.v, topN) };
+      }
       return {
         mes,
+        ...(calendario ? { contexto_calendario: calendario } : {}),
         mes_legible: etiquetaMes(mes),
         total_mes_Q: Math.round(r.totalMesQ),
         cantidad_facturas: r.cantidadFacturas,
@@ -2059,16 +2132,24 @@ export const aiTools = {
       'Si alguna línea no matchea, se devuelve `lineas_no_resueltas` con candidatos. ' +
       '\n\nUSAR para "top 5 del último trimestre", "mejores clientes en [línea]", ' +
       '"top 3 en [línea A] y [línea B] de mayo". Para un solo mes exacto SIN línea, ' +
-      'usar topClientesDelMes.',
+      'usar topClientesDelMes. Para "¿quién facturó MENOS?" pasar orden="asc". ' +
+      'Si el rango es el mes en curso, la respuesta trae contexto_calendario con el top del mes anterior.',
     parameters: z.object({
       desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('Fecha inicial inclusive YYYY-MM-DD.'),
       hasta: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe('Fecha final inclusive YYYY-MM-DD.'),
       limite: z.number().int().positive().max(10).default(5).describe('Cantidad de clientes top a devolver (1-10).'),
       lineas: z.array(z.string().min(2)).optional()
         .describe('F-BF-002d: nombres de líneas de negocio a filtrar (centros de costo). Si se omite, agrega todas las líneas.'),
+      orden: z.enum(['desc', 'asc']).default('desc')
+        .describe('desc = quién facturó MÁS (default). asc = quién facturó MENOS: ordena de menor a mayor entre los clientes que SÍ facturaron en el rango (los que facturaron 0 no aparecen — aclaralo).'),
     }),
-    execute: async ({ desde, hasta, limite, lineas }) => {
+    execute: async ({ desde, hasta, limite, lineas, orden }) => {
       if (desde > hasta) return { ok: false, error: 'desde > hasta', rango: { desde, hasta } };
+      let calendario: Record<string, unknown> | undefined;
+      if (esRangoMesEnCurso(desde, hasta)) {
+        const c = await cargarCalendario();
+        calendario = { ...c.bloque, top_mes_anterior: await topMesAnterior(c.v, limite, orden) };
+      }
 
       const [livianas, clientes, centros] = await Promise.all([
         getFacturasLiviano({ desde, hasta }),
@@ -2078,9 +2159,11 @@ export const aiTools = {
 
       // F-BF-002d: sin `lineas` el comportamiento es el de antes (un solo ranking).
       if (!lineas || lineas.length === 0) {
-        const r = computeTopClientesRango(livianas, clientes, limite);
+        const r = computeTopClientesRango(livianas, clientes, limite, undefined, orden);
         return {
           rango: { desde, hasta },
+          orden,
+          ...(calendario ? { contexto_calendario: calendario } : {}),
           total_facturado_rango_Q: Math.round(r.totalFacturadoRango),
           num_facturas_validas:    r.numFacturasValidas,
           num_anuladas:            r.numAnuladas,
@@ -2111,7 +2194,7 @@ export const aiTools = {
       // Un ranking por línea matched. Cada uno con su total/top propios.
       const matched = res.porInput.filter(p => p.ok);
       const rankings = matched.map(line => {
-        const r = computeTopClientesRango(livianas, clientes, limite, [line.centroCostoId]);
+        const r = computeTopClientesRango(livianas, clientes, limite, [line.centroCostoId], orden);
         return {
           linea:                   line.centroCostoNombre,
           centroCostoId:           line.centroCostoId,
@@ -2129,6 +2212,8 @@ export const aiTools = {
 
       return {
         rango: { desde, hasta },
+        orden,
+        ...(calendario ? { contexto_calendario: calendario } : {}),
         lineas: matched.map(p => p.centroCostoNombre),
         rankings,
         lineas_no_resueltas: noResueltas.length > 0
@@ -2147,7 +2232,8 @@ export const aiTools = {
       '\n\nF-BF-002d — `lineas` opcional: filtrar a una o varias líneas de negocio ' +
       '(centros de costo). Si se pasa, suma SOLO la porción correspondiente a esos CCs. ' +
       'USAR para "¿cuánto le facturamos a X en abril?", "facturación de X YTD", ' +
-      '"¿qué le emitimos a X en [línea] este año?".',
+      '"¿qué le emitimos a X en [línea] este año?". Devuelve también `ultima_factura` (número, fecha y monto de la ' +
+      'última factura válida del cliente en TODA su historia) — usarla para "¿cuándo fue la última factura de X?".',
     parameters: z.object({
       nombreCliente: z.string().min(2).describe('Nombre o fragmento del cliente.'),
       desde: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -2199,6 +2285,7 @@ export const aiTools = {
       return {
         ok: true,
         cliente: { id: m.id, nombre: m.nombreEncontrado },
+        ultima_factura: await ultimaFacturaCliente(m.id),
         rango: { desde, hasta },
         lineas: lineas_resueltas,
         monto_Q:       Math.round(r.montoQ),

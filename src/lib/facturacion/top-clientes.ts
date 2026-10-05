@@ -87,6 +87,7 @@ export function computeTopClientesRango(
   clientes: ClienteMin[],
   topN = 5,
   centroCostoIds?: readonly string[],
+  orden: 'desc' | 'asc' = 'desc',
 ): TopClientesResultado {
   const ccSet = centroCostoIds && centroCostoIds.length > 0 ? new Set(centroCostoIds) : null;
 
@@ -124,7 +125,7 @@ export function computeTopClientesRango(
         porcentaje:  totalFacturadoRango > 0 ? (v.monto / totalFacturadoRango) * 100 : 0,
       };
     })
-    .sort((a, b) => b.montoQ - a.montoQ)
+    .sort((a, b) => (orden === 'asc' ? a.montoQ - b.montoQ : b.montoQ - a.montoQ))
     .slice(0, Math.max(1, topN));
 
   return {

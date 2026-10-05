@@ -20,6 +20,10 @@
  *                            (habilita semántica intercompany en UI/flujo)
  *   EMPRESA_DESCRIPCION    — una frase para el prompt de Auros
  *   EMPRESA_DUENO          — cómo llama Auros al dueño/CFO
+ *   EMPRESA_ICONO_URL      — ícono de la app instalada (PWA); default = logo,
+ *                            y sin logo se dibujan las iniciales
+ *   EMPRESA_COLOR          — color de marca de la PWA (ícono, barra de estado)
+ *   EMPRESA_NOMBRE_APP     — nombre corto bajo el ícono del teléfono
  *   NEXT_PUBLIC_SISTEMA_NOMBRE / NEXT_PUBLIC_EMPRESA_MONEDA — ídem,
  *     públicas. El resto (NIT, dirección, descripción…) es server-only y
  *     llega a la UI por props desde server components.
@@ -45,6 +49,10 @@ export interface EmpresaConfig {
   /** Subtítulo del sidebar bajo la marca. Histórico: "Sistema operativo";
    *  con EMPRESA_NOMBRE definido, el nombre de la empresa. */
   subtitulo: string;
+  /** PWA: ícono (null = iniciales), color de marca y nombre bajo el ícono. */
+  iconoUrl: string | null;
+  colorMarca: string;
+  nombreApp: string;
 }
 
 const DEFAULTS_GOLDEN: EmpresaConfig = {
@@ -62,6 +70,9 @@ const DEFAULTS_GOLDEN: EmpresaConfig = {
   nombreSistema: 'Control Financiero',
   titulo: 'Control Financiero · Sistema operativo de contabilidad',
   subtitulo: 'Sistema operativo',
+  iconoUrl: null,
+  colorMarca: '#0E2A24',
+  nombreApp: 'Golden Talent',
 };
 
 function bool(v: string | undefined, def: boolean): boolean {
@@ -106,6 +117,14 @@ const PUB = publicos();
 
 /** Config de la empresa de ESTE deploy. Server: env completas; cliente:
  *  NEXT_PUBLIC_* + defaults (lo sensible nunca llega al browser). */
+/** Iniciales para el ícono sin logo: "High Impact Talent S.A" → "HIT", "Golden Talent" → "GT". */
+export function inicialesEmpresa(nombre: string): string {
+  const palabras = nombre
+    .replace(/\b(S\.?\s?A\.?|S\.?A\.?S\.?|Ltda\.?|de|del|la|y)\b/gi, ' ')
+    .split(/\s+/).filter(w => /^[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(w));
+  return (palabras.map(w => w[0]).join('').toUpperCase() || nombre.slice(0, 2).toUpperCase()).slice(0, 3);
+}
+
 export function empresaConfig(): EmpresaConfig {
   const e = ENV;
   const nombrePublico = PUB.nombre?.trim() || undefined;
@@ -130,5 +149,8 @@ export function empresaConfig(): EmpresaConfig {
     // titulo/subtitulo: históricos EXACTOS salvo que el deploy defina su nombre.
     titulo:    esCustom ? `${sistema} · ${nombre}` : DEFAULTS_GOLDEN.titulo,
     subtitulo: esCustom ? nombre : DEFAULTS_GOLDEN.subtitulo,
+    iconoUrl:   e.EMPRESA_ICONO_URL?.trim() || e.EMPRESA_LOGO_URL?.trim() || DEFAULTS_GOLDEN.iconoUrl,
+    colorMarca: /^#[0-9a-f]{6}$/i.test(e.EMPRESA_COLOR?.trim() ?? '') ? e.EMPRESA_COLOR!.trim() : DEFAULTS_GOLDEN.colorMarca,
+    nombreApp:  (e.EMPRESA_NOMBRE_APP?.trim() || nombre).slice(0, 30),
   };
 }

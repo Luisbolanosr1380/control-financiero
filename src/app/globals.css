@@ -720,6 +720,12 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
 }
 .msg-ai .ai-text strong { color: var(--ink); font-weight: 600; }
 .msg-ai .ai-text em { font-family: var(--serif); font-style: italic; font-weight: 400; }
+.ai-md p { margin: 0 0 6px; }
+.ai-md p:last-child { margin-bottom: 0; }
+.ai-md ul, .ai-md ol { margin: 4px 0 6px; padding-left: 18px; }
+.ai-md li { margin: 2px 0; }
+.ai-md table { border-collapse: collapse; font-size: 0.95em; margin: 4px 0; display: block; overflow-x: auto; max-width: 100%; }
+.ai-md th, .ai-md td { border: 1px solid var(--line-3); padding: 3px 6px; text-align: left; }
 
 .ai-action-row {
   display: flex;

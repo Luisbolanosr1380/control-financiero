@@ -4,7 +4,7 @@ import { autorizar, exigir } from '@/lib/auth/guard';
 import { z } from 'zod';
 import { revalidatePath } from 'next/cache';
 import { createFactura } from '@/lib/db/facturas';
-import { uploadAttachmentPdf, ADJUNTO_FIELD_ID } from '@/lib/db/attachments';
+import { uploadAttachment, ADJUNTO_FIELD_ID, ATTACHMENT_MIME_ACCEPTED, ATTACHMENT_MIME_PDF } from '@/lib/db/attachments';
 import { airtable, TABLES } from '@/lib/db/airtable';
 import { F } from '@/lib/db/mappers';
 
@@ -103,7 +103,9 @@ export async function crearFacturaAction(formData: FormData): Promise<CrearFactu
   if (pdf instanceof File && pdf.size > 0 && creada.recordIdPrincipal) {
     try {
       const buf = await pdf.arrayBuffer();
-      await uploadAttachmentPdf(creada.recordIdPrincipal, ADJUNTO_FIELD_ID, pdf.name, buf);
+      // MÓVIL: el adjunto puede ser la foto de la factura (JPG/PNG/WebP), no solo el PDF.
+      const tipo = (ATTACHMENT_MIME_ACCEPTED as readonly string[]).includes(pdf.type) ? pdf.type : ATTACHMENT_MIME_PDF;
+      await uploadAttachment(creada.recordIdPrincipal, ADJUNTO_FIELD_ID, pdf.name || 'factura.pdf', tipo, buf);
       return { ok: true, noFactura: creada.noFactura, recordsCreados: creada.recordsCreados, pdfAdjuntado: true, aviso: avisoEtiquetas || undefined };
     } catch (err) {
       console.error('Error adjuntando PDF a la factura:', err);

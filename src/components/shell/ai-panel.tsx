@@ -4,26 +4,10 @@ import { useEffect, useRef, useState } from 'react';
 import { I } from '@/components/common/icons';
 import { usePathname } from 'next/navigation';
 import type { Role } from '@/lib/auth/allowlist';
-import { PERMISSIONS } from '@/lib/auth/permissions';
+import { useAurosChat, type ChatMensaje } from '@/components/auros/use-auros-chat';
+import { MensajeAuros } from '@/components/auros/mensaje-auros';
 
-export interface ChatMensaje {
-  rol: 'user' | 'assistant';
-  contenido: string;
-  funcionesUsadas?: Array<{ nombre: string; argumentos: unknown }>;
-  costoUSD?: number;
-  ms?: number;
-}
-
-interface ChatResponse {
-  ok: boolean;
-  error?: string;
-  respuesta?: string;
-  costoUSD?: number;
-  funcionesUsadas?: Array<{ nombre: string; argumentos: unknown }>;
-  ms?: number;
-  consumoMensual?: number;
-  limite?: number | null;
-}
+export type { ChatMensaje };
 
 interface AIPanelProps {
   onClose: () => void;
@@ -32,6 +16,7 @@ interface AIPanelProps {
   rol: Role;
   consumoMensual: number;     // del server al abrir el drawer
   limiteMensual: number;       // 0 si rol sin permiso, Infinity (admin) o número
+  dueno?: string;              // cómo saluda Auros (config de la empresa del deploy)
 }
 
 const SCREEN_NAMES: Record<string, string> = {
@@ -58,28 +43,19 @@ const SUGERENCIAS = [
   'Proyectar cash a 30 días',
 ];
 
-export function AIPanel({ onClose, mensajes, setMensajes, rol, consumoMensual, limiteMensual }: AIPanelProps) {
-  const tienePermiso = PERMISSIONS[rol].aurosChat;
-  // Consumo en tiempo real: el server reporta el dato inicial; cada respuesta
-  // del backend trae el consumoMensual actualizado.
-  const [consumoVivo, setConsumoVivo] = useState<number>(consumoMensual);
-  const [limiteVivo, setLimiteVivo]   = useState<number>(limiteMensual);
-  useEffect(() => { setConsumoVivo(consumoMensual); setLimiteVivo(limiteMensual); }, [consumoMensual, limiteMensual]);
-
-  const sinLimite      = !Number.isFinite(limiteVivo) || limiteVivo === Infinity;
-  const limiteAlcanzado = !sinLimite && tienePermiso && consumoVivo >= limiteVivo;
-  const cercaDelLimite  = !sinLimite && tienePermiso && !limiteAlcanzado && consumoVivo >= limiteVivo * 0.8;
-
+export function AIPanel({ onClose, mensajes, setMensajes, rol, consumoMensual, limiteMensual, dueno }: AIPanelProps) {
   const pathname = usePathname();
   const screenName = getScreenName(pathname);
 
   const [input, setInput] = useState('');
-  const [pendiente, setPendiente] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const msgsRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  const costoTotal = mensajes.reduce((s, m) => s + (m.costoUSD ?? 0), 0);
+  const chat = useAurosChat({
+    rol, mensajes, setMensajes, consumoMensual, limiteMensual,
+    onDespuesDeEnviar: () => inputRef.current?.focus(),
+  });
+  const { tienePermiso, consumoVivo, limiteVivo, sinLimite, limiteAlcanzado, cercaDelLimite, pendiente, error, reintentar, costoTotal } = chat;
 
   useEffect(() => {
     msgsRef.current?.scrollTo({ top: msgsRef.current.scrollHeight, behavior: 'smooth' });
@@ -92,54 +68,12 @@ export function AIPanel({ onClose, mensajes, setMensajes, rol, consumoMensual, l
   const enviar = async (texto?: string) => {
     const msg = (texto ?? input).trim();
     if (!msg || pendiente) return;
-    setError(null);
     setInput('');
-    const historial = mensajes.map(m => ({ role: m.rol, content: m.contenido }));
-    setMensajes(prev => [...prev, { rol: 'user', contenido: msg }]);
-    setPendiente(true);
-    try {
-      const res = await fetch('/api/ai/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: historial, newMessage: msg }),
-      });
-      const data: ChatResponse = await res.json();
-      // El backend devuelve mensaje legible para LIMITE_ALCANZADO / SIN_PERMISO / FUERA_DE_VENTANA
-      type GuardResponse = { mensaje?: string; consumoActual?: number; limite?: number };
-      if (!data.ok || !data.respuesta) {
-        const g = data as ChatResponse & GuardResponse;
-        setError(g.mensaje ?? g.error ?? 'Respuesta vacía del servidor');
-        if (typeof g.consumoActual === 'number') setConsumoVivo(g.consumoActual);
-        if (typeof g.limite === 'number')        setLimiteVivo(g.limite);
-        return;
-      }
-      setMensajes(prev => [...prev, {
-        rol: 'assistant',
-        contenido: data.respuesta!,
-        funcionesUsadas: data.funcionesUsadas,
-        costoUSD: data.costoUSD,
-        ms: data.ms,
-      }]);
-      if (typeof data.consumoMensual === 'number') setConsumoVivo(data.consumoMensual);
-      if (typeof data.limite === 'number')          setLimiteVivo(data.limite);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setPendiente(false);
-      inputRef.current?.focus();
-    }
-  };
-
-  const reintentar = () => {
-    const ult = mensajes[mensajes.length - 1];
-    if (!ult || ult.rol !== 'user') return;
-    setMensajes(prev => prev.slice(0, -1));
-    void enviar(ult.contenido);
+    await chat.enviar(msg);
   };
 
   const nuevoChat = () => {
-    setMensajes([]);
-    setError(null);
+    chat.nuevoChat();
     setInput('');
     inputRef.current?.focus();
   };
@@ -216,7 +150,7 @@ export function AIPanel({ onClose, mensajes, setMensajes, rol, consumoMensual, l
       <div className="ai-messages" ref={msgsRef}>
         {mensajes.length === 0 ? (
           <div style={{ padding: '16px 4px 8px', fontSize: 13, color: 'var(--ink-2)', lineHeight: 1.55 }}>
-            Hola Stark, soy <strong>Auros</strong>. Te ayudo a leer tus datos financieros. ¿Qué querés saber hoy?
+            Hola{dueno ? ` ${dueno}` : ''}, soy <strong>Auros</strong>. Te ayudo a leer tus datos financieros. ¿Qué querés saber hoy?
           </div>
         ) : mensajes.map((m, i) => (
           m.rol === 'user'
@@ -252,7 +186,7 @@ export function AIPanel({ onClose, mensajes, setMensajes, rol, consumoMensual, l
             borderRadius: 6, fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5,
           }}>
             Auros está disponible solo para roles <strong>Gerencia</strong> y <strong>Admin</strong>.
-            Si necesitás acceso, hablá con Stark.
+            Si necesitás acceso, hablá con un administrador.
           </div>
         ) : (
           <div className="ai-input-box" style={{ alignItems: 'flex-end', gap: 6 }}>
@@ -313,41 +247,5 @@ export function AIPanel({ onClose, mensajes, setMensajes, rol, consumoMensual, l
         }
       `}</style>
     </aside>
-  );
-}
-
-function MensajeAuros({ mensaje }: { mensaje: ChatMensaje }) {
-  const [funcionesAbiertas, setFuncionesAbiertas] = useState(false);
-  return (
-    <div className="msg-ai">
-      <div className="ai-label">Auros</div>
-      <div className="ai-text" style={{ whiteSpace: 'pre-wrap' }}>{mensaje.contenido}</div>
-      {mensaje.funcionesUsadas && mensaje.funcionesUsadas.length > 0 && (
-        <div style={{ marginTop: 4, fontSize: 10.5, color: 'var(--ink-4)' }}>
-          <button
-            type="button"
-            onClick={() => setFuncionesAbiertas(v => !v)}
-            style={{
-              background: 'none', border: 'none', cursor: 'pointer', color: 'var(--ink-4)',
-              padding: 0, fontSize: 10.5, fontFamily: 'inherit',
-            }}
-          >
-            {funcionesAbiertas ? '▾' : '▸'} {mensaje.funcionesUsadas.length} función{mensaje.funcionesUsadas.length === 1 ? '' : 'es'}
-            {mensaje.costoUSD !== undefined && <> · ${mensaje.costoUSD.toFixed(4)}</>}
-            {mensaje.ms !== undefined && <> · {(mensaje.ms / 1000).toFixed(1)}s</>}
-          </button>
-          {funcionesAbiertas && (
-            <pre style={{
-              marginTop: 4, padding: '6px 8px', background: 'var(--paper)',
-              border: '1px solid var(--line-3)', borderRadius: 4, fontSize: 10,
-              color: 'var(--ink-3)', overflowX: 'auto',
-              whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-            }}>
-{mensaje.funcionesUsadas.map((f, i) => `${i + 1}. ${f.nombre}(${JSON.stringify(f.argumentos)})`).join('\n')}
-            </pre>
-          )}
-        </div>
-      )}
-    </div>
   );
 }
