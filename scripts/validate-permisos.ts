@@ -60,6 +60,13 @@ function archivosUseServer(dir: string): string[] {
     cederFacturasAction: 'ceder_factura',
     cambiarEstadoCesionAction: 'factoraje',
     contabilizarFactorajeAction: 'factoraje',
+    crearPresupuestoAction: 'presupuesto',
+    precargarPresupuestoAction: 'presupuesto',
+    editarCeldasAction: 'presupuesto',
+    limpiarCeldasAction: 'presupuesto',
+    aprobarPresupuestoAction: 'presupuesto',
+    archivarPresupuestoAction: 'presupuesto',
+    reabrirPresupuestoAction: 'reabrir_presupuesto',
   };
   const sinGuard: string[] = [];
   let totalActions = 0;
@@ -96,7 +103,7 @@ function archivosUseServer(dir: string): string[] {
   }
   const usuariosActions = fs.readFileSync('src/app/(app)/admin/usuarios/actions.ts', 'utf8');
   ok(/async function contexto\(\) \{\n  const permiso = await autorizar\('gestionar_usuarios'\);/.test(usuariosActions), 'helper contexto() exige gestionar_usuarios antes de todo');
-  for (const [p, acc] of [['planillas', 'planilla'], ['empleados', 'planilla'], ['facturacion/nueva', 'emitir_factura'], ['admin/catalogos', 'catalogos'], ['tesoreria', 'flujo']] as const) {
+  for (const [p, acc] of [['planillas', 'planilla'], ['empleados', 'planilla'], ['facturacion/nueva', 'emitir_factura'], ['admin/catalogos', 'catalogos'], ['tesoreria', 'flujo'], ['presupuesto', 'ver_presupuesto']] as const) {
     const s = fs.readFileSync(`src/app/(app)/${p}/page.tsx`, 'utf8');
     ok(s.includes(`exigirPagina('${acc}')`), `página /${p} exige '${acc}'`);
   }
@@ -117,6 +124,9 @@ function archivosUseServer(dir: string): string[] {
     ['cerrar_periodo', 'Cerrar períodos / asientos', true, true, false, false],
     ['catalogos', 'Crear/editar catálogos', true, true, false, false],
     ['flujo', 'Flujo de caja proyectado', true, true, false, false],
+    ['ver_presupuesto', 'Ver presupuesto y comparativo', true, true, true, true],
+    ['presupuesto', 'Editar y aprobar presupuesto', true, true, false, false],
+    ['reabrir_presupuesto', 'Reabrir presupuesto aprobado', true, false, false, false],
     ['gestionar_usuarios', 'Gestionar usuarios', true, false, false, false],
     ['configurar_empresa', 'Configurar empresa', true, false, false, false],
   ];

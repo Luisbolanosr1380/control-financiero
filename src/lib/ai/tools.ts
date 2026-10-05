@@ -75,6 +75,8 @@ import type { Invoice, InvoiceStatus } from '@/lib/types';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { type VentanasCalendario } from '@/lib/ai/contexto-calendario';
 import { cargarCalendario } from '@/lib/resumen/mes-en-curso';
+import { getPresupuesto, getPresupuestoAprobado, getReal, listarPresupuestos, presupuestoDisponible } from '@/lib/db/presupuesto';
+import { agregadosJunta, comparativo, mesDeCorte, MESES_CORTOS, mesesHasta, realVista, sumarCeldas, TODOS, TODOS_LOS_MESES } from '@/lib/presupuesto/modelo';
 
 const ESTADOS = ['vencido', 'por_cobrar', 'cobrado', 'anulado', 'pendiente', 'emitida', 'contabilizado'] as const;
 
@@ -2277,6 +2279,82 @@ export const aiTools = {
         num_facturas:  r.numFacturas,
         num_anuladas:  r.numAnuladas,
         lineas_no_resueltas,
+      };
+    },
+  }),
+
+  getPresupuestoVsReal: tool({
+    description:
+      'PRESUPUESTO: compara el presupuesto APROBADO del año contra el real del Estado de Resultados (mismas líneas del ER × centro × mes). ' +
+      'Devuelve presupuestado, real, variación y % de ejecución por línea y subtotales (Utilidad Bruta, EBITDA, Operativa, Neta), ' +
+      'las líneas en SOBREGIRO (costo/gasto con real por encima del presupuesto) y el cumplimiento de la utilidad comprometida. ' +
+      'USAR para "¿cómo voy vs presupuesto (este mes / en el año)?", "¿en qué me pasé del presupuesto?", "¿voy a cumplir la utilidad del año?". ' +
+      'Si no hay presupuesto aprobado para el año, la tool lo dice: NUNCA inventes una base. ' +
+      'En ingresos/utilidades quedar debajo es malo; en costos/gastos pasarse es malo.',
+    parameters: z.object({
+      periodo: z.enum(['mes_actual', 'ytd', 'rango']).default('ytd').describe('mes_actual = el mes en curso; ytd = enero al mes en curso; rango = mesDesde..mesHasta.'),
+      anio: z.number().int().min(2024).max(2100).optional().describe('Año del presupuesto (default: el año en curso).'),
+      mesDesde: z.number().int().min(1).max(12).optional(),
+      mesHasta: z.number().int().min(1).max(12).optional(),
+      linea: z.string().optional().describe('Fragmento del nombre de una línea del ER (ej. "administracion", "reclutamiento").'),
+      centro: z.string().optional().describe('Fragmento del nombre de un centro de costo. Sin centro = consolidado.'),
+    }),
+    execute: async ({ periodo, anio, mesDesde, mesHasta, linea, centro }) => {
+      const hoy = obtenerFechaHoyGuatemala();
+      const a = anio ?? Number(hoy.slice(0, 4));
+      if (!(await presupuestoDisponible())) return { ok: false, motivo: 'modulo_no_instalado', mensaje: 'El módulo de presupuesto todavía no está instalado en esta base.' };
+      const cab = await getPresupuestoAprobado(a);
+      if (!cab) {
+        const borradores = (await listarPresupuestos()).filter(p => p.anio === a && p.estado === 'Borrador').length;
+        return { ok: false, motivo: 'sin_presupuesto_aprobado', mensaje: `Todavía no hay presupuesto aprobado para ${a}.${borradores ? ` Hay ${borradores} borrador(es) sin aprobar.` : ''}`, anio: a };
+      }
+      const p = await getPresupuesto(cab.id);
+      if (!p) return { ok: false, motivo: 'no_encontrado' };
+      const real = await getReal(a, p.est);
+      const corte = mesDeCorte(a, hoy);
+      const meses = periodo === 'mes_actual' ? (corte ? [corte] : [])
+        : periodo === 'rango' ? mesesHasta(mesHasta ?? corte).filter(m => m >= (mesDesde ?? 1))
+        : mesesHasta(corte);
+      const norm = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+      const c = centro ? p.est.centros.find(x => norm(x.nombre).includes(norm(centro))) : undefined;
+      if (centro && !c) return { ok: false, motivo: 'centro_no_encontrado', centros: p.est.centros.map(x => x.nombre) };
+      const filtro = { centroId: c?.id ?? TODOS, meses };
+      const filas = comparativo(p.est.lineas, p.celdas, real, filtro);
+      const lineaSel = linea ? filas.filter(f => norm(f.nombre).includes(norm(linea))) : null;
+      if (linea && lineaSel!.length === 0) return { ok: false, motivo: 'linea_no_encontrada', lineas: p.est.lineas.map(l => l.nombre) };
+      const ap = agregadosJunta(p.est.lineas, sumarCeldas(p.celdas, filtro));
+      const ar = agregadosJunta(p.est.lineas, realVista(p.est.lineas, real, filtro));
+      const anual = agregadosJunta(p.est.lineas, sumarCeldas(p.celdas, { centroId: filtro.centroId, meses: TODOS_LOS_MESES }));
+      const r0 = (n: number) => Math.round(n);
+      return {
+        ok: true,
+        presupuesto: { nombre: cab.nombre, anio: a, aprobado_por: cab.aprobadoPor, aprobado_en: cab.aprobadoEn },
+        alcance: { centro: c?.nombre ?? 'consolidado', meses: meses.map(m => MESES_CORTOS[m - 1]) },
+        contexto_calendario: {
+          hoy,
+          mes_de_corte: corte,
+          meses_transcurridos_del_anio: corte,
+          anio_empezo: corte > 0,
+          nota: corte === 0 ? `${a} todavía no empieza: no hay real; solo el presupuesto.`
+            : corte <= 2 ? `El año apenas arranca (mes ${corte} de 12): un % de ejecución bajo es normal; compará contra lo presupuestado a la fecha, no contra el anual.`
+            : `Mes ${corte} de 12 (${MESES_CORTOS[corte - 1]} en curso, no cerrado).`,
+        },
+        totales_periodo: {
+          presupuesto: { ingresos: r0(ap.ingresos), costos: r0(ap.costos), gastos: r0(ap.gastos), utilidad_neta: r0(ap.utilidad) },
+          real: { ingresos: r0(ar.ingresos), costos: r0(ar.costos), gastos: r0(ar.gastos), utilidad_neta: r0(ar.utilidad) },
+        },
+        utilidad: {
+          comprometida_en_el_anio: r0(anual.utilidad),
+          presupuestada_al_periodo: r0(ap.utilidad),
+          real_al_periodo: r0(ar.utilidad),
+          cumplimiento_pct: Math.abs(ap.utilidad) > 0.5 ? Number(((ar.utilidad / ap.utilidad) * 100).toFixed(1)) : null,
+        },
+        sobregiros: filas.filter(f => f.sobregiro).map(f => ({ linea: f.nombre, presupuesto: r0(f.presupuesto), real: r0(f.real), exceso: r0(f.variacion) })),
+        lineas: (lineaSel ?? filas).map(f => ({
+          linea: f.nombre, tipo: f.clase, presupuesto: r0(f.presupuesto), real: r0(f.real), variacion: r0(f.variacion),
+          ejecucion_pct: f.ejecucionPct, a_favor: f.favorable, sobregiro: f.sobregiro,
+        })),
+        fuente_real: real.numPartidas === 0 ? `El Estado de Resultados de ${a} no tiene partidas contabilizadas: el real está en cero (decilo así, no como "0% ejecutado" a secas).` : 'Estado de Resultados (libro diario).',
       };
     },
   }),
