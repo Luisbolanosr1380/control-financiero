@@ -50,6 +50,7 @@ export default async function AppLayout({
       marcaNombre={marca.nombreSistema}
       marcaSub={marca.subtitulo}
       multiEmpresa={multiEmpresa}
+      dueno={marca.dueno}
     >{children}</AppShell>
   );
 }

@@ -25,6 +25,10 @@
  *     metadata de extracción) + datos_normalizados_ok (boolean).
  *
  * Serial, no paralelo: Gemini tiene rate limits suaves y queremos respeto.
+ *
+ * MÓVIL: acepta también FOTOS (JPG/PNG/WebP) tomadas con el teléfono — Gemini
+ * las lee igual que un PDF; el resto del flujo (dedupe, sanity, bandeja
+ * Pendiente para revisión/aprobación) no cambia.
  */
 
 import { autorizar } from '@/lib/auth/guard';
@@ -65,6 +69,16 @@ export interface ResultadoProcesamiento {
 
 const MAX_OCR_CHARS_GUARDAR = 90_000;
 
+const IMAGENES_ACEPTADAS = ['image/jpeg', 'image/png', 'image/webp'] as const;
+
+/** Magic bytes de las fotos aceptadas (el `type` del navegador no alcanza). */
+function esImagenPorMagicBytes(buffer: Buffer, tipo: string): boolean {
+  if (tipo === 'image/jpeg') return buffer.length > 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff;
+  if (tipo === 'image/png') return buffer.length > 8 && buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (tipo === 'image/webp') return buffer.length > 12 && buffer.subarray(0, 4).toString('ascii') === 'RIFF' && buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+  return false;
+}
+
 function esPdfPorMagicBytes(buffer: Buffer): boolean {
   // PDFs siempre arrancan con "%PDF-" (25 50 44 46 2D).
   if (buffer.length < 5) return false;
@@ -99,15 +113,17 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
     const nombreArchivo = f.name || 'sin-nombre.pdf';
 
     // 1. mimetype + magic bytes.
-    if (f.type !== 'application/pdf') {
-      resultado.errores.push({ nombreArchivo, motivo: `Tipo no soportado (${f.type || 'desconocido'}). Solo PDF.` });
+    const esImagen = (IMAGENES_ACEPTADAS as readonly string[]).includes(f.type);
+    if (f.type !== 'application/pdf' && !esImagen) {
+      resultado.errores.push({ nombreArchivo, motivo: `Tipo no soportado (${f.type || 'desconocido'}). Solo PDF o foto (JPG/PNG/WebP).` });
       continue;
     }
     const buf = Buffer.from(await f.arrayBuffer());
-    if (!esPdfPorMagicBytes(buf)) {
-      resultado.errores.push({ nombreArchivo, motivo: 'El archivo no es un PDF real (magic bytes inválidos).' });
+    if (esImagen ? !esImagenPorMagicBytes(buf, f.type) : !esPdfPorMagicBytes(buf)) {
+      resultado.errores.push({ nombreArchivo, motivo: esImagen ? 'La foto no es una imagen válida.' : 'El archivo no es un PDF real (magic bytes inválidos).' });
       continue;
     }
+    const contentType = esImagen ? f.type : ATTACHMENT_MIME_PDF;
 
     // 2. Hash + dedupe por hash.
     const hash = fileContentHash(buf);
@@ -118,7 +134,7 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
     }
 
     // 3. Extracción con Gemini structured.
-    const extraccion = await extraerFacturaConGemini(buf);
+    const extraccion = await extraerFacturaConGemini(buf, contentType);
     if (!extraccion.ok || !extraccion.extraida) {
       resultado.errores.push({ nombreArchivo, motivo: `Extracción Gemini falló: ${extraccion.error ?? 'sin datos'}` });
       continue;
@@ -224,7 +240,7 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
       try {
         const subida = await subirAdjuntoStorage({
           carpeta: 'facturas-in', recordAppId: recordId,
-          filename: nombreArchivo, contentType: ATTACHMENT_MIME_PDF, data: buf,
+          filename: nombreArchivo, contentType, data: buf,
         });
         await sbActualizarArchivoFacturaIn(recordId, subida.url, subida.nombre);
       } catch (err) {
@@ -248,7 +264,7 @@ export async function procesarFacturasAction(formData: FormData): Promise<Result
 
     // 8. Subir PDF al campo archivo_adjunto (fail-soft).
     try {
-      await uploadAttachment(recordId, FACTURAS_IN_FIELDS.archivo_adjunto, nombreArchivo, ATTACHMENT_MIME_PDF, buf);
+      await uploadAttachment(recordId, FACTURAS_IN_FIELDS.archivo_adjunto, nombreArchivo, contentType, buf);
     } catch (err) {
       console.warn(`F-049.2: adjunto no persistido para ${nombreArchivo}:`, err instanceof Error ? err.message : err);
     }

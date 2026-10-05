@@ -23,9 +23,10 @@ interface AppShellProps {
   marcaSub?: string;
   /** MULTI-EMPRESA: el usuario tiene 2+ empresas → ítem "Cambiar de empresa". */
   multiEmpresa?: boolean;
+  dueno?: string;
 }
 
-export function AppShell({ children, facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, email, consumoAuros, limiteAuros, marcaNombre, marcaSub, multiEmpresa }: AppShellProps) {
+export function AppShell({ children, facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, email, consumoAuros, limiteAuros, marcaNombre, marcaSub, multiEmpresa, dueno }: AppShellProps) {
   const [aiOpen, setAiOpen] = useState(false);
   const [showCmdK, setShowCmdK] = useState(false);
 
@@ -75,6 +76,7 @@ export function AppShell({ children, facturasVencidasCount, deudasVencidasCount,
           rol={rol}
           consumoMensual={consumoAuros ?? 0}
           limiteMensual={limiteAuros ?? 0}
+          dueno={dueno}
         />
       )}
       {showCmdK && <CommandPalette onClose={() => setShowCmdK(false)} />}
