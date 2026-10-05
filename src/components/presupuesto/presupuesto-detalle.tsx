@@ -9,7 +9,7 @@
  *  · Historial: presupuesto_log.
  * Los botones siguen al rol (usePuede); el servidor revalida cada acción.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { usePuede } from '@/components/auth/permisos';
@@ -46,7 +46,11 @@ export function PresupuestoDetalle({ cab, lineas, centros, celdas, real, log, ho
   const [centro, setCentro] = useState<string>(centros[0]?.id ?? TODOS);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const base = useMemo(() => new Map(celdas), [celdas]);
+  // Lo guardado se mantiene local hasta que llegan los datos frescos del servidor (router.refresh):
+  // si no, la celda vuelve a mostrar el valor viejo entre el guardado y la recarga.
+  const [guardadas, setGuardadas] = useState<Map<string, number>>(new Map());
+  useEffect(() => { setGuardadas(new Map()); }, [celdas]);
+  const base = useMemo(() => { const m = new Map(celdas); for (const [k, v] of guardadas) m.set(k, v); return m; }, [celdas, guardadas]);
   const [cambios, setCambios] = useState<Map<string, number>>(new Map());
   const vigentes = useMemo(() => { const m = new Map(base); for (const [k, v] of cambios) m.set(k, v); return m; }, [base, cambios]);
   const realCeldas: RealCeldas = useMemo(() => ({ porCelda: new Map(real.porCelda), consolidado: new Map(real.consolidado) }), [real]);
@@ -63,7 +67,7 @@ export function PresupuestoDetalle({ cab, lineas, centros, celdas, real, log, ho
   const guardar = () => correr('guardar', () => editarCeldasAction({
     id: cab.id,
     cambios: [...cambios].map(([k, monto]) => { const [o, c, m] = k.split('|'); return { orden: Number(o), centroId: c, mes: Number(m), monto }; }),
-  }), () => setCambios(new Map()));
+  }), () => { setGuardadas(prev => new Map([...prev, ...cambios])); setCambios(new Map()); });
 
   const precargar = () => {
     const g = window.prompt(`Precargar con el real ${cab.anio - 1} del Estado de Resultados.\nAjuste global en % (ej. 10 = +10%). Reemplaza las celdas que tengan real ${cab.anio - 1}; el resto queda igual:`, '0');
