@@ -16,6 +16,10 @@
  *     gasto (foto leída por Gemini → bandeja Pendiente); verifica en la base
  *     que cada adjunto quedó guardado y se puede abrir; el auxiliar no entra a
  *     Auros ni a aprobar gastos. Limpia todo y lo verifica.
+ *     --modo resumen: nav Auros·Capturar·Resumen (sin "Escritorio"), las 3 vistas
+ *     a ancho de teléfono con cifras = servidor, flujo móvil = /tesoreria de
+ *     escritorio, permisos (lectura sin flujo) y el aviso "mejor en computadora"
+ *     en pantallas pesadas.
  *     --modo escritorio: regresión del drawer de Auros en escritorio (usa el
  *     mismo hook que el chat móvil): abre el panel, pregunta y responde.
  *
@@ -29,7 +33,7 @@ import os from 'node:os';
 
 const arg = (f: string, d: string) => { const i = process.argv.indexOf(f); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const ENV = arg('--env', 'hit');
-const MODO = arg('--modo', 'captura') as 'chat' | 'captura' | 'escritorio';
+const MODO = arg('--modo', 'captura') as 'chat' | 'captura' | 'escritorio' | 'resumen';
 const ROL = arg('--rol', MODO === 'chat' ? 'lectura' : 'auxiliar');
 const BASE = arg('--base', 'http://localhost:3000').replace(/\/$/, '');
 const CHROME = arg('--chrome', '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome');
@@ -124,7 +128,8 @@ const SLUG = (process.env.EMPRESA_SLUG || 'golden').toLowerCase();
       return;
     }
     // ── Entrada por rol ──
-    const home = MODO === 'chat' ? '/m/auros' : '/m/captura';
+    const { homeMovil } = await import('../src/lib/movil/secciones');
+    const home = MODO === 'chat' ? '/m/auros' : MODO === 'captura' ? '/m/captura' : `/m/${homeMovil(ROL as never)}`;
     await page.goto(`${BASE}/`);
     await page.waitForURL(`**${home}`, { timeout: 30_000 }).catch(async () => {
       await page.screenshot({ path: path.join(SHOTS, `${MODO}-entrada-fallida.png`) });
@@ -162,7 +167,92 @@ const SLUG = (process.env.EMPRESA_SLUG || 'golden').toLowerCase();
     await page.screenshot({ path: path.join(SHOTS, `${MODO}-offline.png`) });
     await page.goto(`${BASE}${home}`);
 
-    if (MODO === 'chat') {
+    if (MODO === 'resumen') {
+      const { vistasResumen } = await import('../src/lib/movil/secciones');
+      const { cargarMesEnCurso } = await import('../src/lib/resumen/mes-en-curso');
+      const { getFacturasPendientesCobro } = await import('../src/lib/db/facturas-pendientes');
+      const { saldoInicial } = await import('../src/lib/tesoreria/fuentes');
+      const QS = (n: number) => `Q${Math.round(n).toLocaleString('en-US')}`;
+      // Monto → entero redondeado (escritorio muestra centavos; el móvil, enteros).
+      const entero = (t: string) => { const m = t.replace(/\s/g, '').match(/(−|-)?Q(−|-)?([\d,]+(?:\.\d+)?)/); return m ? Math.round(((m[1] || m[2]) ? -1 : 1) * Number(m[3].replace(/,/g, ''))) : NaN; };
+      const vistas = vistasResumen(ROL as never);
+
+      const nav = (await page.locator('nav[aria-label="Secciones"]').innerText()).replace(/\s+/g, ' ').trim();
+      ok(!/Escritorio/.test(nav) && /Resumen/.test(nav), `nav móvil: "${nav}" — sin el dead-end "Escritorio"`);
+      const toques = await page.locator('nav[aria-label="Secciones"] a').evaluateAll(as => as.map(a => a.getBoundingClientRect().height));
+      ok(toques.every(h => h >= 44), `tabs del menú con área de toque cómoda (${toques.map(h => Math.round(h)).join('/')} px ≥ 44)`);
+
+      // ── Hoy ──
+      await page.goto(`${BASE}/m/resumen`);
+      const tabs = (await page.locator('nav[aria-label="Vistas del resumen"]').innerText()).replace(/\s+/g, ' ').trim();
+      ok(tabs === (vistas.includes('flujo') ? 'Hoy Flujo Por cobrar' : 'Hoy Por cobrar'), `vistas del Resumen para ${ROL}: "${tabs}"`);
+      const [mes, pend] = await Promise.all([cargarMesEnCurso(), getFacturasPendientesCobro()]);
+      const caja = await saldoInicial(mes.v.hoy);
+      const valor = async (et: string) => (await page.locator(`[aria-label="${et}"]`).innerText()).split('\n').map(x => x.trim()).filter(Boolean);
+      const fact = await valor('Facturado del mes'), cobr = await valor('Cobrado del mes'), xc = await valor('Por cobrar'), cj = await valor('Caja hoy');
+      ok(fact[1] === QS(mes.facturado.mesActualAHoyQ) && cobr[1] === QS(mes.cobrado.mesActualAHoyQ) && xc[1] === QS(pend.totales.saldoTotalQ) && cj[1] === QS(caja.total),
+        `4 tarjetas = servidor: facturado ${fact[1]} · cobrado ${cobr[1]} · por cobrar ${xc[1]} · caja ${cj[1]}`);
+      ok(!mes.v.mesRecienEmpieza || /cerró en Q[\d,]+ · al día \d+ llevaba Q[\d,]+/.test(fact.join(' ')), `facturado con calendario: "${fact.slice(2).join(' ')}"`);
+      ok((await desborde()) <= 1, 'Hoy: sin scroll horizontal a 390 px');
+      await page.screenshot({ path: path.join(SHOTS, `resumen-hoy-${ROL}.png`), fullPage: true });
+
+      // ── Flujo ──
+      if (vistas.includes('flujo')) {
+        await page.goto(`${BASE}/m/resumen/flujo`);
+        await page.locator('.recharts-surface').first().waitFor();
+        const barras = await page.locator('.recharts-bar-rectangle').count();
+        ok(barras >= 13 && (await desborde()) <= 1, `gráfico: ${barras} barras (13 semanas + atrasado si hay), sin scroll horizontal`);
+        ok((await page.locator('.recharts-reference-line').count()) > 0, 'la línea de cero está dibujada (el eje siempre incluye el 0, aunque todo sea negativo)');
+        const alFinalMovil = entero((await page.getByText('Al final').locator('..').innerText()));
+        const htmlTes = await (await page.request.get(`${BASE}/tesoreria`, { headers: { 'User-Agent': UA_DESKTOP, Accept: 'text/html' } })).text();
+        const kpi = (et: string) => { const m = htmlTes.match(new RegExp(`${et}</div><div class="kpi-value"[^>]*>([^<]+)<`)); return m ? entero(m[1].replace(/\u00a0/g, ' ').replace(/&#x27;|&nbsp;/g, '')) : NaN; };
+        const saldoFinalDesk = kpi('Saldo final'), minimoDesk = kpi('Punto más bajo');
+        const minimoMovil = entero((await page.locator('[role="status"]').first().innerText()).split('punto más bajo')[1] ?? '');
+        ok(Number.isFinite(saldoFinalDesk) && saldoFinalDesk === alFinalMovil && minimoDesk === minimoMovil,
+          `flujo móvil = /tesoreria de escritorio: saldo final Q${alFinalMovil} / Q${saldoFinalDesk} · punto más bajo Q${minimoMovil} / Q${minimoDesk}`);
+        await page.screenshot({ path: path.join(SHOTS, `resumen-flujo-${ROL}.png`), fullPage: true });
+      } else {
+        await page.goto(`${BASE}/m/resumen/flujo`);
+        await page.waitForURL(u => !u.pathname.endsWith('/flujo'), { timeout: 15_000 }).catch(() => null);
+        ok(new URL(page.url()).pathname === '/m/resumen', `${ROL} sin permiso "flujo": /m/resumen/flujo vuelve a Hoy (sin error)`);
+        ok(!(await page.locator('a[aria-label="Caja hoy"]').count()), 'la tarjeta de caja no lleva al flujo para quien no tiene permiso');
+      }
+
+      // ── Por cobrar ──
+      await page.goto(`${BASE}/m/resumen/cobrar`);
+      const filas = page.locator('ul[aria-label="Clientes por cobrar"] > li');
+      const nFilas = await filas.count();
+      const totalTxt = (await page.locator('[aria-label="Total por cobrar"]').innerText()).split('\n').pop() ?? '';
+      if (pend.totales.numFacturas === 0) {
+        ok(totalTxt.trim() === 'Q0' && nFilas === 0 && (await page.getByText('No hay facturas pendientes de cobro.').count()) > 0, 'sin facturas pendientes: total Q0 y mensaje claro (no una lista vacía muda)');
+      } else {
+        ok(totalTxt.trim() === QS(pend.totales.saldoTotalQ) && nFilas > 0, `lista por cliente: ${nFilas} clientes visibles, total ${totalTxt.trim()} (sin cedidas)`);
+      }
+      if (nFilas) {
+        await filas.first().locator('button').click();
+        ok((await filas.first().locator('ul li').count()) > 0, 'tocar un cliente abre sus facturas (vencido primero)');
+      }
+      const altoFila = nFilas ? await filas.first().locator('button').evaluate(b => b.getBoundingClientRect().height) : 44;
+      ok((await desborde()) <= 1 && altoFila >= 44, `Por cobrar: sin scroll horizontal${nFilas ? `, filas de ${Math.round(altoFila)} px` : ''}`);
+      await page.screenshot({ path: path.join(SHOTS, `resumen-cobrar-${ROL}.png`) });
+
+      // ── Pantallas pesadas: aviso, no layout roto ──
+      for (const ruta of ['/conciliacion', '/factoraje', '/tesoreria', '/dashboard']) {
+        await page.goto(`${BASE}${ruta}`);
+        await page.getByText('Esta pantalla se ve mejor en computadora').waitFor({ timeout: 20_000 }).catch(() => null);
+        const avisoOk = await page.getByText('Esta pantalla se ve mejor en computadora').count() > 0 && !(await page.locator('.sidebar').count());
+        ok(avisoOk && (await desborde()) <= 1, `${ruta} desde el teléfono → aviso "mejor en computadora" (sin sidebar ni desborde)`);
+      }
+      await page.screenshot({ path: path.join(SHOTS, 'aviso-escritorio.png') });
+      await page.getByRole('link', { name: 'Ir a la app del teléfono' }).click();
+      await page.waitForURL(`**${home}`);
+      ok(page.url().endsWith(home), `"Ir a la app del teléfono" → ${home}`);
+      await page.goto(`${BASE}/conciliacion`);
+      await page.getByRole('button', { name: /Abrir igual/ }).click();
+      await page.locator('.sidebar').first().waitFor({ timeout: 20_000 }).catch(() => null);
+      ok((await page.locator('.sidebar').count()) > 0, '"Abrir igual" muestra la pantalla completa (escape para una urgencia)');
+      ok(erroresConsola.length === 0, `sin errores de JavaScript${erroresConsola.length ? `: ${erroresConsola[0]}` : ''}`);
+    } else if (MODO === 'chat') {
       // ── Auros chat ──
       const sug = '¿Quién facturó más este mes? (vs el mes pasado)';
       await page.getByRole('button', { name: sug }).click();
@@ -292,8 +382,12 @@ const SLUG = (process.env.EMPRESA_SLUG || 'golden').toLowerCase();
       await page.screenshot({ path: path.join(SHOTS, 'captura-gasto-ok.png') });
       ok((await desborde()) <= 1, 'captura sin scroll horizontal');
 
-      // El auxiliar captura pero no aprueba.
+      // El auxiliar captura pero no aprueba. En el teléfono la pantalla de escritorio muestra el aviso;
+      // con "Abrir igual" se monta la página real y su guard manda a /no-acceso.
       await page.goto(`${BASE}/gastos`);
+      ok((await page.getByText('Esta pantalla se ve mejor en computadora').count()) > 0, '/gastos desde el teléfono → aviso "mejor en computadora"');
+      await page.getByRole('button', { name: /Abrir igual/ }).click();
+      await page.waitForURL('**/no-acceso', { timeout: 20_000 }).catch(() => null);
       await page.waitForLoadState('domcontentloaded');
       ok(/no-acceso/.test(page.url()), `${ROL} no entra a la bandeja de aprobación (/gastos → ${new URL(page.url()).pathname})`);
       ok(erroresConsola.length === 0, `sin errores de JavaScript${erroresConsola.length ? `: ${erroresConsola[0]}` : ''}`);

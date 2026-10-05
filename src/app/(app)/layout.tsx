@@ -1,4 +1,6 @@
 import { redirect } from 'next/navigation';
+import { headers } from 'next/headers';
+import { esTelefono } from '@/lib/movil/secciones';
 import { AppShell } from '@/components/shell/app-shell';
 import { getSesion } from '@/lib/auth/guard';
 import { getLimiteAuros } from '@/lib/auth/permissions';
@@ -51,6 +53,7 @@ export default async function AppLayout({
       marcaSub={marca.subtitulo}
       multiEmpresa={multiEmpresa}
       dueno={marca.dueno}
+      esTelefono={esTelefono((await headers()).get('user-agent'))}
     >{children}</AppShell>
   );
 }

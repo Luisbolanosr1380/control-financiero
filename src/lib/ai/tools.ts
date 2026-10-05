@@ -73,7 +73,8 @@ import { getObligacionesRecurrentes } from '@/lib/flujo/obligaciones';
 import { resolverPeriodo, enRango, type PeriodoNombre, type PeriodoMetadata } from '@/lib/db/periodos';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
-import { ventanasCalendario, metricaCalendario, bloqueCalendario, type VentanasCalendario } from '@/lib/ai/contexto-calendario';
+import { type VentanasCalendario } from '@/lib/ai/contexto-calendario';
+import { cargarCalendario } from '@/lib/resumen/mes-en-curso';
 
 const ESTADOS = ['vencido', 'por_cobrar', 'cobrado', 'anulado', 'pendiente', 'emitida', 'contabilizado'] as const;
 
@@ -119,22 +120,6 @@ function meta(input: PeriodoInput): PeriodoMetadata {
   // Zona Guatemala: en Vercel (UTC) "hoy" se adelanta un día desde las 6 PM.
   const g = obtenerFechaHoyGuatemala().split('-').map(Number);
   return resolverPeriodo(input.periodo as PeriodoNombre, new Date(g[0], g[1] - 1, g[2], 12), { desde: input.desde, hasta: input.hasta });
-}
-
-/**
- * Conciencia de calendario: facturado (mismo universo que el reporte de
- * facturación — sin anuladas/refacturadas) y cobrado (cobros activos) del mes
- * en curso, el mes anterior y el mes anterior al mismo día.
- */
-async function cargarCalendario(): Promise<{ v: VentanasCalendario; bloque: ReturnType<typeof bloqueCalendario> }> {
-  const v = ventanasCalendario(obtenerFechaHoyGuatemala());
-  const [facturas, cobros] = await Promise.all([getFacturasReporte(), getCobrosCompletos()]);
-  const { filtradas } = filtrarReporte(facturas, { desde: v.mesAnterior.desde, hasta: v.hoy });
-  const facturado = metricaCalendario(filtradas.map(x => ({ fecha: x.f.fecha, monto: x.totalQ })), v);
-  const cobrado = metricaCalendario(
-    cobros.filter(c => c.estadoCobro === 'Activo').map(c => ({ fecha: c.fechaCobro, monto: c.monto })), v,
-  );
-  return { v, bloque: bloqueCalendario(v, { facturado, cobrado }) };
 }
 
 const mesEnCurso = () => obtenerFechaHoyGuatemala().slice(0, 7);
