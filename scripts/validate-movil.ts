@@ -37,9 +37,12 @@ const primeraLinea = (src: string, fn: string) => {
   const S = await import('../src/lib/movil/secciones');
   ok(S.homeMovil('admin') === 'auros' && S.homeMovil('lectura') === 'auros' && S.homeMovil('contador') === 'captura' && S.homeMovil('auxiliar') === 'captura',
     'home por rol: admin/lectura → Auros · contador/auxiliar → captura');
-  ok(JSON.stringify(S.seccionesMovil('auxiliar')) === '["captura"]' && JSON.stringify(S.seccionesMovil('lectura')) === '["auros"]'
-    && JSON.stringify(S.seccionesMovil('contador')) === '["auros","captura"]' && JSON.stringify(S.seccionesMovil('admin')) === '["auros","captura"]',
-    'secciones: auxiliar solo captura (sin Auros) · lectura solo Auros (no registra) · contador y admin ambas');
+  ok(JSON.stringify(S.seccionesMovil('auxiliar')) === '["captura"]' && JSON.stringify(S.seccionesMovil('lectura')) === '["auros","resumen"]'
+    && JSON.stringify(S.seccionesMovil('contador')) === '["auros","captura","resumen"]' && JSON.stringify(S.seccionesMovil('admin')) === '["auros","captura","resumen"]',
+    'nav: Auros · Capturar · Resumen según rol — auxiliar solo captura (sin Auros ni Resumen) · lectura Auros + Resumen · contador y admin las tres');
+  ok(JSON.stringify(S.vistasResumen('admin')) === '["hoy","flujo","cobrar"]' && JSON.stringify(S.vistasResumen('contador')) === '["hoy","flujo","cobrar"]'
+    && JSON.stringify(S.vistasResumen('lectura')) === '["hoy","cobrar"]' && S.vistasResumen('auxiliar').length === 0,
+    'Resumen: el flujo solo con permiso "flujo" (admin/contador); lectura ve Hoy y Por cobrar; auxiliar nada');
   ok(JSON.stringify(S.tiposCaptura('auxiliar')) === '["gasto","factura","cobro"]' && S.tiposCaptura('lectura').length === 0 && S.homeMovil(null) === null,
     'captura = REGISTRAN (auxiliar puede gasto/factura/cobro; lectura nada)');
   const UA_IPHONE = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
@@ -92,6 +95,22 @@ const primeraLinea = (src: string, fn: string) => {
     const r = await RI.enviarConReintentos(async () => { llamadas++; return { ok: false }; }, { idempotente: true, entorno: e });
     ok(r.estado === 'ok' && llamadas === 1, 'un error de negocio del servidor no se reintenta');
   }
+  const CB = await import('../src/lib/resumen/cobrar');
+  const fp = (cliente: string, noFactura: string, saldo: number, dias: number, cedida = false) => ({
+    id: noFactura, noFactura, custId: cliente, cliente, fechaEmision: '', mesEmision: '', total: saldo, saldo, diasCredito: 30,
+    fechaVencimiento: '', diasVencidos: dias, vencida: dias > 0, bucket: 'corriente', esParcial: false, centros: [],
+    ...(cedida ? { cedida: { factorajeId: 'f', financiador: 'Banco', montoCedido: saldo, fechaCesion: '' } } : {}),
+  }) as unknown as import('../src/lib/db/facturas-pendientes').FacturaPendiente;
+  const grupos = CB.agruparPorCliente([fp('ALFA', 'A1', 1000, -10), fp('BETA', 'B1', 500, 40), fp('BETA', 'B2', 700, -5), fp('GAMA', 'G1', 9000, 5, true), fp('ALFA', 'A2', 300, 2)]);
+  ok(grupos.length === 2 && grupos[0].cliente === 'BETA' && grupos[0].vencido === 500 && grupos[0].saldo === 1200 && grupos[0].maxDiasVencidos === 40
+    && grupos[1].cliente === 'ALFA' && grupos[1].vencido === 300 && !grupos.some(g => g.cliente === 'GAMA'),
+    '"¿a quién le cobro?": por cliente, lo vencido primero, y la cedida a factoraje (GAMA) no aparece');
+  const TX = await import('../src/lib/resumen/textos');
+  const vMedio = C.ventanasCalendario('2026-10-20');
+  ok(TX.lineaCalendario(v, met) === 'Septiembre cerró en Q320,000 · al día 4 llevaba Q18,000' && TX.tituloDia(v) === 'Día 4 de octubre · el mes apenas arranca',
+    'tarjeta a inicio de mes: "Septiembre cerró en Q320,000 · al día 4 llevaba Q18,000" (nunca un cero pelado)');
+  ok(TX.lineaCalendario(vMedio, { mesActualAHoyQ: 150000, mesAnteriorQ: 320000, mesAnteriorAlMismoDiaQ: 120000, ritmoVsMismoDiaPct: 25 }) === '+25% vs al día 20 de septiembre (Q120,000) · cerró en Q320,000',
+    'tarjeta a mitad de mes: ritmo contra el mismo día del mes anterior');
   const G = await import('../src/lib/ai/guardas');
   ok(G.cifrasNuevas('Septiembre cerró en Q343,620 y llevabas Q10,382.', []).length === 2 && G.cifrasNuevas('Q0 hasta ahora; septiembre cerró en Q0.', []).length === 2,
     'guarda: montos sin tool en el primer mensaje → se fuerza una ronda de tools (Q0 incluido)');
@@ -139,6 +158,23 @@ const primeraLinea = (src: string, fn: string) => {
     && !R.puede('auxiliar', 'aprobar_gasto') && !R.puede('auxiliar', 'pagar') && !P.PERMISSIONS.auxiliar.aurosChat,
     'auxiliar: captura sí; aprobar/pagar NO; sin Auros');
   ok(/aprobarFacturaAction[\s\S]{0,400}autorizar\('aprobar_gasto'\)/.test(leer('src/app/(app)/gastos/_actions/aprobar-factura.ts')), 'aprobar el gasto capturado exige aprobar_gasto (Contador/Admin)');
+
+  console.log('\nB2. Resumen móvil y aviso de escritorio');
+  const shell = leer('src/components/movil/movil-shell.tsx');
+  ok(!/Escritorio/.test(shell) && /resumen: \{ href: '\/m\/resumen'/.test(shell), 'nav móvil sin el tab "Escritorio" (dead-end) y con Resumen');
+  const app = leer('src/components/shell/app-shell.tsx');
+  ok(/esTelefono && !verIgual/.test(app) && /<AvisoEscritorio/.test(app) && /esTelefono=\{esTelefono\(\(await headers\(\)\)\.get\('user-agent'\)\)\}/.test(leer('src/app/(app)/layout.tsx')),
+    'toda pantalla de escritorio abierta desde un teléfono muestra el aviso (un solo componente), no el layout roto');
+  const hoyPage = leer('src/app/(movil)/m/resumen/page.tsx');
+  ok(/cargarMesEnCurso\(\)/.test(hoyPage) && /getFacturasPendientesCobro\(\)/.test(hoyPage) && /saldoInicial\(/.test(hoyPage) && /saldoTotalQ/.test(hoyPage),
+    'Hoy reusa: mes en curso de Auros, por cobrar propio de facturas-pendientes, caja de /tesoreria');
+  const fm = leer('src/components/movil/flujo-movil.tsx'), tc = leer('src/components/tesoreria/tesoreria-client.tsx');
+  ok(/incluirSinFecha: false/.test(fm) && /useState<'13s' \| '6m'>\('13s'\)/.test(fm) && /useState\(false\)/.test(tc.match(/incluirSinFecha, setIncluirSinFecha\] = useState\(false\)/)?.[0] ?? '') && /useState<Horizonte>\('13s'\)/.test(tc),
+    'flujo móvil = mismos defaults que /tesoreria (13 semanas, pasivos sin fecha aparte, partes relacionadas incluidas)');
+  ok(/puede\(rol, 'flujo'\)/.test(leer('src/app/(movil)/m/resumen/flujo/page.tsx')) && /vistasResumen\(rol\)/.test(leer('src/app/(movil)/m/resumen/layout.tsx')),
+    'permisos en el servidor: /m/resumen exige ver finanzas y /m/resumen/flujo exige "flujo"');
+  const resumenSrc = ['src/app/(movil)/m/resumen/page.tsx', 'src/app/(movil)/m/resumen/flujo/page.tsx', 'src/app/(movil)/m/resumen/cobrar/page.tsx', 'src/lib/resumen/mes-en-curso.ts'].map(leer).join('\n');
+  ok(!/\.(insert|update|upsert|delete|rpc)\(|'use server'/.test(resumenSrc), 'Resumen es read-only (sin escrituras ni server actions nuevas)');
 
   if (process.argv.includes('--sin-datos')) return fin();
 
@@ -196,16 +232,61 @@ const primeraLinea = (src: string, fn: string) => {
     ok(!!kp.contexto_calendario && !!tm.contexto_calendario?.top_mes_anterior, 'getKPIs(mes_actual) y topClientesDelMes(mes en curso) adjuntan contexto_calendario');
     const kpAnt = await ejecutar<Record<string, any>>(aiTools.getKPIs, { periodo: 'mes_anterior' });
     ok(!kpAnt.contexto_calendario, 'períodos cerrados no cargan el bloque (sin costo extra)');
+
+    /* ── D. Resumen: cifras cuadran con escritorio y excluyen cedidas ── */
+    console.log(`\nD. Resumen móvil en ${base.toUpperCase()} (cifras vs escritorio, cedidas fuera)`);
+    const { cargarMesEnCurso } = await import('../src/lib/resumen/mes-en-curso');
+    const { getFacturasPendientesCobro } = await import('../src/lib/db/facturas-pendientes');
+    const { saldoInicial, getEventosCaja } = await import('../src/lib/tesoreria/fuentes');
+    const pendAntes = await getFacturasPendientesCobro();
+    const mesAntes = await cargarMesEnCurso();
+    await fac('R1', ca, hoy, 10000);
+    await fac('R2', ca, hoy, 6000);
+    const A2 = await import('../src/lib/db/acreedores');
+    const D = await import('../src/lib/db/deudas');
+    const F = await import('../src/lib/db/factoraje');
+    const ra = await A2.crearAcreedor({ nombreAcreedor: `${TAG} FINANCIERA`, tipoProducto: 'Factoraje', tipoAcreedor: 'Financiera' });
+    if (!ra.ok) throw new Error(ra.error);
+    creados.push(['acreedores', String((await sb.from('acreedores').select('id').eq('airtable_id', ra.acreedorId).single()).data!.id)]);
+    const rd = await D.crearDeuda({ acreedorId: ra.acreedorId, nombreDeuda: `${TAG} Factoraje`, tipoDocumento: 'Factoraje', fechaEmision: hoy, moneda: 'Q', montoOriginal: 5000, fechaVencimiento: C.ventanasCalendario(hoy).mesActual.hasta, conRecurso: false });
+    if (!rd.ok) throw new Error(rd.error);
+    creados.push(['deudas', String((await sb.from('deudas').select('id').eq('airtable_id', rd.deudaId).single()).data!.id)]);
+    const { getFacturas } = await import('../src/lib/db/facturas');
+    const r2App = (await getFacturas()).find(f => f.noFactura === `${TAG}-R2`)!.id;
+    const ce = await F.cederFacturas({ factorajeId: rd.deudaId, items: [{ facturaId: r2App }], usuario: 'validador@movil' });
+    ok(ce.ok, `R2 (Q6,000) cedida a factoraje: ${ce.ok ? ce.mensaje : ce.error}`);
+
+    const pend = await getFacturasPendientesCobro();
+    const mes = await cargarMesEnCurso();
+    ok(Math.round(pend.totales.saldoTotalQ - pendAntes.totales.saldoTotalQ) === 10000 && Math.round(pend.totales.saldoCedidoQ - pendAntes.totales.saldoCedidoQ) === 6000,
+      'tarjeta "Por cobrar": sube Q10,000 (R1), NO Q16,000 — la cedida R2 va aparte (Q6,000 cedidos)');
+    const lista = CB.agruparPorCliente(pend.filas);
+    const alfa = lista.find(g => g.cliente.includes(`${TAG} ALFA`));
+    ok(!!alfa && alfa.facturas.some(f => f.noFactura === `${TAG}-R1`) && !lista.some(g => g.facturas.some(f => f.noFactura === `${TAG}-R2`)),
+      'lista "Por cobrar": ALFA aparece con R1 y la cedida R2 no aparece');
+    ok(Math.round(lista.reduce((t, g) => t + g.saldo, 0)) === Math.round(pend.totales.saldoTotalQ), 'la suma de la lista por cliente = el total "Por cobrar" (mismo universo que Pendientes de cobro)');
+    ok(mes.facturado.mesActualAHoyQ - mesAntes.facturado.mesActualAHoyQ === 16000, 'tarjeta "Facturado del mes": +Q16,000 (ceder no des-factura; la cesión solo afecta el cobro)');
+    const rep = await ejecutar<Record<string, any>>(aiTools.getReporteFacturacion, { periodo: 'mes_actual' });
+    const cob = await ejecutar<Record<string, any>>(aiTools.getCobrosPorPeriodo, { periodo: 'mes_actual', limite: 1 });
+    ok(rep.total_facturado_Q === mes.facturado.mesActualAHoyQ && cob.sumaQ === mes.cobrado.mesActualAHoyQ,
+      `cuadran con escritorio: facturado del mes = Reporte de facturación (Q${rep.total_facturado_Q}); cobrado = Cobros del mes (Q${cob.sumaQ})`);
+    const caja = await saldoInicial(hoy);
+    const { supuestos } = await getEventosCaja(hoy, hoy);
+    ok(caja.total === supuestos.saldoInicial.total, `tarjeta "Caja hoy" = saldo inicial de /tesoreria (Q${caja.total})`);
   } catch (e) {
     ok(false, `error: ${e instanceof Error ? e.message : e}`);
   } finally {
-    for (const t of ['facturas_clientes', 'clientes']) {
+    const deudaIds = creados.filter(([t]) => t === 'deudas').map(([, id]) => id);
+    if (deudaIds.length) await sb.from('factoraje_facturas').delete().in('deuda_id', deudaIds);
+    for (const t of ['facturas_clientes', 'deudas', 'acreedores', 'clientes']) {
       const ids = creados.filter(([x]) => x === t).map(([, id]) => id);
       if (ids.length) await sb.from(t).delete().in('id', ids);
     }
     const { count: c1 } = await sb.from('facturas_clientes').select('id', { count: 'exact', head: true }).like('no_factura', `${TAG}%`);
     const { count: c2 } = await sb.from('clientes').select('id', { count: 'exact', head: true }).like('razon_social', `${TAG}%`);
-    ok((c1 ?? 0) + (c2 ?? 0) === 0, `limpieza verificada: 0 filas con ${TAG}`);
+    const { count: c3 } = await sb.from('deudas').select('id', { count: 'exact', head: true }).like('nombre_deuda', `${TAG}%`);
+    const { count: c4 } = await sb.from('factoraje_facturas').select('id', { count: 'exact', head: true }).eq('created_by', 'validador@movil');
+    ok((c1 ?? 0) + (c2 ?? 0) + (c3 ?? 0) + (c4 ?? 0) === 0, `limpieza verificada: 0 filas con ${TAG} (facturas, clientes, factoraje, cesiones)`);
     fin();
   }
 })();

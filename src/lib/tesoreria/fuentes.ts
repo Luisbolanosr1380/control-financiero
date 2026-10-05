@@ -57,7 +57,8 @@ export async function getEventosCaja(hoy: string, hasta: string): Promise<{ even
 }
 
 /* ── Saldo inicial: saldo_inicial + movimientos del banco cargados ── */
-async function saldoInicial(hoy: string): Promise<Supuestos['saldoInicial']> {
+/** Caja hoy: saldo de las cuentas GTQ (también lo usa el Resumen móvil). */
+export async function saldoInicial(hoy: string): Promise<Supuestos['saldoInicial']> {
   try {
     const [bancos, movs] = await Promise.all([
       fetchAll<Row>('bancos', { select: 'id, nombre_cuenta, banco, moneda, saldo_inicial, fecha_saldo_inicial, activo' }),

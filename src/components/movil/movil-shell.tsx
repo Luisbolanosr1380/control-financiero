@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Camera, Monitor, Sparkles } from 'lucide-react';
+import { Camera, LayoutGrid, Sparkles } from 'lucide-react';
 import { PermisosProvider } from '@/components/auth/permisos';
 import type { Role } from '@/lib/auth/allowlist';
 import type { SeccionMovil } from '@/lib/movil/secciones';
@@ -24,6 +24,7 @@ const ROL_LABEL: Record<Role, string> = { admin: 'Admin', contador: 'Contador', 
 const SECCION: Record<SeccionMovil, { href: string; label: string; Icono: typeof Sparkles }> = {
   auros: { href: '/m/auros', label: 'Auros', Icono: Sparkles },
   captura: { href: '/m/captura', label: 'Capturar', Icono: Camera },
+  resumen: { href: '/m/resumen', label: 'Resumen', Icono: LayoutGrid },
 };
 
 export function MovilShell({ children, rol, secciones, empresa, nombreApp, iniciales, iconoUrl, colorMarca }: Props) {
@@ -54,10 +55,6 @@ export function MovilShell({ children, rol, secciones, empresa, nombreApp, inici
               </Link>
             );
           })}
-          <Link href="/dashboard" className={s.navItem}>
-            <Monitor size={20} strokeWidth={1.7} />
-            Escritorio
-          </Link>
         </nav>
       </div>
     </PermisosProvider>

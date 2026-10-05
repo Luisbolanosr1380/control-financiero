@@ -6,12 +6,17 @@
  *  · gerentes / dueños / socios (admin, lectura) → arrancan en Auros.
  *  · operadores (contador, auxiliar)            → arrancan en captura.
  * Cada sección además exige su permiso real: Auros = PERMISSIONS.aurosChat
- * (auxiliar no tiene), captura = poder registrar al menos un documento.
+ * (auxiliar no tiene), captura = poder registrar al menos un documento,
+ * resumen = ver finanzas (PERMISSIONS.verAnaliticaAvanzada: admin, contador,
+ * lectura). Dentro del resumen, el flujo exige 'flujo' (admin, contador).
+ *
+ * En el teléfono se consulta y se captura; en la computadora se opera.
  */
 import { puede, type Accion, type Rol } from '../auth/roles';
 import { PERMISSIONS } from '../auth/permissions';
 
-export type SeccionMovil = 'auros' | 'captura';
+export type SeccionMovil = 'auros' | 'captura' | 'resumen';
+export type VistaResumen = 'hoy' | 'flujo' | 'cobrar';
 export type TipoCaptura = 'gasto' | 'factura' | 'cobro';
 
 export const HOME_POR_ROL: Record<Rol, SeccionMovil> = {
@@ -37,7 +42,14 @@ export function seccionesMovil(rol: Rol | null | undefined): SeccionMovil[] {
   const out: SeccionMovil[] = [];
   if (PERMISSIONS[rol].aurosChat) out.push('auros');
   if (tiposCaptura(rol).length > 0) out.push('captura');
+  if (PERMISSIONS[rol].verAnaliticaAvanzada) out.push('resumen');
   return out;
+}
+
+/** Vistas del Resumen que ve el rol (vacío = sin Resumen). */
+export function vistasResumen(rol: Rol | null | undefined): VistaResumen[] {
+  if (!rol || !PERMISSIONS[rol].verAnaliticaAvanzada) return [];
+  return puede(rol, 'flujo') ? ['hoy', 'flujo', 'cobrar'] : ['hoy', 'cobrar'];
 }
 
 /** Home del rol; si el rol no tiene esa sección, la primera que sí tenga. */

@@ -7,6 +7,9 @@ import { Topbar } from '@/components/shell/topbar';
 import { AIPanel, type ChatMensaje } from '@/components/shell/ai-panel';
 import { CommandPalette } from '@/components/shell/command-palette';
 import type { Role } from '@/lib/auth/allowlist';
+import { AvisoEscritorio } from '@/components/movil/aviso-escritorio';
+
+const CLAVE_VER_IGUAL = 'ver-escritorio-en-telefono';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -24,10 +27,16 @@ interface AppShellProps {
   /** MULTI-EMPRESA: el usuario tiene 2+ empresas → ítem "Cambiar de empresa". */
   multiEmpresa?: boolean;
   dueno?: string;
+  /** MÓVIL: la app de escritorio no está adaptada al teléfono → aviso en vez de layout roto. */
+  esTelefono?: boolean;
 }
 
-export function AppShell({ children, facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, email, consumoAuros, limiteAuros, marcaNombre, marcaSub, multiEmpresa, dueno }: AppShellProps) {
+export function AppShell({ children, facturasVencidasCount, deudasVencidasCount, pagosPendientesCount, pagosPendientesAlertasRojas, ncsPendientesCount, rol, email, consumoAuros, limiteAuros, marcaNombre, marcaSub, multiEmpresa, dueno, esTelefono }: AppShellProps) {
   const [aiOpen, setAiOpen] = useState(false);
+  const [verIgual, setVerIgual] = useState(false);
+  useEffect(() => {
+    try { if (sessionStorage.getItem(CLAVE_VER_IGUAL) === '1') setVerIgual(true); } catch { /* sin storage */ }
+  }, []);
   const [showCmdK, setShowCmdK] = useState(false);
 
   // El historial vive aquí — sobrevive al cierre/apertura del drawer y a
@@ -46,6 +55,10 @@ export function AppShell({ children, facturasVencidasCount, deudasVencidasCount,
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
+  if (esTelefono && !verIgual) {
+    return <AvisoEscritorio onAbrirIgual={() => { setVerIgual(true); try { sessionStorage.setItem(CLAVE_VER_IGUAL, '1'); } catch { /* sin storage */ } }} />;
+  }
 
   return (
     <PermisosProvider rol={rol}>

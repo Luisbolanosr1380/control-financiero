@@ -136,7 +136,8 @@ export function TesoreriaClient({ hoy, eventos, supuestos: sup }: Props) {
             <BarChart data={datosGrafico} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="etiqueta" tick={{ fontSize: 11 }} interval={0} angle={gran === 'semana' && p.periodos.length > 14 ? -35 : 0} textAnchor={gran === 'semana' && p.periodos.length > 14 ? 'end' : 'middle'} height={gran === 'semana' && p.periodos.length > 14 ? 50 : 30} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `Q${Math.round(Number(v) / 1000)}K`} width={60} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `Q${Math.round(Number(v) / 1000)}K`} width={60}
+                domain={[(min: number) => Math.min(0, min), (max: number) => Math.max(0, max)]} />
               <Tooltip formatter={(v) => Q(Number(v))} labelStyle={{ fontWeight: 500 }} />
               <ReferenceLine y={0} stroke="var(--ink)" strokeWidth={1.5} />
               <Bar dataKey="saldo" name="Saldo fin">
