@@ -338,7 +338,9 @@ export async function sbFacturasRecords(): Promise<PseudoRecord[]> {
       id: String(r.airtable_id),
       fields: compact({
         'FACTURA_ID':          n(r.factura_id_legacy) ?? s(r.factura_id_legacy),
-        'NO.FACTURA':          s(r.no_factura),
+        // Un espacio heredado en la data (import) rompía el match exacto por NO.FACTURA y la
+        // consolidación de líneas: se recorta al leer (y el trigger de la 012 impide que entre).
+        'NO.FACTURA':          s(r.no_factura)?.trim(),
         'FECHA_EMISION':       fechaEmision,
         // Sin fecha de emisión las fórmulas de Airtable devuelven objetos de
         // error / NaN — los emitimos igual para que los mappers produzcan
@@ -409,7 +411,7 @@ export async function sbCobrosRecords(): Promise<PseudoRecord[]> {
         'Tipo_Cambio':      tipoCambio,
         'Estado':           s(r.estado),
         'Referencia':       s(r.referencia),
-        'NO.FACTURA (from Factura Cliente)': r.factura?.no_factura ? [r.factura.no_factura] : undefined,
+        'NO.FACTURA (from Factura Cliente)': r.factura?.no_factura?.trim() ? [r.factura.no_factura.trim()] : undefined,
         'CLIENTE  (from Factura Cliente)':   r.factura?.cliente?.airtable_id ? [r.factura.cliente.airtable_id] : undefined,
         'Monto_Retencion_IVA': n(r.monto_retencion_iva) || undefined,
         'Monto_Retencion_ISR': n(r.monto_retencion_isr) || undefined,

@@ -201,7 +201,7 @@ export async function getFacturasLiviano(args: { mes?: string; desde?: string; h
     for (const r of records) {
       const row: Row = { id: r.id, fields: r.fields as Record<string, unknown> };
       const bruto = brutoFromEstado(row.fields[F.ESTADO]);
-      const nf = String(row.fields[F.NO_FACTURA] ?? row.id);
+      const nf = String(row.fields[F.NO_FACTURA] ?? row.id).trim();
       const key = bruto === 'anulado' || bruto === 'refacturado'
         ? `${nf}__${bruto}__${row.id}`
         : nf;
@@ -236,7 +236,7 @@ export async function getFacturasLiviano(args: { mes?: string; desde?: string; h
 
       out.push({
         id: principal.id,
-        noFactura: String(principal.fields[F.NO_FACTURA] ?? principal.id),
+        noFactura: String(principal.fields[F.NO_FACTURA] ?? principal.id).trim(),
         custId: String((principal.fields[F.CLIENTE] as string[] | undefined)?.[0] ?? ''),
         total,
         estadoBruto: brutoDominante,
@@ -319,7 +319,7 @@ export async function getFacturasReporte(): Promise<FacturaReporte[]> {
     for (const r of records) {
       const row: Row = { id: r.id, fields: r.fields as Record<string, unknown> };
       const bruto = brutoFromEstado(row.fields[F.ESTADO]);
-      const nf = String(row.fields[F.NO_FACTURA] ?? row.id);
+      const nf = String(row.fields[F.NO_FACTURA] ?? row.id).trim();
       const key = bruto === 'anulado' || bruto === 'refacturado'
         ? `${nf}__${bruto}__${row.id}`
         : nf;
@@ -354,7 +354,7 @@ export async function getFacturasReporte(): Promise<FacturaReporte[]> {
       });
       out.push({
         id: principal.id,
-        noFactura: String(principal.fields[F.NO_FACTURA] ?? principal.id),
+        noFactura: String(principal.fields[F.NO_FACTURA] ?? principal.id).trim(),
         custId: String((principal.fields[F.CLIENTE] as string[] | undefined)?.[0] ?? ''),
         fecha: String(principal.fields[F.FECHA_EMISION] ?? '').slice(0, 10),
         estadoBruto: brutoDominante,
@@ -570,7 +570,7 @@ export async function getFacturasCountTotal(): Promise<number> {
       if (est === 'ANULADO' || est === 'ANULADA' || est === 'REFACTURADO' || est === 'REFACTURADA') {
         anuladasYRef += 1;
       } else {
-        noAnulNoFactura.add(String(r.fields[F.NO_FACTURA] ?? r.id));
+        noAnulNoFactura.add(String(r.fields[F.NO_FACTURA] ?? r.id).trim());
       }
     }
     return noAnulNoFactura.size + anuladasYRef;
@@ -606,13 +606,13 @@ export async function createFactura(input: NewFacturaInput): Promise<CreateFactu
   if (!input.noFactura?.trim()) throw new Error('NO.FACTURA es requerido.');
   if (!input.custId)            throw new Error('Cliente es requerido.');
   if (!input.lineas?.length)    throw new Error('Se requiere al menos una línea.');
+  const nf = input.noFactura.trim();   // nunca entra un espacio a la base (ni a Airtable)
 
   // ═══ FASE 3 — EMISIÓN EN SUPABASE ═══
   // Todas las líneas en UN insert masivo (una sentencia = atómico).
   if (writeSource('facturacion') === 'supabase') {
     const sb = supabase();
     if (!sb) throw new Error('Supabase no está configurado.');
-    const nf = input.noFactura.trim();
     const { data: existentes, error: errDup } = await sb.from('facturas_clientes')
       .select('id').eq('no_factura', nf).limit(1);
     if (errDup) throw new Error(errDup.message);
@@ -656,17 +656,17 @@ export async function createFactura(input: NewFacturaInput): Promise<CreateFactu
 
   try {
     // Evitar duplicado silencioso: ¿ya existe ese NO.FACTURA?
-    const noFacturaEsc = input.noFactura.replace(/"/g, '\\"');
+    const noFacturaEsc = nf.replace(/"/g, '\\"');
     const existentes = await airtable!(TABLES.FACTURAS)
-      .select({ filterByFormula: `{${F.NO_FACTURA}} = "${noFacturaEsc}"`, maxRecords: 1 })
+      .select({ filterByFormula: `TRIM({${F.NO_FACTURA}}) = "${noFacturaEsc}"`, maxRecords: 1 })
       .all();
     if (existentes.length > 0) {
-      throw new Error(`La factura ${input.noFactura} ya existe en Airtable. No se creó para evitar un duplicado.`);
+      throw new Error(`La factura ${nf} ya existe en Airtable. No se creó para evitar un duplicado.`);
     }
 
     const payload = input.lineas.map(l => ({
       fields: {
-        [F.NO_FACTURA]:    input.noFactura,
+        [F.NO_FACTURA]:    nf,
         [F.CLIENTE]:       [input.custId],
         [F.CENTRO_COSTO]:  [l.centroCostoId],
         [F.FECHA_EMISION]: input.fechaEmision,
@@ -691,7 +691,7 @@ export async function createFactura(input: NewFacturaInput): Promise<CreateFactu
     }
 
     return {
-      noFactura: input.noFactura,
+      noFactura: nf,
       recordsCreados: createdIds.length,
       recordIdPrincipal: createdIds[maxIdx] ?? createdIds[0] ?? '',
     };
@@ -736,7 +736,7 @@ export async function anularFactura(
   if (writeSource('facturacion') === 'supabase') {
     try {
       const todas = await sbFacturasRecords();
-      const records = todas.filter(r => String(r.fields[F.NO_FACTURA] ?? '') === nf);
+      const records = todas.filter(r => String(r.fields[F.NO_FACTURA] ?? '').trim() === nf);
       if (records.length === 0) {
         return { ok: false, noFactura: nf, recordsActualizados: 0, recordsTotal: 0, error: `No se encontró la factura ${nf}.` };
       }
@@ -793,7 +793,7 @@ export async function anularFactura(
   try {
     const esc = nf.replace(/"/g, '\\"');
     const records = await airtable!(TABLES.FACTURAS)
-      .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
+      .select({ filterByFormula: `TRIM({${F.NO_FACTURA}}) = "${esc}"`, maxRecords: 100 })
       .all();
 
     if (records.length === 0) {
@@ -927,7 +927,7 @@ async function leerRecordsDeFactura(noFactura: string): Promise<Array<{ id: stri
   if (!airtable) throw new Error('Airtable no está configurado.');
   const esc = noFactura.replace(/"/g, '\\"');
   const records = await airtable(TABLES.FACTURAS)
-    .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
+    .select({ filterByFormula: `TRIM({${F.NO_FACTURA}}) = "${esc}"`, maxRecords: 100 })
     .all();
   return records
     .map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }))
@@ -1057,7 +1057,7 @@ export async function editarFacturaNoContable(
     if (numeroNuevo && numeroNuevo !== numeroAnterior) {
       const esc = numeroNuevo.replace(/"/g, '\\"');
       const colisiones = await airtable(TABLES.FACTURAS)
-        .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 50 })
+        .select({ filterByFormula: `TRIM({${F.NO_FACTURA}}) = "${esc}"`, maxRecords: 50 })
         .all();
       const colisionActiva = colisiones.find(r => {
         const e = String(r.fields[F.ESTADO] ?? '').toUpperCase().trim();
