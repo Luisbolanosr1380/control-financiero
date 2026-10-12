@@ -44,6 +44,8 @@ export interface Customer {
   avgPayDays: number;
   onTimeRate: number;
   contextoComercial?: string;   // notas cualitativas sobre la relación con el cliente
+  /** false = inactivo (no se le facturan nuevas; no cuenta para el aviso de NIT repetido). */
+  activo?: boolean;
 }
 
 export interface InvoiceLine {

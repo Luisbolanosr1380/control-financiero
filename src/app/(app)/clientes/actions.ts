@@ -2,7 +2,7 @@
 
 import { autorizar, exigir } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
-import { crearCliente, type CrearClienteInput, type CrearClienteResult } from '@/lib/db/clientes';
+import { crearCliente, verificarNitCliente, type CrearClienteInput, type CrearClienteResult, type NitDuplicado } from '@/lib/db/clientes';
 
 export async function crearClienteAction(input: CrearClienteInput): Promise<CrearClienteResult> {
   const permiso = await autorizar('emitir_factura');
@@ -47,4 +47,14 @@ export async function getDatosAltaClienteAction(): Promise<DatosAltaCliente> {
   } catch {
     return { cuentasCxc: [{ codigo: '1-1-3-1', nombre: 'CxC Clientes Nacionales' }], hermanas: [] };
   }
+}
+
+/**
+ * AVISO-NIT: ¿otro cliente ACTIVO ya tiene este NIT? Es solo el aviso al
+ * salir del campo; el alta (crearCliente) vuelve a verificar y pide la
+ * confirmación en el servidor. `excluirId` = el cliente que se edita.
+ */
+export async function verificarNitClienteAction(nit: string, excluirId?: string): Promise<NitDuplicado | null> {
+  await exigir('ver');
+  return verificarNitCliente(nit, excluirId);
 }
