@@ -14,8 +14,10 @@ import {
   crearNotaCredito,
   anularNotaCredito,
   aprobarNotaCredito,
+  editarAutorizacionFelNC,
   type CrearNotaCreditoInput,
   type CrearNotaCreditoResult,
+  type EditarAutorizacionFelResult,
   type AnularNCResult,
   type AprobarNCResult,
 } from '@/lib/db/notas-credito';
@@ -124,6 +126,15 @@ export async function emitirNotaCreditoAction(input: CrearNotaCreditoInput): Pro
   const user = await currentUser();
   const email = user?.emailAddresses?.[0]?.emailAddress ?? 'sistema';
   const result = await crearNotaCredito(input, email);
+  if (result.ok) revalidarTodo();
+  return result;
+}
+
+/* 013: setear/editar el número de autorización FEL de una NC (quien emite/edita NC). */
+export async function editarAutorizacionFelNCAction(ncId: string, numero: string): Promise<EditarAutorizacionFelResult> {
+  const permiso = await autorizar('anular');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const result = await editarAutorizacionFelNC(ncId, numero);
   if (result.ok) revalidarTodo();
   return result;
 }

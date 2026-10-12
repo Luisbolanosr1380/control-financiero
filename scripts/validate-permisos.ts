@@ -67,6 +67,7 @@ function archivosUseServer(dir: string): string[] {
     aprobarPresupuestoAction: 'presupuesto',
     archivarPresupuestoAction: 'presupuesto',
     reabrirPresupuestoAction: 'reabrir_presupuesto',
+    editarAutorizacionFelNCAction: 'anular',
   };
   const sinGuard: string[] = [];
   let totalActions = 0;

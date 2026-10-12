@@ -74,6 +74,8 @@ export interface NotaCredito {
   anuladaPor?: string;
   adjuntoUrl?: string;
   adjuntoNombre?: string;
+  /** 013: número de autorización FEL del documento electrónico de la NC en SAT ("número de constancia"). '' si no se cargó. */
+  numeroAutorizacionFel: string;
 }
 
 /* ============================================================
@@ -100,7 +102,13 @@ const NF = {
   // Lookups desde linked records (resuelven nombre/numero sin queries extra)
   FACTURA_NO:   'NO.FACTURA (from Factura)',
   CLIENTE_NOMBRE: 'Razón social (from Cliente)',
+  AUTORIZACION_FEL: 'Numero_Autorizacion_FEL',   // 013: solo Supabase
 } as const;
+
+/** Número de autorización FEL: recortado, sin espacios internos, máx. 64. '' = sin número. */
+export function normalizarAutorizacionFel(v: string | null | undefined): string {
+  return String(v ?? '').replace(/\s+/g, '').toUpperCase().slice(0, 64);
+}
 
 function estadoFromAirtable(v: unknown): EstadoNotaCredito {
   const s = String(v ?? '').trim();
@@ -147,6 +155,7 @@ function recordToNC(r: { id: string; fields: Record<string, unknown> }): NotaCre
     anuladaPor: f[NF.ANULADA_POR] ? String(f[NF.ANULADA_POR]) : undefined,
     adjuntoUrl: adjunto?.url,
     adjuntoNombre: adjunto?.filename,
+    numeroAutorizacionFel: String(f[NF.AUTORIZACION_FEL] ?? '').trim(),
   };
 }
 
@@ -305,6 +314,8 @@ export interface CrearNotaCreditoInput {
   monto: number;
   motivo: MotivoNC;
   descripcion: string;
+  /** 013: número de autorización FEL (opcional). */
+  numeroAutorizacionFel?: string;
 }
 
 export interface CrearNotaCreditoResult {
@@ -462,6 +473,8 @@ export async function crearNotaCredito(input: CrearNotaCreditoInput, usuarioEmai
         estado:        estadoInicial,
         emitida_por:   usuarioEmail,
         fecha_creacion: new Date().toISOString(),
+        // Solo si viene: así emitir una NC sin número sigue funcionando aunque la 013 no esté aplicada todavía.
+        ...(normalizarAutorizacionFel(input.numeroAutorizacionFel) ? { numero_autorizacion_fel: normalizarAutorizacionFel(input.numeroAutorizacionFel) } : {}),
       });
       let facturaActualizadaSb = false;
       if (estadoInicial === 'Activa') {
@@ -513,6 +526,27 @@ export interface AprobarNCResult {
   ok: boolean;
   facturaActualizada?: boolean;
   error?: string;
+}
+
+export interface EditarAutorizacionFelResult { ok: boolean; numero?: string; error?: string }
+
+/**
+ * 013: setear/editar el número de autorización FEL de una NC existente (para
+ * completar las ya emitidas sin recrearlas). Vacío = quitarlo. Solo Supabase
+ * (en Airtable la columna no existe). No toca estado ni saldo.
+ */
+export async function editarAutorizacionFelNC(ncId: string, numero: string | null | undefined): Promise<EditarAutorizacionFelResult> {
+  if (writeSource('facturacion') !== 'supabase') return { ok: false, error: 'Editar el número FEL requiere el backend Supabase.' };
+  const n = normalizarAutorizacionFel(numero);
+  if (n && !/^[A-Z0-9-]{8,64}$/.test(n)) return { ok: false, error: `"${n}" no parece un número de autorización FEL (letras, dígitos y guiones, 8 a 64 caracteres).` };
+  try {
+    const nc = await getNotaCreditoPorId(ncId);
+    if (!nc) return { ok: false, error: 'Nota de crédito no encontrada.' };
+    await actualizarPorAppId('notas_credito', ncId, { numero_autorizacion_fel: n || null });
+    return { ok: true, numero: n };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 export async function aprobarNotaCredito(ncId: string, usuarioEmail: string, esAdmin: boolean): Promise<AprobarNCResult> {

@@ -613,6 +613,8 @@ export async function sbNotasCreditoRecords(): Promise<PseudoRecord[]> {
       // en Airtable hoy y sin columna en el schema (ver 03_fase2_gaps.sql).
       'NO.FACTURA (from Factura)':   (r.factura as { no_factura?: string | null } | null)?.no_factura?.trim() ? [(r.factura as { no_factura: string }).no_factura.trim()] : undefined,
       'Razón social (from Cliente)': (r.cliente as { razon_social?: string | null } | null)?.razon_social ? [(r.cliente as { razon_social: string }).razon_social] : undefined,
+      // 013: número de autorización FEL de la NC (opcional; la columna no existe en Airtable).
+      'Numero_Autorizacion_FEL':     s(r.numero_autorizacion_fel),
     }),
   }));
 }

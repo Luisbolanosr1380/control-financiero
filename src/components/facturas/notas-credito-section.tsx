@@ -17,6 +17,7 @@ import { Q } from '@/lib/utils';
 import { formatearFecha } from '@/lib/utils/fechas';
 import { aprobarNotaCreditoAction, anularNotaCreditoAction } from '@/app/(app)/facturacion/[id]/actions';
 import { HelpButton } from '@/components/ayuda/help-button';
+import { AutorizacionFel } from '@/components/notas-credito/autorizacion-fel';
 import type { NotaCredito, EstadoNotaCredito } from '@/lib/db/notas-credito';
 
 const ESTADO_BADGE: Record<EstadoNotaCredito, { cls: string; text: string }> = {
@@ -110,6 +111,9 @@ export function NotasCreditoSection({ notasCredito, esAdmin }: Props) {
               </div>
               <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 4 }}>
                 <strong>Motivo:</strong> {nc.motivo} · <em>{nc.descripcion}</em>
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--ink-3)', marginBottom: 4, display: 'flex', gap: 6, alignItems: 'center' }}>
+                <strong>Autorización FEL:</strong> <AutorizacionFel ncId={nc.id} numeroNC={nc.numeroNC} valor={nc.numeroAutorizacionFel} puedeEditar={puede('anular')} />
               </div>
               <div style={{ fontSize: 11, color: 'var(--ink-4)' }}>
                 Emitida por {nc.emitidaPor || '—'}
