@@ -30,11 +30,13 @@ function TendenciaCell({ t }: { t: Tendencia }) {
 
 interface Props {
   clientes: AnalisisCliente[];
+  /** AVISO-NIT: custId → nombre(s) del otro cliente activo con el mismo NIT. */
+  nitCompartido?: Record<string, string>;
 }
 
 type Tab = 'todos' | 'riesgo' | 'sanos' | 'episodicos';
 
-export function ClientesListClient({ clientes }: Props) {
+export function ClientesListClient({ clientes, nitCompartido = {} }: Props) {
   const puede = usePuede();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('todos');
@@ -133,7 +135,12 @@ export function ClientesListClient({ clientes }: Props) {
               const badge = BADGE[c.clasificacion];
               return (
                 <tr key={c.custId} className="clickable" onClick={() => router.push(`/clientes/${c.custId}`)}>
-                  <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.nombre}>{c.nombre}</td>
+                  <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.nombre}>
+                    {c.nombre}
+                    {nitCompartido[c.custId] && (
+                      <span className="badge badge-warn" style={{ marginLeft: 8, fontSize: 10, verticalAlign: 'middle' }} title={`Mismo NIT que ${nitCompartido[c.custId]}`}>NIT compartido</span>
+                    )}
+                  </td>
                   <td><span className={'badge ' + badge.cls}>{badge.text}</span></td>
                   <td className="num cell-strong" style={{ whiteSpace: 'nowrap' }}>{Q(c.montoPromedio)}</td>
                   <td className="num cell-mute" style={{ whiteSpace: 'nowrap' }}>{formatDate(c.ultimaFactura)}</td>

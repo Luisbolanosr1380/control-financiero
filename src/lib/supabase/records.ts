@@ -133,6 +133,8 @@ export async function sbClientesRecords(): Promise<PseudoRecord[]> {
       'Email cobros':         s(r.email_cobros),
       'Dias Credito':         n(r.dias_credito),
       'Contexto_Comercial':   s(r.contexto_comercial),
+      // AVISO-NIT: un cliente inactivo no cuenta para el aviso de NIT repetido.
+      'Activo':               typeof r.activo === 'boolean' ? r.activo : undefined,
     }),
   }));
   return out.sort(porId);

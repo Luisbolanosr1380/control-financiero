@@ -5,7 +5,8 @@ import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
-import { crearClienteAction, getDatosAltaClienteAction, type DatosAltaCliente } from '@/app/(app)/clientes/actions';
+import { crearClienteAction, getDatosAltaClienteAction, verificarNitClienteAction, type DatosAltaCliente } from '@/app/(app)/clientes/actions';
+import { AVISO_NIT, nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
 import { detectarIntercompany, CUENTA_CXC_DEFAULT, CUENTA_CXC_INTERCOMPANY } from '@/lib/clientes/intercompany';
 import type { Customer } from '@/lib/types';
 
@@ -41,6 +42,10 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
   const [instrucciones, setInstrucciones]   = useState('');
   const [contexto, setContexto]             = useState('');
   const [loading, setLoading] = useState(false);
+  // AVISO-NIT: mismo NIT que otro cliente activo → aviso bajo el campo y, al
+  // guardar, confirmación explícita (no es un candado: 0 y CF se repiten).
+  const [nitDuplicado, setNitDuplicado] = useState<{ clienteId: string; nombre: string } | null>(null);
+  const [confirmarNit, setConfirmarNit] = useState<{ nombre: string } | null>(null);
 
   useEffect(() => {
     let vivo = true;
@@ -70,11 +75,18 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
 
   const valido = nombreEmpresa.trim().length > 0;
 
-  const onConfirm = async () => {
+  const revisarNit = async () => {
+    const n = nitComparable(nit);
+    if (nitEsPlaceholder(n)) { setNitDuplicado(null); return; }
+    try { setNitDuplicado(await verificarNitClienteAction(nit)); } catch { /* el servidor revalida al guardar */ }
+  };
+
+  const onConfirm = async (confirmarNitDuplicado = false) => {
     if (!valido) return;
     setLoading(true);
     try {
       const res = await crearClienteAction({
+        confirmarNitDuplicado,
         nombreEmpresa: nombreEmpresa.trim(),
         razonSocial: razonSocial.trim() || undefined,
         nit: nit.trim() || undefined,
@@ -108,6 +120,10 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
         });
         onClose();
         router.refresh();
+      } else if (res.nitDuplicado) {
+        // El servidor pide confirmación: se muestra en el pie del modal (no un confirm() del navegador).
+        setNitDuplicado(res.nitDuplicado);
+        setConfirmarNit({ nombre: res.nitDuplicado.nombre });
       } else {
         toast.error(res.error);
       }
@@ -157,7 +173,12 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
             </div>
             <div className="field" style={{ margin: 0 }}>
               <label className="label">NIT (o CF)</label>
-              <input type="text" className="input num" placeholder="1234567-8 o CF" value={nit} onChange={(e) => setNit(e.target.value)} disabled={loading} />
+              <input type="text" className="input num" placeholder="1234567-8 o CF" value={nit} onChange={(e) => { setNit(e.target.value); setNitDuplicado(null); setConfirmarNit(null); }} onBlur={revisarNit} disabled={loading} />
+              {nitDuplicado && (
+                <div role="status" style={{ marginTop: 4, fontSize: 11.5, color: 'var(--burnt, #b5651d)', lineHeight: 1.4 }}>
+                  ⚠ {AVISO_NIT(nitDuplicado.nombre)}. <a href={`/clientes/${nitDuplicado.clienteId}`} target="_blank" rel="noreferrer">Ver</a>
+                </div>
+              )}
             </div>
             <div className="field" style={{ margin: 0 }}>
               <label className="label">Cuenta CxC</label>
@@ -202,12 +223,24 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
           </div>
         </div>
 
-        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--line-2)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancelar</button>
-          <button type="button" className="btn btn-primary" onClick={onConfirm} disabled={loading || !valido}>
-            {loading ? <><I.Refresh size={13} /> Guardando…</> : <><I.Check size={13} /> Crear cliente</>}
-          </button>
-        </div>
+        {confirmarNit ? (
+          <div role="alertdialog" aria-label="Confirmar NIT repetido" style={{ padding: '12px 20px', borderTop: '1px solid var(--line-2)', background: 'var(--paper-2, #f6f1e4)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 12.5, lineHeight: 1.45, flex: 1, minWidth: 260 }}>
+              <strong>{AVISO_NIT(confirmarNit.nombre)}.</strong> Puede ser el mismo cliente cargado dos veces. ¿Crear de todos modos?
+            </div>
+            <button type="button" className="btn btn-ghost" onClick={() => setConfirmarNit(null)} disabled={loading}>Volver</button>
+            <button type="button" className="btn btn-primary" onClick={() => void onConfirm(true)} disabled={loading}>
+              {loading ? <><I.Refresh size={13} /> Guardando…</> : 'Crear de todos modos'}
+            </button>
+          </div>
+        ) : (
+          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--line-2)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+            <button type="button" className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancelar</button>
+            <button type="button" className="btn btn-primary" onClick={() => void onConfirm(false)} disabled={loading || !valido}>
+              {loading ? <><I.Refresh size={13} /> Guardando…</> : <><I.Check size={13} /> Crear cliente</>}
+            </button>
+          </div>
+        )}
       </div>
     </div>,
     document.body,

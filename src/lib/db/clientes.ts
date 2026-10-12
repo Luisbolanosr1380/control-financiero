@@ -5,6 +5,7 @@ import { insertar } from '../supabase/writes';
 import { CUSTOMERS } from '../mock-data';
 import type { Customer } from '../types';
 import type { FieldSet } from 'airtable';
+import { buscarNitDuplicado, AVISO_NIT } from '../clientes/nit';
 
 // Campos reales de la tabla CLIENTES en Airtable
 const FC = {
@@ -14,6 +15,7 @@ const FC = {
   EMAIL:        'Email cobros',
   DIAS_CREDITO: 'Dias Credito',
   CONTEXTO:     'Contexto_Comercial',
+  ACTIVO:       'Activo',
 } as const;
 
 function recordToCustomer(record: { id: string; fields: FieldSet }): Customer {
@@ -34,6 +36,7 @@ function recordToCustomer(record: { id: string; fields: FieldSet }): Customer {
     avgPayDays:   0,
     onTimeRate:   0,
     contextoComercial: contexto || undefined,
+    activo:       typeof f[FC.ACTIVO] === 'boolean' ? Boolean(f[FC.ACTIVO]) : undefined,
   };
 }
 
@@ -89,11 +92,25 @@ export interface CrearClienteInput {
   instruccionesCobro?: string;
   contextoComercial?: string;
   activo?: boolean;                 // default true
+  /** AVISO-NIT: el usuario ya vio el aviso de NIT repetido y quiere crear igual. */
+  confirmarNitDuplicado?: boolean;
 }
+
+export interface NitDuplicado { clienteId: string; nombre: string }
 
 export type CrearClienteResult =
   | { ok: true; clienteId: string; mensaje: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; /** presente cuando solo falta la confirmación del NIT repetido */ nitDuplicado?: NitDuplicado };
+
+/**
+ * AVISO-NIT: otro cliente ACTIVO con el mismo NIT (solo dígitos/letras,
+ * mayúsculas). Vacío, "0" y "CF" nunca avisan. `excluirId` = el cliente que
+ * se está editando.
+ */
+export async function verificarNitCliente(nit: string, excluirId?: string): Promise<NitDuplicado | null> {
+  const dup = buscarNitDuplicado(nit, await getClientes(), excluirId);
+  return dup ? { clienteId: dup.id, nombre: dup.name } : null;
+}
 
 const normClienteTxt = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 /** NIT sin espacios/guiones, mayúscula (el dígito verificador puede ser K). */
@@ -129,16 +146,18 @@ export async function crearCliente(input: CrearClienteInput): Promise<CrearClien
     return { ok: false, error: 'Los días de crédito deben ser un entero ≥ 0.' };
   }
 
-  // Duplicados (la migración sufrió justo esto): mismo nombre/razón social
-  // (case+acento insensible) o mismo NIT (salvo CF, que se repite legítimamente).
+  // Duplicados (la migración sufrió justo esto). Mismo nombre/razón social
+  // (case+acento insensible): candado. Mismo NIT que otro cliente ACTIVO:
+  // AVISO con confirmación (no candado: vacío, "0" y "CF" se repiten
+  // legítimamente, y hay casos reales de dos clientes con un NIT).
   const existentes = await getClientes();
   const q = normClienteTxt(nombre);
   const qRazon = input.razonSocial?.trim() ? normClienteTxt(input.razonSocial) : '';
   const dupNombre = existentes.find(c => normClienteTxt(c.name) === q || (qRazon !== '' && normClienteTxt(c.name) === qRazon));
   if (dupNombre) return { ok: false, error: `Ya existe un cliente con ese nombre: "${dupNombre.name}".` };
-  if (nit && normNit(nit) !== 'CF') {
-    const dupNit = existentes.find(c => c.nit && normNit(c.nit) === normNit(nit));
-    if (dupNit) return { ok: false, error: `Ya existe un cliente con el NIT ${nit}: "${dupNit.name}".` };
+  const dupNit = buscarNitDuplicado(nit, existentes);
+  if (dupNit && !input.confirmarNitDuplicado) {
+    return { ok: false, error: `${AVISO_NIT(dupNit.name)}. Confirmá para crearlo de todos modos.`, nitDuplicado: { clienteId: dupNit.id, nombre: dupNit.name } };
   }
 
   try {
