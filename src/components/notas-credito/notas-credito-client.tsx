@@ -19,6 +19,7 @@ import { Q } from '@/lib/utils';
 import { formatearFecha } from '@/lib/utils/fechas';
 import { HelpButton } from '@/components/ayuda/help-button';
 import { aprobarNotaCreditoAction, anularNotaCreditoAction } from '@/app/(app)/facturacion/[id]/actions';
+import { AutorizacionFel } from '@/components/notas-credito/autorizacion-fel';
 import type {
   NotaCredito,
   KPIsNotasCredito,
@@ -92,6 +93,7 @@ export function NotasCreditoClient({ notas, kpis, esAdmin, initialTab = 'todas' 
       r = r.filter(n =>
         n.numeroNC.toLowerCase().includes(q) ||
         n.facturaNumero.toLowerCase().includes(q) ||
+        n.numeroAutorizacionFel.toLowerCase().includes(q) ||
         n.clienteNombre.toLowerCase().includes(q) ||
         n.descripcion.toLowerCase().includes(q),
       );
@@ -122,12 +124,13 @@ export function NotasCreditoClient({ notas, kpis, esAdmin, initialTab = 'todas' 
   };
 
   const exportCSV = () => {
-    const headers = ['Numero_NC', 'Fecha_Emision', 'Cliente', 'Factura', 'Motivo', 'Monto', 'Estado', 'Emitida_Por', 'Descripcion'];
+    const headers = ['Numero_NC', 'Fecha_Emision', 'Cliente', 'Factura', 'Autorizacion_FEL', 'Motivo', 'Monto', 'Estado', 'Emitida_Por', 'Descripcion'];
     const rows = filtradas.map(n => [
       n.numeroNC,
       n.fechaEmision,
       `"${n.clienteNombre.replace(/"/g, '""')}"`,
       n.facturaNumero,
+      n.numeroAutorizacionFel,
       n.motivo,
       n.monto.toFixed(2),
       n.estado,
@@ -220,6 +223,7 @@ export function NotasCreditoClient({ notas, kpis, esAdmin, initialTab = 'todas' 
               <th>Fecha</th>
               <th>Cliente</th>
               <th>Factura origen</th>
+              <th>Constancia FEL</th>
               <th>Motivo</th>
               <th className="num">Monto</th>
               <th>Estado</th>
@@ -228,7 +232,7 @@ export function NotasCreditoClient({ notas, kpis, esAdmin, initialTab = 'todas' 
           </thead>
           <tbody>
             {filtradas.length === 0 ? (
-              <tr><td colSpan={8} style={{ height: 160, textAlign: 'center', color: 'var(--ink-4)' }}>
+              <tr><td colSpan={9} style={{ height: 160, textAlign: 'center', color: 'var(--ink-4)' }}>
                 <I.Receipt size={26} style={{ opacity: 0.4, marginBottom: 6 }} />
                 <div style={{ fontSize: 13 }}>Sin notas de crédito bajo los filtros actuales</div>
               </td></tr>
@@ -247,6 +251,7 @@ export function NotasCreditoClient({ notas, kpis, esAdmin, initialTab = 'todas' 
                       </Link>
                     ) : <span className="cell-mute">—</span>}
                   </td>
+                  <td><AutorizacionFel ncId={nc.id} numeroNC={nc.numeroNC} valor={nc.numeroAutorizacionFel} puedeEditar={puede('anular')} compacto /></td>
                   <td className="cell-mute" style={{ fontSize: 11 }}>{nc.motivo}</td>
                   <td className="num cell-strong" style={{ color: nc.estado === 'Anulada' ? 'var(--ink-4)' : 'var(--wine)' }}>
                     {Q(nc.monto)}

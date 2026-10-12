@@ -80,6 +80,7 @@ function Modal({ facturaId, facturaNumero, clienteNombre, total, saldoPendiente,
   const [montoStr, setMontoStr] = useState('');
   const [motivo, setMotivo] = useState<MotivoNC>('Descuento posterior');
   const [descripcion, setDescripcion] = useState('');
+  const [numeroFel, setNumeroFel] = useState('');   // 013: autorización FEL (opcional)
 
   const monto = useMemo(() => {
     const n = Number(montoStr.replace(/,/g, ''));
@@ -125,6 +126,7 @@ function Modal({ facturaId, facturaNumero, clienteNombre, total, saldoPendiente,
         monto,
         motivo,
         descripcion: descripcion.trim(),
+        numeroAutorizacionFel: numeroFel.replace(/\s+/g, '') || undefined,
       });
       if (res.ok) {
         const accion = res.estadoInicial === 'Activa'
@@ -227,6 +229,19 @@ function Modal({ facturaId, facturaNumero, clienteNombre, total, saldoPendiente,
                 />
               </div>
 
+              <div className="field" style={{ marginBottom: 12 }}>
+                <label className="label" htmlFor="nc-fel">No. de autorización FEL <span style={{ color: 'var(--ink-4)', fontWeight: 400 }}>(opcional)</span></label>
+                <input
+                  id="nc-fel"
+                  type="text"
+                  className="input num"
+                  placeholder="El número del documento electrónico de la NC en SAT (se puede completar después)"
+                  value={numeroFel}
+                  onChange={(e) => setNumeroFel(e.target.value)}
+                  disabled={loading}
+                />
+              </div>
+
               {/* Aviso aprobación */}
               {monto > 0 && (
                 <div style={{
@@ -279,6 +294,7 @@ function Modal({ facturaId, facturaNumero, clienteNombre, total, saldoPendiente,
               <div style={{ fontSize: 12, color: 'var(--ink-3)', lineHeight: 1.5 }}>
                 Motivo: <strong>{motivo}</strong><br />
                 Descripción: <em>{descripcion.trim()}</em>
+                {numeroFel.replace(/\s+/g, '') && <><br />Autorización FEL: <span className="num">{numeroFel.replace(/\s+/g, '').toUpperCase()}</span></>}
               </div>
             </>
           )}
