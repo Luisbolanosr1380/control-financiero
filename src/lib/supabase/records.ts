@@ -603,12 +603,14 @@ export async function sbNotasCreditoRecords(): Promise<PseudoRecord[]> {
       'Motivo_Anulacion': s(r.motivo_anulacion),
       'Fecha_Anulacion':  s(r.fecha_anulacion),
       'Anulada_Por':      s(r.anulada_por),
-      // OJO: los lookups 'NO.FACTURA (from Factura)' y 'Razón social (from
-      // Cliente)' NO existen hoy en la tabla de Airtable (la lectura recibe
-      // '' y la UI muestra vacío). NO los emitimos para mantener el output
-      // idéntico; cuando se creen en Airtable, activarlos acá con el join.
-      // Fecha_Creacion / Aprobada_Por / anulación / Adjunto: vacíos en
-      // Airtable hoy y sin columna en el schema (ver 03_fase2_gaps.sql).
+      // Lookups que recordToNC lee (NF.FACTURA_NO / NF.CLIENTE_NOMBRE): en
+      // Airtable no existían y quedaron apagados en la migración, con lo que
+      // /notas-credito mostraba "—" en Cliente y Factura origen aunque el join
+      // ya traía el dato. Se emiten desde el join (número recortado, como en
+      // facturas). Fecha_Creacion / Aprobada_Por / anulación / Adjunto: vacíos
+      // en Airtable hoy y sin columna en el schema (ver 03_fase2_gaps.sql).
+      'NO.FACTURA (from Factura)':   (r.factura as { no_factura?: string | null } | null)?.no_factura?.trim() ? [(r.factura as { no_factura: string }).no_factura.trim()] : undefined,
+      'Razón social (from Cliente)': (r.cliente as { razon_social?: string | null } | null)?.razon_social ? [(r.cliente as { razon_social: string }).razon_social] : undefined,
     }),
   }));
 }
