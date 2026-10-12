@@ -16,21 +16,24 @@ const _lookupFirst = (v: unknown): string => Array.isArray(v) ? String(v[0] ?? '
 /** Cobros cuya factura vinculada tiene este NO.FACTURA (equivale al
  *  filterByFormula sobre el lookup 'NO.FACTURA (from Factura Cliente)'). */
 async function sbCobrosDeNoFactura(noFactura: string): Promise<RecordLike[]> {
+  const nf = noFactura.trim();
   const todos = await sbCobrosRecords();
-  return todos.filter(r => _lookupFirst(r.fields[FC_READ.NO_FACTURA]) === noFactura);
+  return todos.filter(r => _lookupFirst(r.fields[FC_READ.NO_FACTURA]).trim() === nf);
 }
 
 /** Líneas de FACTURAS_CLIENTES con este NO.FACTURA (equivale al
  *  filterByFormula {NO.FACTURA} = "nf"). Respeta el flag de facturas. */
 async function fetchLineasFactura(noFactura: string): Promise<RecordLike[]> {
+  // Recortado en AMBOS lados: un espacio heredado en la data no puede hacer que la factura "no exista".
+  const nf = noFactura.trim();
   if (dataSource('facturas_clientes') === 'supabase') {
     const todas = await sbFacturasRecords();
-    return todas.filter(r => String(r.fields[F.NO_FACTURA] ?? '') === noFactura);
+    return todas.filter(r => String(r.fields[F.NO_FACTURA] ?? '').trim() === nf);
   }
   if (!airtable) return [];
-  const esc = noFactura.replace(/"/g, '\\"');
+  const esc = nf.replace(/"/g, '\\"');
   const records = await airtable(TABLES.FACTURAS)
-    .select({ filterByFormula: `{${F.NO_FACTURA}} = "${esc}"`, maxRecords: 100 })
+    .select({ filterByFormula: `TRIM({${F.NO_FACTURA}}) = "${esc}"`, maxRecords: 100 })
     .all();
   return records.map(r => ({ id: r.id, fields: r.fields as Record<string, unknown> }));
 }
