@@ -33,6 +33,8 @@ export interface Tarifa {
   aprobadoPor: string;
   aprobadoEn: string | null;
   activo: boolean;
+  /** Última modificación de la fila (fallback de "precio desde" cuando no hay historial ni año). */
+  updatedAt?: string | null;
 }
 
 export interface Expediente {

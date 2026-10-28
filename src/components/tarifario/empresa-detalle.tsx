@@ -1,10 +1,11 @@
 'use client';
 
 /**
- * TARIFARIO · DETALLE de una empresa: encabezado con KPIs propios, "Aprobar
- * todas las de este cliente" (lote: pendientes con monto; las Q0 quedan
- * fuera; confirmación en línea, sin diálogos del navegador) y la matriz
- * scoped al NIT con todo lo del listado (alta, edición inline, desactivar).
+ * TARIFARIO · DETALLE de una empresa: encabezado con KPIs propios (incluye
+ * tarifas estancadas y desde cuándo no se le revisa precio), "Aprobar todas
+ * las de este cliente" (lote: pendientes con monto; las Q0 quedan fuera;
+ * confirmación en línea, sin diálogos del navegador) y la matriz scoped al
+ * NIT con todo lo del listado (alta, edición inline con motivo, histórico).
  */
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -16,9 +17,12 @@ import { aprobarTarifasPorNitAction } from '@/app/(app)/tarifario/actions';
 import { esSinTarifa } from '@/lib/tarifario/canon';
 import type { Tarifa } from '@/lib/tarifario/lookup';
 import { aprobablesDe, semaforoDe } from '@/lib/tarifario/resumen';
+import { fechaDesdeTexto, precioDesdeMasAntiguo, type AntiguedadPrecio } from '@/lib/tarifario/antiguedad';
 import { TarifasTabla } from './tarifas-tabla';
 
-export function EmpresaDetalle({ nit, tarifas }: { nit: string; tarifas: Tarifa[] }) {
+interface Props { nit: string; tarifas: Tarifa[]; antiguedad: Record<string, AntiguedadPrecio>; umbralMeses: number }
+
+export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses }: Props) {
   const router = useRouter();
   const puede = usePuede();
   const puedeAprobar = puede('catalogos');
@@ -30,6 +34,9 @@ export function EmpresaDetalle({ nit, tarifas }: { nit: string; tarifas: Tarifa[
   const aprobables = aprobablesDe(tarifas);
   const aprobadas = activas.length - sinTarifa - aprobables.length;
   const sem = semaforoDe({ pendientes: aprobables.length, sinTarifa });
+  const conPrecio = activas.filter(t => !esSinTarifa(t.monto)).map(t => antiguedad[t.id]).filter((a): a is AntiguedadPrecio => !!a);
+  const estancadas = conPrecio.filter(a => a.estancada).length;
+  const precioDesde = precioDesdeMasAntiguo(conPrecio);
 
   const aprobarTodas = async () => {
     setBusy(true);
@@ -69,14 +76,15 @@ export function EmpresaDetalle({ nit, tarifas }: { nit: string; tarifas: Tarifa[
         </div>
       )}
 
-      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 14 }}>
+      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: 14 }}>
         <div className="kpi"><div className="kpi-label">Tarifas activas</div><div className="kpi-value">{activas.length}</div><div className="kpi-delta"><span className="vs">{tarifas.length - activas.length} inactivas</span></div></div>
         <div className="kpi"><div className="kpi-label">Aprobadas</div><div className="kpi-value">{aprobadas}</div><div className="kpi-delta"><span className="vs">gobierno: aprobado por / en</span></div></div>
         <div className="kpi"><div className="kpi-label">Pendientes de aprobación</div><div className="kpi-value" style={{ color: aprobables.length ? 'var(--burnt, #b5651d)' : undefined }}>{aprobables.length}</div><div className="kpi-delta"><span className="vs">con monto, sin aprobar</span></div></div>
         <div className="kpi"><div className="kpi-label">Sin tarifa (Q0)</div><div className="kpi-value" style={{ color: sinTarifa ? 'var(--wine)' : undefined }}>{sinTarifa}</div><div className="kpi-delta"><span className="vs">{sem === 'rojo' ? 'falta pactar precio' : sem === 'amarillo' ? 'solo falta aprobar' : 'todo al día'}</span></div></div>
+        <div className="kpi" data-kpi="estancadas"><div className="kpi-label">Estancadas (&gt; {umbralMeses} meses)</div><div className="kpi-value" style={{ color: estancadas ? 'var(--wine)' : undefined }}>{estancadas}</div><div className="kpi-delta"><span className="vs">{precioDesde ? `precio sin revisar desde ${fechaDesdeTexto(precioDesde)}` : 'sin dato de antigüedad'}</span></div></div>
       </div>
 
-      <TarifasTabla disponible tarifas={tarifas} nitFijo={nit} razonSocialFija={razonSocial} />
+      <TarifasTabla disponible tarifas={tarifas} nitFijo={nit} razonSocialFija={razonSocial} antiguedad={antiguedad} umbralMeses={umbralMeses} />
     </div>
   );
 }

@@ -4,7 +4,8 @@
  * TARIFARIO · hub: KPIs globales, el simulador de precio y dos modos —
  * "Por empresa" (maestro: una fila por NIT con semáforo → detalle) y
  * "Ver todas" (el listado plano con sus filtros, para comparar un mismo
- * tipo de prueba entre clientes).
+ * tipo de prueba entre clientes). KPI de tarifas estancadas (histórico 015)
+ * y aviso si la 015 falta en esta base.
  */
 import { useState } from 'react';
 import { toast } from 'sonner';
@@ -12,13 +13,21 @@ import { resolverTarifaAction } from '@/app/(app)/tarifario/actions';
 import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, canonTipoPrueba, esSinTarifa } from '@/lib/tarifario/canon';
 import { tarifasDuplicadas, type ResultadoLookup, type Tarifa } from '@/lib/tarifario/lookup';
 import type { EmpresaTarifario } from '@/lib/tarifario/resumen';
+import { UMBRAL_ESTANCADA_MESES_DEFAULT, type AntiguedadPrecio } from '@/lib/tarifario/antiguedad';
 import { EmpresasLista } from './empresas-lista';
 import { TarifasTabla } from './tarifas-tabla';
 
-interface Props { disponible: boolean; tarifas: Tarifa[]; empresas: EmpresaTarifario[] }
+interface Props {
+  disponible: boolean; tarifas: Tarifa[]; empresas: EmpresaTarifario[];
+  /** Migración 015 aplicada en esta base (bitácora de precios). */
+  historialDisponible?: boolean;
+  /** id → antigüedad del precio (último cambio en la bitácora o año de la tarifa). */
+  antiguedad?: Record<string, AntiguedadPrecio>;
+  umbralMeses?: number;
+}
 type Modo = 'empresas' | 'todas';
 
-export function TarifarioClient({ disponible, tarifas, empresas }: Props) {
+export function TarifarioClient({ disponible, tarifas, empresas, historialDisponible = true, antiguedad = {}, umbralMeses = UMBRAL_ESTANCADA_MESES_DEFAULT }: Props) {
   const [modo, setModo] = useState<Modo>('empresas');
   const activas = tarifas.filter(t => t.activo);
   const kpis = {
@@ -28,6 +37,8 @@ export function TarifarioClient({ disponible, tarifas, empresas }: Props) {
     pendientes: activas.filter(t => !t.aprobadoEn && !esSinTarifa(t.monto)).length,
     duplicadas: tarifasDuplicadas(tarifas).size,
     conAccion: empresas.filter(e => e.semaforo !== 'verde').length,
+    estancadas: activas.filter(t => !esSinTarifa(t.monto) && antiguedad[t.id]?.estancada).length,
+    empresasEstancadas: empresas.filter(e => e.estancadas > 0).length,
   };
 
   return (
@@ -48,20 +59,26 @@ export function TarifarioClient({ disponible, tarifas, empresas }: Props) {
           <div className="card-pad" style={{ fontSize: 13 }}>Falta aplicar la migración <strong>014_tarifario</strong> en esta base.</div>
         </div>
       )}
+      {disponible && !historialDisponible && (
+        <div className="card" style={{ borderColor: 'var(--warn)', marginBottom: 16 }} role="status">
+          <div className="card-pad" style={{ fontSize: 13 }}>Falta aplicar la migración <strong>015_tarifario_historial</strong> en esta base: los cambios de precio no quedan en la bitácora y &quot;precio desde&quot; sale solo del año de cada tarifa.</div>
+        </div>
+      )}
 
-      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: 14 }}>
+      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)', marginBottom: 14 }}>
         <div className="kpi"><div className="kpi-label">Empresas</div><div className="kpi-value">{kpis.empresas}</div><div className="kpi-delta"><span className="vs">{kpis.conAccion} requieren acción</span></div></div>
         <div className="kpi"><div className="kpi-label">Tarifas activas</div><div className="kpi-value">{kpis.tarifas}</div><div className="kpi-delta"><span className="vs">{kpis.tarifas - kpis.pendientes - kpis.sinTarifa} aprobadas</span></div></div>
         <div className="kpi"><div className="kpi-label">Pendientes de aprobación</div><div className="kpi-value" style={{ color: kpis.pendientes ? 'var(--burnt, #b5651d)' : undefined }}>{kpis.pendientes}</div><div className="kpi-delta"><span className="vs">con monto, sin aprobar</span></div></div>
         <div className="kpi"><div className="kpi-label">Sin tarifa (Q0)</div><div className="kpi-value" style={{ color: kpis.sinTarifa ? 'var(--wine)' : undefined }}>{kpis.sinTarifa}</div><div className="kpi-delta"><span className="vs">no es gratis: falta pactar</span></div></div>
         <div className="kpi"><div className="kpi-label">Combinaciones repetidas</div><div className="kpi-value" style={{ color: kpis.duplicadas ? 'var(--wine)' : undefined }}>{kpis.duplicadas}</div><div className="kpi-delta"><span className="vs">misma llave, distinta grafía</span></div></div>
+        <div className="kpi" data-kpi="estancadas"><div className="kpi-label">Tarifas estancadas</div><div className="kpi-value" style={{ color: kpis.estancadas ? 'var(--wine)' : undefined }}>{kpis.estancadas}</div><div className="kpi-delta"><span className="vs">sin subir &gt; {umbralMeses} meses · {kpis.empresasEstancadas} empresa{kpis.empresasEstancadas === 1 ? '' : 's'}</span></div></div>
       </div>
 
       <Simulador />
 
       {modo === 'empresas'
-        ? <EmpresasLista empresas={empresas} />
-        : <TarifasTabla disponible={disponible} tarifas={tarifas} />}
+        ? <EmpresasLista empresas={empresas} umbralMeses={umbralMeses} />
+        : <TarifasTabla disponible={disponible} tarifas={tarifas} antiguedad={antiguedad} umbralMeses={umbralMeses} />}
     </div>
   );
 }

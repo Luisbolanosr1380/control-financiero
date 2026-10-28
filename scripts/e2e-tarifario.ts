@@ -10,6 +10,12 @@
  * abre la lista de empresas → entra a su matriz (Q89.29 sin IVA = Q100 con
  * IVA) → edita una → aprueba en lote (las Q0 quedan fuera) → vuelve → busca.
  *
+ * HISTÓRICO (015): edita el monto 2 veces con motivo → "Histórico" muestra los
+ * 2 cambios con % y usuario y el sparkline → el lote deja 'Aprobación' →
+ * desactivar deja 'Desactivación' → un UPDATE por SQL directo (sin GUC) también
+ * queda, con usuario "—". Badges de antigüedad ("desde 2024 · estancada") y
+ * KPI/filtro de estancadas en la lista de empresas.
+ *
  * Uso: npx tsx --conditions=react-server scripts/e2e-tarifario.ts --env hit --base http://localhost:3012
  */
 import fs from 'node:fs';
@@ -120,20 +126,41 @@ const NIT_MP = '99990003K';   // espejo de MEGAPACA (MPRH, S.A.) para el flujo m
     await filaMetro.getByRole('button', { name: /Editar monto de/ }).click();
     const inp = filaMetro.locator('input[aria-label^="Monto de"]');
     await inp.fill('375');
+    await filaMetro.locator('input[aria-label^="Motivo del cambio de"]').fill('ajuste anual');
     await inp.press('Enter');
     await page.waitForFunction(() => /queda pendiente de aprobación/.test(document.body.innerText), null, { timeout: 30_000 });
     await page.waitForFunction((n) => { const tr = [...document.querySelectorAll('table tbody tr')].find(r => r.textContent?.includes(`NIT ${n}`) && r.textContent?.includes('METROPOLITANA')); return /Q375/.test(tr?.textContent ?? '') && /Pendiente/.test(tr?.textContent ?? ''); }, NIT, { timeout: 30_000 });
-    ok(true, 'editar monto inline (Enter) → Q375 y vuelve a "Pendiente"');
+    ok(true, 'editar monto inline (Enter) con motivo "ajuste anual" → Q375 y vuelve a "Pendiente"');
+    // segundo cambio con motivo
+    await filaMetro.getByRole('button', { name: /Editar monto de/ }).click();
+    await filaMetro.locator('input[aria-label^="Monto de"]').fill('400');
+    await filaMetro.locator('input[aria-label^="Motivo del cambio de"]').fill('renegociación');
+    await filaMetro.getByRole('button', { name: 'Guardar' }).click();
+    await page.waitForFunction((n) => { const tr = [...document.querySelectorAll('table tbody tr')].find(r => r.textContent?.includes(`NIT ${n}`) && r.textContent?.includes('METROPOLITANA')); return /Q400/.test(tr?.textContent ?? ''); }, NIT, { timeout: 30_000 });
+    ok(/última subida: este mes/.test(await filaMetro.innerText()), 'segundo cambio (Guardar) → Q400; badge "última subida: este mes" (precio desde = la bitácora, no el año)');
+    // ver histórico
+    await filaMetro.getByRole('button', { name: /Ver histórico de/ }).click();
+    const panel = page.locator('tr[data-historial-de]');
+    await panel.waitFor();
+    await page.waitForFunction(() => /renegociación/.test(document.querySelector('tr[data-historial-de]')?.textContent ?? ''), null, { timeout: 30_000 });
+    const txtHist = (await panel.innerText()).replace(/\s+/g, ' ');
+    ok(/Cambio de precio/.test(txtHist) && /Q350\.00 → Q375\.00/.test(txtHist) && /\+7\.14 %/.test(txtHist) && /Q375\.00 → Q400\.00/.test(txtHist) && /\+6\.67 %/.test(txtHist), `"Histórico": los 2 cambios de precio con su %: "${txtHist.slice(0, 160)}"`);
+    ok(/ajuste anual/.test(txtHist) && /renegociación/.test(txtHist) && (txtHist.match(/e2e\.tarifario/g) ?? []).length >= 3 && /Alta/.test(txtHist) && /Aprobación/.test(txtHist), 'cada renglón trae motivo y usuario; también la Alta y la Aprobación previas');
+    const spark = panel.locator('svg[role=img]');
+    ok(await spark.count() === 1 && (await spark.getAttribute('aria-label')) === 'Precio: Q350.00 → Q375.00 → Q400.00' && /Cómo creció/.test(txtHist) && /Q350\.00 → Q400\.00/.test(txtHist) && /\+14\.29 %/.test(txtHist), 'sparkline con los 3 puntos de precio y crecimiento total Q350 → Q400 (+14.29 %)');
+    await page.screenshot({ path: path.join(SHOTS, 'historico.png'), fullPage: true });
+    await filaMetro.getByRole('button', { name: /Ver histórico de/ }).click();
+    ok((await panel.count()) === 0, 'el botón vuelve a cerrar el histórico');
 
     // ── Simulador (motor) ──
     await page.getByLabel('Empresa', { exact: true }).fill('e2e tarifario ui s.a.');
     await page.getByLabel('Tipo de prueba', { exact: true }).selectOption('POLIGRAFO');
     await page.getByLabel('Categoría', { exact: true }).selectOption('PRE EMPLEO');
     await page.getByRole('button', { name: 'Resolver precio' }).click();
-    // METRO quedó en Q375 y DEPARTAMENTAL en Q350: sin territorio el motor debe pedirlo (ambigua), no adivinar.
+    // METRO quedó en Q400 y DEPARTAMENTAL en Q350: sin territorio el motor debe pedirlo (ambigua), no adivinar.
     await page.waitForSelector('[role=status]:has-text("Ambigua"), [role=status]:has-text("sin IVA"), [role=status]:has-text("No encontrada")');
     const simTxt = await page.locator('[role=status]').filter({ hasText: /Ambigua|sin IVA|No encontrada/ }).first().innerText();
-    ok(/Ambigua/.test(simTxt) && /cambia según el territorio/.test(simTxt) && /METROPOLITANA Q375\.00/.test(simTxt) && /DEPARTAMENTAL Q350\.00/.test(simTxt), `simulador por empresa (alias) sin territorio y precios distintos → ambigua: ${simTxt.replace(/\s+/g, ' ').slice(0, 150)}`);
+    ok(/Ambigua/.test(simTxt) && /cambia según el territorio/.test(simTxt) && /METROPOLITANA Q400\.00/.test(simTxt) && /DEPARTAMENTAL Q350\.00/.test(simTxt), `simulador por empresa (alias) sin territorio y precios distintos → ambigua: ${simTxt.replace(/\s+/g, ' ').slice(0, 150)}`);
     await page.getByLabel('Territorio', { exact: true }).selectOption('DEPARTAMENTAL');
     await page.getByRole('button', { name: 'Resolver precio' }).click();
     await page.waitForFunction(() => /Q350\.00 sin IVA/.test(document.body.innerText), null, { timeout: 30_000 });
@@ -146,13 +173,13 @@ const NIT_MP = '99990003K';   // espejo de MEGAPACA (MPRH, S.A.) para el flujo m
     const [descarga] = await Promise.all([page.waitForEvent('download', { timeout: 30_000 }), page.getByRole('button', { name: /CSV/ }).click()]);
     const csvPath = path.join(SHOTS, descarga.suggestedFilename() || 'tarifario.csv'); await descarga.saveAs(csvPath);
     const csv = fs.readFileSync(csvPath, 'utf8').split(/\r?\n/);
-    ok(csv[0].startsWith('﻿NIT,Razon_Social,Tipo_Prueba,Categoria,Territorio,Monto_Sin_IVA,IVA,Total_Con_IVA') && csv.filter(l => l.startsWith(NIT)).length === 2 && csv.some(l => l.includes('375.00,45.00,420.00')), 'CSV: header con IVA y total, 2 filas del NIT, 375.00 → IVA 45.00 → 420.00');
+    ok(csv[0].startsWith('﻿NIT,Razon_Social,Tipo_Prueba,Categoria,Territorio,Monto_Sin_IVA,IVA,Total_Con_IVA') && csv.filter(l => l.startsWith(NIT)).length === 2 && csv.some(l => l.includes('400.00,48.00,448.00')) && /Precio_Desde,Meses_Sin_Cambio,Estancada/.test(csv[0]) && csv.some(l => l.startsWith(NIT) && /,0,no$/.test(l.trim())), 'CSV: header con IVA, total y antigüedad; 2 filas del NIT; 400.00 → IVA 48.00 → 448.00; precio desde hoy = 0 meses, no estancada');
 
     // ── Maestro-detalle con una empresa espejo de MEGAPACA ──
-    const mp = (t: string, c: string, ter: string, m: number) => ({ nit: NIT_MP, razon_social: 'E2E MPRH, SOCIEDAD ANONIMA (MEGAPACA)', tipo_prueba: t, categoria: c, territorio: ter, monto: m, anio: '2026', activo: true });
+    const mp = (t: string, c: string, ter: string, m: number, anio = '2026') => ({ nit: NIT_MP, razon_social: 'E2E MPRH, SOCIEDAD ANONIMA (MEGAPACA)', tipo_prueba: t, categoria: c, territorio: ter, monto: m, anio, activo: true });
     const { error: eMp } = await sb.from('tarifario').insert([
       mp('POLIGRAFO', 'ESPECIFICA', 'DEPARTAMENTAL', 0), mp('POLIGRAFO', 'ESPECIFICA', 'METROPOLITANA', 0),
-      mp('POLIGRAFO', 'PRE EMPLEO', 'DEPARTAMENTAL', 178.57), mp('POLIGRAFO', 'PRE EMPLEO', 'METROPOLITANA', 178.57),
+      mp('POLIGRAFO', 'PRE EMPLEO', 'DEPARTAMENTAL', 178.57, '2024'), mp('POLIGRAFO', 'PRE EMPLEO', 'METROPOLITANA', 178.57, '2024'),
       mp('POLIGRAFO', 'RUTINA', 'DEPARTAMENTAL', 89.29), mp('POLIGRAFO', 'RUTINA', 'METROPOLITANA', 89.29),
       mp('SOCIOECONOMICO', 'PRE EMPLEO', 'DEPARTAMENTAL', 312.5), mp('SOCIOECONOMICO', 'PRE EMPLEO', 'METROPOLITANA', 312.5),
     ]);
@@ -168,6 +195,11 @@ const NIT_MP = '99990003K';   // espejo de MEGAPACA (MPRH, S.A.) para el flujo m
     ok(idxMp >= 0 && idxE2e >= 0 && idxMp < idxE2e, `orden: la roja (MPRH) antes que la amarilla (E2E TARIFARIO UI, 2 pendientes) → posiciones ${idxMp} < ${idxE2e}`);
     const kpiEmpresas = await page.locator('.kpi', { hasText: 'Empresas' }).locator('.kpi-value').innerText();
     ok(Number(kpiEmpresas) >= 2, `KPI "Empresas" = ${kpiEmpresas}`);
+    const kpiEst = await page.locator('.kpi[data-kpi="estancadas"] .kpi-value').innerText();
+    ok(Number(kpiEst) >= 2 && /2 estancadas/.test(txtMp) && /2024/.test(txtMp), `KPI "Tarifas estancadas" = ${kpiEst}; la fila de MPRH marca "2 estancadas" y precio desde 2024 (las PRE EMPLEO de 2024 sin cambios)`);
+    await page.getByLabel('Solo con tarifas estancadas').check();
+    ok(await page.locator('table tbody tr', { hasText: `NIT ${NIT_MP}` }).count() === 1 && await page.locator('table tbody tr', { hasText: `NIT ${NIT}` }).count() === 0, 'filtro "Solo con tarifas estancadas" → queda MPRH, no E2E TARIFARIO UI (su precio cambió hoy)');
+    await page.getByLabel('Solo con tarifas estancadas').uncheck();
     await filaMp.click();
     await page.waitForURL(`**/tarifario/${NIT_MP}`);
     await page.waitForSelector('h1.page-title');
@@ -179,8 +211,11 @@ const NIT_MP = '99990003K';   // espejo de MEGAPACA (MPRH, S.A.) para el flujo m
     ok(/Q89\.29/.test(txtRutina) && /Q100(\.00)?\b/.test(txtRutina) && /Pendiente/.test(txtRutina), `RUTINA METROPOLITANA: Q89.29 sin IVA = Q100 con IVA, pendiente → "${txtRutina.slice(0, 120)}"`);
     const btnLote = page.getByRole('button', { name: /Aprobar todas las de este cliente/ });
     ok(/\(6\)/.test(await btnLote.innerText()), 'botón "Aprobar todas las de este cliente (6)": cuenta solo las pendientes con monto');
-    // editar una (PRE EMPLEO METRO 178.57 → 180) y validar
+    const kpiEstDet = page.locator('.kpi[data-kpi="estancadas"]');
+    ok((await kpiEstDet.locator('.kpi-value').innerText()) === '2' && /precio sin revisar desde 2024/.test(await kpiEstDet.innerText()), 'KPI del cliente: 2 estancadas · "precio sin revisar desde 2024"');
     const preMetro = filasDet.filter({ hasText: 'PRE EMPLEO' }).filter({ hasText: 'METROPOLITANA' }).filter({ hasText: 'POLIGRAFO' });
+    ok(/desde 2024 · estancada/.test(await preMetro.innerText()), 'fila PRE EMPLEO METRO (2024, sin historial): badge "desde 2024 · estancada"');
+    // editar una (PRE EMPLEO METRO 178.57 → 180) y validar
     await preMetro.getByRole('button', { name: /Editar monto de/ }).click();
     const inpMp = preMetro.locator('input[aria-label^="Monto de"]');
     await inpMp.fill('180');
@@ -189,6 +224,8 @@ const NIT_MP = '99990003K';   // espejo de MEGAPACA (MPRH, S.A.) para el flujo m
     await page.waitForFunction((n) => [...document.querySelectorAll('table tbody tr')].some(r => /POLIGRAFO/.test(r.textContent ?? '') && /PRE EMPLEO/.test(r.textContent ?? '') && /METROPOLITANA/.test(r.textContent ?? '') && /Q180(\.00)?\b/.test(r.textContent ?? '') && !!n), NIT_MP, { timeout: 30_000 });
     const { data: ed180 } = await sb.from('tarifario').select('monto').eq('nit', NIT_MP).eq('tipo_prueba', 'POLIGRAFO').eq('categoria', 'PRE EMPLEO').eq('territorio', 'METROPOLITANA').single();
     ok(Number(ed180?.monto) === 180, 'edición inline en el detalle → Q180.00 en la base');
+    await page.waitForFunction(() => (document.querySelector('.kpi[data-kpi="estancadas"] .kpi-value')?.textContent ?? '') === '1', null, { timeout: 30_000 });
+    ok(/última subida: este mes/.test(await preMetro.innerText()) && !/estancada/.test(await preMetro.innerText()), 'tras subir el precio: la fila pasa a "última subida: este mes" y el KPI baja a 1 estancada');
     // aprobar en lote: confirmación en línea; las Q0 quedan fuera
     await btnLote.click();
     const dlg = page.locator('[role=alertdialog]');
@@ -201,12 +238,40 @@ const NIT_MP = '99990003K';   // espejo de MEGAPACA (MPRH, S.A.) para el flujo m
     ok(/Aprobada/.test((await rutinaMetro.innerText())) && /Sin tarifa/.test(await filasDet.filter({ hasText: 'ESPECIFICO' }).first().innerText()), 'matriz tras el lote: RUTINA "Aprobada", ESPECIFICO sigue "Sin tarifa"');
     ok((await btnLote.isDisabled()), 'el botón de lote queda deshabilitado (ya no hay pendientes con monto)');
     await page.screenshot({ path: path.join(SHOTS, 'empresa-detalle.png'), fullPage: true });
+    // histórico tras el lote: Aprobación con el usuario; desactivar → Desactivación
+    await rutinaMetro.getByRole('button', { name: /Ver histórico de/ }).click();
+    const panelMp = page.locator('tr[data-historial-de]');
+    await page.waitForFunction(() => /Aprobación/.test(document.querySelector('tr[data-historial-de]')?.textContent ?? ''), null, { timeout: 30_000 });
+    let txtMpHist = (await panelMp.innerText()).replace(/\s+/g, ' ');
+    ok(/Aprobación/.test(txtMpHist) && /e2e\.tarifario/.test(txtMpHist) && /Alta/.test(txtMpHist) && !/Cambio de precio/.test(txtMpHist), `histórico de RUTINA METRO tras el lote: "Aprobación" con el usuario (y la Alta sembrada): "${txtMpHist.slice(0, 120)}"`);
+    await rutinaMetro.getByRole('button', { name: 'Desactivar' }).click();
+    await page.waitForFunction(() => /Tarifa desactivada/.test(document.body.innerText), null, { timeout: 30_000 });
+    await page.waitForFunction(() => /Desactivación/.test(document.querySelector('tr[data-historial-de]')?.textContent ?? ''), null, { timeout: 30_000 });
+    txtMpHist = (await panelMp.innerText()).replace(/\s+/g, ' ');
+    // al refrescar, la fila sale del filtro "Activas"; en "Inactivas" queda marcada Inactiva
+    await page.waitForFunction(() => ![...document.querySelectorAll('table tbody tr')].some(r => /RUTINA/.test(r.textContent ?? '') && /METROPOLITANA/.test(r.textContent ?? '')), null, { timeout: 30_000 });
+    await page.locator('select[title="Estado"]').selectOption('inactivas');
+    ok(/Desactivación/.test(txtMpHist) && /Inactiva/.test(await rutinaMetro.innerText()), 'Desactivar → el histórico (recargado solo) muestra "Desactivación"; la fila sale de "Activas" y queda "Inactiva"');
+    await page.locator('select[title="Estado"]').selectOption('activas');
+    const { data: hRutina } = await sb.from('tarifario_historial').select('accion, usuario').eq('nit', NIT_MP).eq('tipo_prueba', 'POLIGRAFO').eq('categoria', 'RUTINA').eq('territorio', 'METROPOLITANA').order('seq');
+    ok((hRutina ?? []).map(r => r.accion).join(',') === 'alta,aprobacion,desactivacion' && hRutina?.[0].usuario === null && (hRutina ?? []).slice(1).every(r => /e2e\.tarifario/.test(r.usuario ?? '')), `bitácora en la base: alta (sembrada por SQL → usuario null), aprobacion y desactivacion con el usuario (${JSON.stringify(hRutina)})`);
+    // SQL directo sin GUC: el trigger registra igual, con usuario null → "—" en pantalla
+    const { error: eDir } = await sb.from('tarifario').update({ monto: 90 }).eq('nit', NIT_MP).eq('tipo_prueba', 'POLIGRAFO').eq('categoria', 'RUTINA').eq('territorio', 'DEPARTAMENTAL');
+    if (eDir) throw new Error(eDir.message);
+    await page.reload();
+    await page.waitForSelector('h1.page-title');
+    const rutinaDepto = page.locator('table tbody tr').filter({ hasText: 'RUTINA' }).filter({ hasText: 'DEPARTAMENTAL' });
+    await rutinaDepto.getByRole('button', { name: /Ver histórico de/ }).click();
+    await page.waitForFunction(() => /Cambio de precio/.test(document.querySelector('tr[data-historial-de]')?.textContent ?? ''), null, { timeout: 30_000 });
+    const filaDir = page.locator('tr[data-historial-de] tbody tr', { hasText: 'Cambio de precio' });
+    const txtDir = (await filaDir.innerText()).replace(/\s+/g, ' ');
+    ok(/Q89\.29 → Q90\.00/.test(txtDir) && /\+0\.80 %/.test(txtDir) && /—/.test(txtDir), `UPDATE directo por SQL (sin RPC ni GUC) también queda en la bitácora: Q89.29 → Q90.00 (+0.80 %) con usuario "—": "${txtDir}"`);
     // volver y buscar
     await page.getByRole('link', { name: '← Tarifario' }).click();
     await page.waitForURL('**/tarifario');
     await page.waitForSelector('h1.page-title');
     const txtMp2 = (await page.locator('table tbody tr', { hasText: `NIT ${NIT_MP}` }).innerText()).replace(/\s+/g, ' ');
-    ok(/Sin tarifa/.test(txtMp2) && !/Pendientes/.test(txtMp2), 'de vuelta en la lista: MPRH sigue roja (Q0) y sin pendientes');
+    ok(/Sin tarifa/.test(txtMp2) && !/Pendientes/.test(txtMp2) && /1 estancada\b/.test(txtMp2), 'de vuelta en la lista: MPRH sigue roja (Q0), sin pendientes y con 1 estancada (PRE EMPLEO DEPTO 2024)');
     await page.getByLabel('Buscar empresa').fill('megapaca');
     ok(await page.locator('table tbody tr').filter({ hasText: 'NIT ' }).count() === 1 && await page.locator('table tbody tr', { hasText: `NIT ${NIT_MP}` }).count() === 1, 'buscador de empresas por razón social → solo MPRH (MEGAPACA)');
     await page.getByLabel('Buscar empresa').fill(NIT);
