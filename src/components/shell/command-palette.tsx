@@ -36,6 +36,7 @@ export function CommandPalette({ onClose }: CommandPaletteProps) {
     { type: 'nav',    label: 'Facturación',         hint: 'G F', icon: 'Receipt',    action: () => go('/facturacion') },
     { type: 'nav',    label: 'Cobros',              hint: 'G P', icon: 'Coins',      action: () => go('/cobros') },
     { type: 'nav',    label: 'Clientes',            hint: 'G U', icon: 'Users',      action: () => go('/clientes') },
+    { type: 'nav',    label: 'Tarifario',           hint: '',    icon: 'Coins',      action: () => go('/tarifario') },
     { type: 'nav',    label: 'AI Insights',         hint: 'G I', icon: 'Sparkles',   action: () => go('/ai') },
     { type: 'nav',    label: 'Estados financieros', hint: 'G E', icon: 'Statement',  action: () => go('/estados') },
     { type: 'nav',    label: 'Asientos',            hint: 'G A', icon: 'Journal',    action: () => go('/asientos') },

@@ -56,6 +56,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
       { href: '/cobros',       label: 'Cobros',       icon: 'Coins' },
       { href: '/cobros/identificar', label: 'Identificar pago', icon: 'Search' },
       { href: '/clientes',     label: 'Clientes',     icon: 'Users' },
+      { href: '/tarifario',    label: 'Tarifario',    icon: 'Coins' },   // TARIFARIO (014)
     ]},
     { group: 'Gastos', items: [
       { href: '/gastos',       label: 'Gastos',         icon: 'Expense' },

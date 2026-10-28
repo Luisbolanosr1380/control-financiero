@@ -24,6 +24,7 @@ const SCREEN_NAMES: Record<string, string> = {
   '/facturacion': 'Listado de facturas',
   '/cobros':      'Cobros y recibos',
   '/clientes':    'Listado de clientes',
+  '/tarifario':   'Tarifario (precios por cliente)',
   '/asientos':    'Asientos contables',
   '/estados':     'Estados financieros',
   '/ai':          'AI Insights Center',
