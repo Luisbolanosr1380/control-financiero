@@ -1,0 +1,586 @@
+/**
+ * FACTURACIÓN AGENDA (migración 016) — lectura y escritura en Supabase.
+ *
+ * Trae de la Agenda de Golden los expedientes de evaluación, los clasifica
+ * contra el mapeo de clientes (`cliente_externo`) y el tarifario (motor de
+ * `src/lib/tarifario/`), los deja en `facturacion_expediente` (cola "Por
+ * facturar"), emite la factura en financiero (RPC `facturacion_agenda_emitir`:
+ * factura + detalle + vínculo en UNA transacción) y escribe de vuelta a la
+ * Agenda SOLO el cobro (`POST /facturas`, `POST /lote`).
+ *
+ * Consistencia (brief §7): si la factura quedó creada pero la Agenda falló, el
+ * expediente queda con `writeback_estado` 'pendiente' / 'conflicto' / 'error'
+ * (nunca "facturado en Agenda") y se puede reintentar sin duplicar la factura.
+ * Un 409 no se reintenta en loop: se vuelve a leer el expediente y se decide.
+ */
+import { supabase, fetchAll } from '@/lib/supabase/client';
+import { nuevoIdEscritura, rpc, uuidOpcional, uuidRequerido } from '@/lib/supabase/writes';
+import { nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
+import { normalizarTexto } from '@/lib/tarifario/canon';
+import { indiceAlias, nombreBase, resolverNit } from '@/lib/tarifario/lookup';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
+import { configAgenda } from '@/lib/facturacion-agenda/config';
+import { AgendaApiError, crearAgendaApi, idsDe, resumirCuerpo, type AgendaApi, type LogSaliente } from '@/lib/facturacion-agenda/agenda-api';
+import { armarFactura, centroPorServicio, clasificarExpediente, expedienteALocal, facturable, montoParaAgenda, type ContextoPrecio } from '@/lib/facturacion-agenda/mapeo';
+import { agruparPorCliente, kpisPorFacturar, parseClave, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
+import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
+import { getTarifario } from './tarifario';
+import { getClientes } from './clientes';
+import { getCentrosCostoActivos, type CentroCosto } from './centros';
+import type { Customer } from '@/lib/types';
+
+const FUENTE = FUENTE_AGENDA;
+
+// ── Filas ───────────────────────────────────────────────────────────────────
+
+interface ExpRow {
+  id: string; fuente: string; id_externo: string; empresa_id_externo: string | null; empresa_nombre_externo: string | null; nit_resuelto: string | null; cliente_id: string | null;
+  persona: string | null; puesto: string | null; solicitante: string | null; tipo_prueba: string | null; categoria_prueba: string | null; proceso_solicitado: string | null; depto_visita: string | null;
+  tipo_cobrado: string | null; categoria_canon: string | null; territorio_resuelto: string | null; fecha_ingreso: string | null; fecha_entrega: string | null; status_proceso: string | null;
+  terminado: boolean; cancelado: boolean; eliminado: boolean; en_vista_facturacion: boolean | null;
+  status_cobro_externo: string | null; estatus_pago_externo: string | null; monto_externo: number | string | null; numero_factura_externo: string | null; fecha_factura_externo: string | null; cobro_megapaca: number | string | null; costo_visita: number | string | null;
+  monto_calculado: number | string | null; estado_tarifa: EstadoTarifa; detalle_tarifa: string | null; componentes: ComponentePrecio[] | null;
+  creado_en_externo: string | null; actualizado_en_externo: string | null;
+  factura_id: string | null; factura_app_id: string | null; no_factura: string | null; facturado_en: string | null; facturado_por: string | null;
+  writeback_estado: WritebackEstado | null; writeback_detalle: string | null; writeback_en: string | null; cobro_writeback_estado: string | null; cobro_writeback_detalle: string | null;
+  raw: unknown; updated_at: string | null;
+}
+const num = (v: number | string | null | undefined): number | null => (v === null || v === undefined ? null : Number(v));
+const txt = (v: string | null | undefined): string => v ?? '';
+/** `actualizadoEn` exacto del raw guardado (la Agenda compara el string que ella misma mandó). */
+const crudoDe = (raw: unknown): string | null => { const v = raw && typeof raw === 'object' ? (raw as { actualizadoEn?: unknown }).actualizadoEn : null; return typeof v === 'string' && v ? v : null; };
+const siActualizadoEnDe = (r: { actualizadoEnExternoCrudo: string | null; actualizadoEnExterno: string | null }): string | undefined => r.actualizadoEnExternoCrudo ?? r.actualizadoEnExterno ?? undefined;
+
+export const rowToLocal = (r: ExpRow): ExpedienteLocal => ({
+  id: r.id, fuente: r.fuente, idExterno: r.id_externo, empresaIdExterno: txt(r.empresa_id_externo), empresaNombreExterno: txt(r.empresa_nombre_externo), nitResuelto: r.nit_resuelto, clienteId: r.cliente_id,
+  persona: txt(r.persona), puesto: txt(r.puesto), solicitante: txt(r.solicitante), tipoPrueba: txt(r.tipo_prueba), categoriaPrueba: txt(r.categoria_prueba), procesoSolicitado: txt(r.proceso_solicitado), deptoVisita: txt(r.depto_visita),
+  tipoCobrado: txt(r.tipo_cobrado), categoriaCanon: txt(r.categoria_canon), territorioResuelto: txt(r.territorio_resuelto), fechaIngreso: r.fecha_ingreso, fechaEntrega: r.fecha_entrega, statusProceso: txt(r.status_proceso),
+  terminado: !!r.terminado, cancelado: !!r.cancelado, eliminado: !!r.eliminado, enVistaFacturacion: r.en_vista_facturacion,
+  statusCobroExterno: r.status_cobro_externo, estatusPagoExterno: r.estatus_pago_externo, montoExterno: num(r.monto_externo), numeroFacturaExterno: r.numero_factura_externo, fechaFacturaExterno: r.fecha_factura_externo, cobroMegapaca: num(r.cobro_megapaca), costoVisita: num(r.costo_visita),
+  montoCalculado: num(r.monto_calculado), estadoTarifa: r.estado_tarifa, detalleTarifa: txt(r.detalle_tarifa), componentes: Array.isArray(r.componentes) ? r.componentes : [],
+  creadoEnExterno: r.creado_en_externo, actualizadoEnExterno: r.actualizado_en_externo, actualizadoEnExternoCrudo: crudoDe(r.raw) ?? r.actualizado_en_externo,
+  facturaId: r.factura_id, facturaAppId: r.factura_app_id, noFactura: r.no_factura, facturadoEn: r.facturado_en, facturadoPor: r.facturado_por,
+  writebackEstado: r.writeback_estado, writebackDetalle: r.writeback_detalle, writebackEn: r.writeback_en, cobroWritebackEstado: r.cobro_writeback_estado, cobroWritebackDetalle: r.cobro_writeback_detalle,
+  updatedAt: r.updated_at,
+});
+
+type FilaEspejo = ReturnType<typeof expedienteALocal> & { clienteId: string | null; raw: unknown };
+const espejoARow = (l: FilaEspejo): Record<string, unknown> => ({
+  fuente: FUENTE, id_externo: l.idExterno, empresa_id_externo: l.empresaIdExterno || null, empresa_nombre_externo: l.empresaNombreExterno || null, nit_resuelto: l.nitResuelto, cliente_id: l.clienteId,
+  persona: l.persona || null, puesto: l.puesto || null, solicitante: l.solicitante || null, tipo_prueba: l.tipoPrueba || null, categoria_prueba: l.categoriaPrueba || null, proceso_solicitado: l.procesoSolicitado || null, depto_visita: l.deptoVisita || null,
+  tipo_cobrado: l.tipoCobrado || null, categoria_canon: l.categoriaCanon || null, territorio_resuelto: l.territorioResuelto || null, fecha_ingreso: l.fechaIngreso, fecha_entrega: l.fechaEntrega, status_proceso: l.statusProceso || null,
+  terminado: l.terminado, cancelado: l.cancelado, eliminado: l.eliminado, en_vista_facturacion: l.enVistaFacturacion,
+  status_cobro_externo: l.statusCobroExterno, estatus_pago_externo: l.estatusPagoExterno, monto_externo: l.montoExterno, numero_factura_externo: l.numeroFacturaExterno, fecha_factura_externo: l.fechaFacturaExterno, cobro_megapaca: l.cobroMegapaca, costo_visita: l.costoVisita,
+  monto_calculado: l.montoCalculado, estado_tarifa: l.estadoTarifa, detalle_tarifa: l.detalleTarifa || null, componentes: l.componentes,
+  creado_en_externo: l.creadoEnExterno, actualizado_en_externo: l.actualizadoEnExterno, raw: l.raw, updated_at: new Date().toISOString(),
+});
+
+type Consulta = { range(a: number, b: number): PromiseLike<{ data: unknown; error: { message: string } | null }> };
+/** Agota la paginación de PostgREST (cap de 1000) para una consulta con filtros arbitrarios. */
+async function paginar<T>(hacer: () => Consulta, contexto: string): Promise<T[]> {
+  const PAGE = 1000; const out: T[] = [];
+  for (let p = 0; ; p++) {
+    const { data, error } = await hacer().range(p * PAGE, p * PAGE + PAGE - 1);
+    if (error) throw new Error(`${contexto}: ${error.message}`);
+    const rows = (data ?? []) as T[]; out.push(...rows);
+    if (rows.length < PAGE) break;
+  }
+  return out;
+}
+
+/** true si la 016 está aplicada en esta base. */
+export async function facturacionAgendaDisponible(): Promise<boolean> {
+  const sb = supabase(); if (!sb) return false;
+  const { error } = await sb.from('facturacion_expediente').select('id').limit(1);
+  return !error;
+}
+
+// ── Mapeo de clientes ───────────────────────────────────────────────────────
+
+interface MapeoRow { id: string; fuente: string; empresa_id_externo: string; empresa_nombre_externo: string | null; nit: string; cliente_id: string | null; activo: boolean; creado_por: string | null }
+const rowToMapeo = (r: MapeoRow): ClienteExterno => ({ id: r.id, fuente: r.fuente, empresaIdExterno: r.empresa_id_externo, empresaNombreExterno: r.empresa_nombre_externo ?? '', nit: r.nit, clienteId: r.cliente_id, activo: !!r.activo, creadoPor: r.creado_por ?? '' });
+
+export async function getMapeos(): Promise<ClienteExterno[]> {
+  try { return (await fetchAll<MapeoRow>('cliente_externo', { eq: { fuente: FUENTE } })).map(rowToMapeo); } catch { return []; }
+}
+
+export const nitPorEmpresa = (mapeos: readonly ClienteExterno[]): Map<string, string> => new Map(mapeos.filter(m => m.activo && m.nit).map(m => [m.empresaIdExterno, m.nit]));
+
+export interface Contexto extends ContextoPrecio { mapeos: ClienteExterno[]; clienteUuidPorEmpresa: Map<string, string> }
+export async function cargarContexto(): Promise<Contexto> {
+  const [tarifas, mapeos] = await Promise.all([getTarifario(), getMapeos()]);
+  return { tarifas, mapeos, nitPorEmpresa: nitPorEmpresa(mapeos), clienteUuidPorEmpresa: new Map(mapeos.filter(m => m.activo && m.clienteId).map(m => [m.empresaIdExterno, m.clienteId!])) };
+}
+
+export type MapeoResult = { ok: true; nit: string; clienteNombre: string; reclasificados: number } | { ok: false; error: string };
+
+/** Mapea una empresa de la Agenda a un cliente de financiero (por su id de app) y re-resuelve sus expedientes. */
+export async function guardarMapeo(input: { empresaIdExterno: string; empresaNombreExterno?: string; clienteAppId: string }, actor: string): Promise<MapeoResult> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+  const empresaId = String(input.empresaIdExterno ?? '').trim();
+  if (!empresaId) return { ok: false, error: 'Falta la empresa de la Agenda.' };
+  const cliente = (await getClientes()).find(c => c.id === input.clienteAppId);
+  if (!cliente) return { ok: false, error: 'El cliente elegido no existe.' };
+  if (cliente.activo === false) return { ok: false, error: `El cliente ${cliente.name} está inactivo.` };
+  const nit = nitComparable(cliente.nit);
+  if (nitEsPlaceholder(nit)) return { ok: false, error: `El cliente ${cliente.name} no tiene NIT: cargáselo antes de mapearlo (el tarifario va por NIT).` };
+  const clienteUuid = await uuidOpcional('clientes', input.clienteAppId);
+  const { error } = await sb.from('cliente_externo').upsert({
+    fuente: FUENTE, empresa_id_externo: empresaId, empresa_nombre_externo: (input.empresaNombreExterno ?? '').trim() || null,
+    nit, cliente_id: clienteUuid, activo: true, creado_por: actor, updated_at: new Date().toISOString(),
+  }, { onConflict: 'fuente,empresa_id_externo' });
+  if (error) return { ok: false, error: `No se pudo guardar el mapeo: ${error.message}` };
+  const reclasificados = await reclasificar({ empresaIdExterno: empresaId });
+  return { ok: true, nit, clienteNombre: cliente.name, reclasificados };
+}
+
+// ── Espejo de expedientes ───────────────────────────────────────────────────
+
+/** Guarda (upsert por fuente + id_externo) las filas espejo. NO toca factura_id ni los estados de write-back. */
+export async function upsertExpedientes(filas: FilaEspejo[]): Promise<number> {
+  const sb = supabase(); if (!sb) throw new Error('Supabase no está configurado.');
+  let n = 0;
+  for (let i = 0; i < filas.length; i += 200) {
+    const lote = filas.slice(i, i + 200).map(espejoARow);
+    const { error } = await sb.from('facturacion_expediente').upsert(lote, { onConflict: 'fuente,id_externo' });
+    if (error) throw new Error(`facturacion_expediente upsert: ${error.message}`);
+    n += lote.length;
+  }
+  return n;
+}
+
+/** Clasifica (mapeo + tarifario) y guarda expedientes tal como vienen de la Agenda. */
+export async function procesarExpedientes(exps: readonly ExpedienteAgenda[], ctx: Contexto): Promise<number> {
+  const filas: FilaEspejo[] = [];
+  for (const e of exps) {
+    if (!e || typeof e !== 'object' || !e.id) continue;
+    const c = clasificarExpediente(e, ctx);
+    filas.push({ ...expedienteALocal(e, c), clienteId: ctx.clienteUuidPorEmpresa.get(String(e.empresa?.id ?? '')) ?? null, raw: e });
+  }
+  return filas.length ? upsertExpedientes(filas) : 0;
+}
+
+/**
+ * Re-resuelve contra el mapeo y el tarifario ACTUALES los expedientes sin factura
+ * (a partir del `raw` guardado). Así un "sin tarifa" se resuelve solo cuando el
+ * CFO carga la tarifa, y un "cliente sin mapear" al mapear la empresa.
+ */
+export async function reclasificar(filtro: { empresaIdExterno?: string } = {}, ctxDado?: Contexto): Promise<number> {
+  const sb = supabase(); if (!sb) return 0;
+  const ctx = ctxDado ?? await cargarContexto();
+  const rows = await paginar<{ id_externo: string; raw: ExpedienteAgenda | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; nit_resuelto: string | null; detalle_tarifa: string | null }>(() => {
+    let q = sb.from('facturacion_expediente').select('id_externo, raw, estado_tarifa, monto_calculado, nit_resuelto, detalle_tarifa').eq('fuente', FUENTE).is('factura_id', null).order('id_externo');
+    if (filtro.empresaIdExterno) q = q.eq('empresa_id_externo', filtro.empresaIdExterno);
+    return q;
+  }, 'reclasificar');
+  const cambiados: ExpedienteAgenda[] = [];
+  for (const r of rows) {
+    if (!r.raw || typeof r.raw !== 'object') continue;
+    const c = clasificarExpediente(r.raw, ctx);
+    if (c.estado !== r.estado_tarifa || (c.monto ?? null) !== num(r.monto_calculado) || (c.nit ?? null) !== (r.nit_resuelto ?? null) || c.detalle !== (r.detalle_tarifa ?? '')) cambiados.push(r.raw);
+  }
+  return cambiados.length ? procesarExpedientes(cambiados, ctx) : 0;
+}
+
+export interface FiltroExpedientes { nit?: string; empresaIdExterno?: string; noFactura?: string; idsExternos?: string[] }
+
+export async function listarExpedientesLocal(f: FiltroExpedientes = {}): Promise<ExpedienteLocal[]> {
+  const sb = supabase(); if (!sb) return [];
+  try {
+    const rows = await paginar<ExpRow>(() => {
+      let q = sb.from('facturacion_expediente').select('*').eq('fuente', FUENTE).order('fecha_ingreso', { ascending: false, nullsFirst: false }).order('id_externo');
+      if (f.nit) q = q.eq('nit_resuelto', f.nit);
+      if (f.empresaIdExterno) q = q.eq('empresa_id_externo', f.empresaIdExterno);
+      if (f.noFactura) q = q.eq('no_factura', f.noFactura);
+      if (f.idsExternos) q = q.in('id_externo', f.idsExternos);
+      return q;
+    }, 'facturacion_expediente');
+    return rows.map(rowToLocal);
+  } catch (e) { console.error('listarExpedientesLocal:', e); return []; }
+}
+
+// ── Sync ────────────────────────────────────────────────────────────────────
+
+interface SyncRow { fuente: string; ultimo_actualizado_en: string | null; ultima_corrida: string | null; ultimo_resultado: string | null; expedientes_leidos: number | null; corridas: number | null }
+
+export async function getSyncEstado(): Promise<SyncEstado | null> {
+  const sb = supabase(); if (!sb) return null;
+  const { data, error } = await sb.from('facturacion_sync_estado').select('*').eq('fuente', FUENTE).maybeSingle();
+  if (error || !data) return null;
+  const r = data as SyncRow;
+  return { fuente: r.fuente, ultimoActualizadoEn: r.ultimo_actualizado_en, ultimaCorrida: r.ultima_corrida, ultimoResultado: r.ultimo_resultado ?? '', expedientesLeidos: r.expedientes_leidos, corridas: r.corridas ?? 0 };
+}
+
+async function guardarSyncEstado(patch: Partial<Omit<SyncRow, 'fuente'>>): Promise<void> {
+  const sb = supabase(); if (!sb) return;
+  const { error } = await sb.from('facturacion_sync_estado').upsert({ fuente: FUENTE, ...patch, updated_at: new Date().toISOString() }, { onConflict: 'fuente' });
+  if (error) console.error('facturacion_sync_estado:', error.message);
+}
+
+export async function registrarLog(l: LogSaliente & { actor?: string }): Promise<void> {
+  const sb = supabase(); if (!sb) return;
+  const { error } = await sb.from('facturacion_log').insert({
+    fuente: FUENTE, accion: l.accion, metodo: l.metodo, ruta: l.ruta.slice(0, 500), expedientes: l.expedientes ?? null, status_http: l.statusHttp, ok: l.ok,
+    detalle: l.detalle ? l.detalle.slice(0, 1000) : null, duracion_ms: l.duracionMs, actor: l.actor ?? null,
+  });
+  if (error) console.error('facturacion_log:', error.message);
+}
+
+/** Cliente del API para este deploy (null sin llave). Todas las llamadas quedan en facturacion_log. */
+export function apiAgenda(opts: { actor?: string; fetchImpl?: typeof fetch; esperar?: (ms: number) => Promise<void>; maxIntentos?: number } = {}): AgendaApi | null {
+  const cfg = configAgenda();
+  if (!cfg.apiKey) return null;
+  return crearAgendaApi({ baseUrl: cfg.url, apiKey: cfg.apiKey, fetchImpl: opts.fetchImpl, esperar: opts.esperar, maxIntentos: opts.maxIntentos, log: l => registrarLog({ ...l, actor: opts.actor }) });
+}
+
+export interface ResultadoSync { ok: boolean; leidos: number; paginas: number; hasta: string | null; reclasificados: number; omitido?: string; error?: string }
+
+const ms = (iso: string | null | undefined): number => (iso ? Date.parse(iso) : NaN);
+
+/**
+ * Trae de la Agenda lo que cambió (cambiadosDesde = último actualizadoEn procesado;
+ * primera vez: desde = FACTURACION_AGENDA_DESDE), página por página, guardando
+ * cada página antes de pedir la siguiente. Nunca reconstruye desde un resultado truncado.
+ */
+export async function sincronizarAgenda(opts: { actor?: string; api?: AgendaApi } = {}): Promise<ResultadoSync> {
+  const vacio: ResultadoSync = { ok: true, leidos: 0, paginas: 0, hasta: null, reclasificados: 0 };
+  if (!(await facturacionAgendaDisponible())) return { ...vacio, ok: false, error: 'Falta la migración 016_facturacion_agenda en esta base.' };
+  const api = opts.api ?? apiAgenda({ actor: opts.actor ?? 'cron' });
+  if (!api) return { ...vacio, omitido: 'Este deploy no tiene FACTURACION_API_KEY_AGENDA: no se toca la Agenda.' };
+  const cfg = configAgenda();
+  const [ctx, estado] = await Promise.all([cargarContexto(), getSyncEstado()]);
+  const incremental = !!estado?.ultimoActualizadoEn;
+  let hasta: string | null = estado?.ultimoActualizadoEn ?? null;
+  let leidos = 0, paginas = 0;
+  const base: Record<string, string | number> = incremental
+    ? { cambiadosDesde: new Date(ms(hasta) - 1000).toISOString(), incluirEliminados: 'true', porPagina: cfg.porPagina }
+    : { desde: cfg.desdeInicial, incluirEliminados: 'true', porPagina: cfg.porPagina };
+  try {
+    for (let pagina = 1; pagina <= 1000; pagina++) {
+      const r = await api.listarExpedientes({ ...base, pagina });
+      paginas++;
+      const exps = Array.isArray(r?.expedientes) ? r.expedientes : [];
+      if (!exps.length) break;
+      leidos += await procesarExpedientes(exps, ctx);
+      for (const e of exps) if (e.actualizadoEn && (!hasta || ms(e.actualizadoEn) > ms(hasta))) hasta = e.actualizadoEn;
+      if (incremental) await guardarSyncEstado({ ultimo_actualizado_en: hasta });   // reanudable: con cambiadosDesde vienen del más viejo al más nuevo
+      if (pagina >= Number(r.paginas ?? 1)) break;
+    }
+    const reclasificados = await reclasificar({}, ctx);
+    await guardarSyncEstado({ ultimo_actualizado_en: hasta, ultima_corrida: new Date().toISOString(), ultimo_resultado: `ok · ${leidos} expediente(s) en ${paginas} página(s)${reclasificados ? ` · ${reclasificados} re-resueltos` : ''}`, expedientes_leidos: leidos, corridas: (estado?.corridas ?? 0) + 1 });
+    return { ok: true, leidos, paginas, hasta, reclasificados };
+  } catch (e) {
+    const error = e instanceof Error ? e.message : String(e);
+    await guardarSyncEstado({ ultima_corrida: new Date().toISOString(), ultimo_resultado: `error tras ${leidos} expediente(s): ${error}`.slice(0, 500), expedientes_leidos: leidos, corridas: (estado?.corridas ?? 0) + 1 });
+    return { ok: false, leidos, paginas, hasta, reclasificados: 0, error };
+  }
+}
+
+// ── Pantalla ────────────────────────────────────────────────────────────────
+
+const razonPorNitDe = (clientes: readonly Customer[]): Map<string, string> => {
+  const m = new Map<string, string>();
+  for (const c of clientes) { const k = nitComparable(c.nit); if (k && !nitEsPlaceholder(k) && c.activo !== false && !m.has(k)) m.set(k, c.name); }
+  return m;
+};
+
+export interface VistaPorFacturar { grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number }
+
+export async function vistaPorFacturar(): Promise<VistaPorFacturar> {
+  const [exps, clientes, sync] = await Promise.all([listarExpedientesLocal(), getClientes(), getSyncEstado()]);
+  return { grupos: agruparPorCliente(exps, razonPorNitDe(clientes)), kpis: kpisPorFacturar(exps), sync, total: exps.length };
+}
+
+export interface ClienteSlim { id: string; name: string; nit: string }
+export interface GrupoDetalle {
+  clave: string; nit: string | null; empresaIdExterno: string; nombre: string; nombreExterno: string;
+  grupo: GrupoCliente | null; expedientes: ExpedienteLocal[]; cliente: ClienteSlim | null; sugerencias: ClienteSlim[]; clientes: ClienteSlim[]; centros: CentroCosto[];
+}
+
+export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
+  const p = parseClave(clave); if (!p) return null;
+  const exps = await listarExpedientesLocal(p.tipo === 'nit' ? { nit: p.nit } : { empresaIdExterno: p.empresaId });
+  if (!exps.length) return null;
+  const [clientes, centros] = await Promise.all([getClientes(), getCentrosCostoActivos()]);
+  const slim = (c: Customer): ClienteSlim => ({ id: c.id, name: c.name, nit: c.nit });
+  const activos = clientes.filter(c => c.activo !== false);
+  const razon = razonPorNitDe(clientes);
+  const grupo = agruparPorCliente(exps, razon)[0] ?? null;
+  const nombreExterno = exps.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '';
+  let cliente: ClienteSlim | null = null; let sugerencias: ClienteSlim[] = [];
+  if (p.tipo === 'nit') {
+    const c = activos.find(x => nitComparable(x.nit) === p.nit) ?? clientes.find(x => nitComparable(x.nit) === p.nit);
+    cliente = c ? slim(c) : null;
+  } else if (nombreExterno) {
+    // Sugerencias para mapear: el alias del tarifario/catálogo (motor existente) + "contiene" sin tildes.
+    const tarifas = await getTarifario().catch(() => []);
+    const nitSug = resolverNit({ empresa: nombreExterno }, indiceAlias(tarifas, activos.map(c => ({ nombre: c.name, nit: c.nit }))));
+    const base = nombreBase(nombreExterno);
+    const vistos = new Set<string>();
+    for (const c of activos) {
+      const nb = nombreBase(c.name);
+      const porNit = !!nitSug && nitComparable(c.nit) === nitSug;
+      const porNombre = !!base && !!nb && (nb.includes(base) || base.includes(nb));
+      if ((porNit || porNombre) && !vistos.has(c.id)) { vistos.add(c.id); sugerencias.push(slim(c)); }
+    }
+    sugerencias = sugerencias.slice(0, 8);
+  }
+  return {
+    clave, nit: p.tipo === 'nit' ? p.nit : null, empresaIdExterno: exps[0].empresaIdExterno, nombre: grupo?.nombre ?? cliente?.name ?? nombreExterno, nombreExterno,
+    grupo, expedientes: exps, cliente, sugerencias, clientes: activos.map(slim), centros,
+  };
+}
+
+// ── Emitir la factura ───────────────────────────────────────────────────────
+
+export interface EmitirInput { idsExternos: string[]; noFactura: string; fechaEmision: string; /** tipo de prueba canónico → centro de costo (id de app) elegido en el diálogo */ centroPorTipo?: Record<string, string> }
+export interface WritebackResultado { estado: WritebackEstado; detalle: string }
+export type EmitirResult =
+  | { ok: true; noFactura: string; facturaAppId: string; expedientes: number; lineas: number; subtotal: number; iva: number; total: number; writeback: WritebackResultado }
+  | { ok: false; error: string };
+
+export async function emitirFacturaAgenda(input: EmitirInput, actor: string, opts: { api?: AgendaApi } = {}): Promise<EmitirResult> {
+  const nf = String(input.noFactura ?? '').trim();
+  if (!nf) return { ok: false, error: 'El número de factura (SAT/FEL) es requerido.' };
+  if (nf.length > 60) return { ok: false, error: 'El número de factura no puede pasar de 60 caracteres.' };
+  const fecha = String(input.fechaEmision ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || Number.isNaN(Date.parse(fecha))) return { ok: false, error: 'La fecha de la factura debe ser AAAA-MM-DD.' };
+  if (fecha > obtenerFechaHoyGuatemala()) return { ok: false, error: 'La fecha de la factura no puede ser futura.' };
+  const ids = [...new Set((input.idsExternos ?? []).map(s => String(s).trim()).filter(Boolean))];
+  if (!ids.length) return { ok: false, error: 'Elegí al menos un expediente.' };
+  if (ids.length > 200) return { ok: false, error: 'Una factura cubre hasta 200 expedientes (límite de la Agenda).' };
+
+  const exps = await listarExpedientesLocal({ idsExternos: ids });
+  if (exps.length !== ids.length) return { ok: false, error: 'Algún expediente ya no está en la cola: recargá la pantalla.' };
+  for (const e of exps) {
+    if (!facturable(e)) return { ok: false, error: `${e.persona || e.idExterno}: ${e.facturaId ? `ya está en la factura ${e.noFactura}` : ETIQUETA_ESTADO_TARIFA[e.estadoTarifa] + (e.estadoTarifa === 'resuelta' ? ' (sin monto o con cobro ya resuelto en la Agenda)' : '')}. Solo se facturan expedientes resueltos y en cola.` };
+  }
+  const nits = new Set(exps.map(e => e.nitResuelto));
+  if (nits.size !== 1 || !exps[0].nitResuelto) return { ok: false, error: 'Una factura es de UN cliente: los expedientes elegidos pertenecen a clientes distintos.' };
+  const nit = exps[0].nitResuelto;
+
+  // Cliente de financiero: el del mapeo (uuid) o el activo con ese NIT.
+  const mapeo = (await getMapeos()).find(m => m.activo && m.empresaIdExterno === exps[0].empresaIdExterno);
+  let clienteUuid = mapeo?.clienteId ?? null;
+  if (!clienteUuid) {
+    const c = (await getClientes()).find(x => x.activo !== false && nitComparable(x.nit) === nit);
+    if (!c) return { ok: false, error: `El NIT ${nit} no tiene un cliente activo en financiero.` };
+    clienteUuid = await uuidRequerido('clientes', c.id, 'emitirFacturaAgenda (cliente)');
+  }
+
+  const centros = await getCentrosCostoActivos();
+  const centroDe = (tipo: string) => input.centroPorTipo?.[tipo] || centroPorServicio(tipo, centros);
+  const f = armarFactura(exps, centroDe);
+  if (f.sinCentro.length) return { ok: false, error: `Elegí el centro de costo para: ${f.sinCentro.join(', ')}.` };
+  const ccUuid = new Map<string, string>();
+  for (const id of new Set(f.detalle.map(d => d.centroCostoId))) {
+    if (!centros.some(c => c.id === id)) return { ok: false, error: 'El centro de costo elegido no está activo.' };
+    ccUuid.set(id, await uuidRequerido('centros_costo', id, 'emitirFacturaAgenda (CC)'));
+  }
+  const cfg = configAgenda();
+  const wbInicial: WritebackEstado = cfg.writeback && cfg.apiKey ? 'pendiente' : 'omitido';
+  let r: { factura_id: string; factura_app_id: string; no_factura: string; lineas: number; expedientes: number };
+  try {
+    r = await rpc('facturacion_agenda_emitir', {
+      p_actor: actor,
+      p_factura: { no_factura: nf, cliente_id: clienteUuid, fecha_emision: fecha, writeback_estado: wbInicial },
+      p_lineas: f.lineas.map(l => ({ airtable_id: nuevoIdEscritura(), centro_costo_id: ccUuid.get(l.centroCostoId), subtotal: l.subtotal, iva: l.iva, total: l.total })),
+      p_detalle: f.detalle.map(d => ({ id_externo: d.idExterno, tipo_prueba: d.tipoPrueba, categoria: d.categoria, territorio: d.territorio, monto: d.monto, centro_costo_id: ccUuid.get(d.centroCostoId) })),
+    }, ['facturas_clientes']);
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e);
+    if (/FACTURA_DUPLICADA/.test(m)) return { ok: false, error: `La factura ${nf} ya existe. No se creó para evitar un duplicado.` };
+    if (/EXPEDIENTE_NO_FACTURABLE|EXPEDIENTE_DESCONOCIDO/.test(m)) return { ok: false, error: 'Algún expediente cambió mientras facturabas (ya tiene factura o dejó de estar resuelto). Recargá y volvé a elegir.' };
+    return { ok: false, error: m };
+  }
+  const writeback: WritebackResultado = wbInicial === 'omitido'
+    ? { estado: 'omitido', detalle: cfg.apiKey ? 'FACTURAR_WRITEBACK está apagado: la factura quedó en financiero y NO se escribió a la Agenda.' : 'Este deploy no tiene llave de la Agenda: la factura quedó solo en financiero.' }
+    : await escribirFacturaEnAgenda(nf, actor, { api: opts.api });
+  return { ok: true, noFactura: r.no_factura, facturaAppId: r.factura_app_id, expedientes: r.expedientes, lineas: r.lineas, subtotal: f.subtotal, iva: f.iva, total: f.total, writeback };
+}
+
+// ── Write-back a la Agenda ──────────────────────────────────────────────────
+
+async function marcarWriteback(idsExternos: string[], estado: WritebackEstado, detalle: string, devueltos: readonly ExpedienteAgenda[] = [], extra: Record<string, unknown> = {}): Promise<void> {
+  const sb = supabase(); if (!sb || !idsExternos.length) return;
+  const ahora = new Date().toISOString();
+  const porId = new Map(devueltos.filter(d => d?.id).map(d => [d.id, d]));
+  const base = { writeback_estado: estado, writeback_detalle: detalle.slice(0, 500), writeback_en: ahora, updated_at: ahora, ...extra };
+  const sinEspejo = idsExternos.filter(id => !porId.has(id));
+  if (sinEspejo.length) { const { error } = await sb.from('facturacion_expediente').update(base).eq('fuente', FUENTE).in('id_externo', sinEspejo); if (error) console.error('marcarWriteback:', error.message); }
+  for (const id of idsExternos.filter(id => porId.has(id))) {
+    const d = porId.get(id)!; const cobro = d.cobro ?? {};
+    const { error } = await sb.from('facturacion_expediente').update({
+      ...base, status_cobro_externo: cobro.statusCobro ?? null, estatus_pago_externo: cobro.estatusPago ?? null, monto_externo: cobro.monto ?? null,
+      numero_factura_externo: cobro.numeroFactura ?? null, fecha_factura_externo: cobro.fechaFactura ?? null, cobro_megapaca: cobro.cobroMegapaca ?? null,
+      actualizado_en_externo: d.actualizadoEn ?? null, raw: d,
+    }).eq('fuente', FUENTE).eq('id_externo', id);
+    if (error) console.error('marcarWriteback:', error.message);
+  }
+}
+
+/** Vuelve a leer expedientes de la Agenda y refresca el espejo (sin tocar factura ni write-back). */
+async function releer(ids: readonly string[], api: AgendaApi, ctx?: Contexto): Promise<Map<string, ExpedienteAgenda | 'no_existe'>> {
+  const c = ctx ?? await cargarContexto();
+  const out = new Map<string, ExpedienteAgenda | 'no_existe'>();
+  for (const id of ids) {
+    try { const e = await api.leerExpediente(id); if (e?.id) { await procesarExpedientes([e], c); out.set(id, e); } }
+    catch (err) { if (err instanceof AgendaApiError && err.status === 404) out.set(id, 'no_existe'); else throw err; }
+  }
+  return out;
+}
+
+/**
+ * POST /facturas con los expedientes de la factura que todavía no están confirmados
+ * en la Agenda (todo o nada del lado de ellos). Maneja 409 (no reintenta: re-lee y
+ * deja 'conflicto'), 404 (saca el expediente de la cola), 500 (registra hasta dónde
+ * llegó), 503/429 agotados y red (quedan 'pendiente' para reintentar).
+ */
+export async function escribirFacturaEnAgenda(noFactura: string, actor: string, opts: { api?: AgendaApi; soloIds?: string[] } = {}): Promise<WritebackResultado> {
+  const api = opts.api ?? apiAgenda({ actor });
+  const rows = (await listarExpedientesLocal({ noFactura })).filter(r => !r.eliminado && r.writebackEstado && ['pendiente', 'conflicto', 'error'].includes(r.writebackEstado) && (!opts.soloIds || opts.soloIds.includes(r.idExterno)));
+  if (!rows.length) return { estado: 'confirmado', detalle: 'No hay expedientes pendientes de enviar a la Agenda.' };
+  const ids = rows.map(r => r.idExterno);
+  if (!api) { await marcarWriteback(ids, 'omitido', 'Sin llave de la Agenda en este deploy.'); return { estado: 'omitido', detalle: ETIQUETA_WRITEBACK.omitido }; }
+  const sb = supabase()!;
+  const { data: fac } = await sb.from('facturas_clientes').select('fecha_emision').eq('no_factura', noFactura).limit(1).maybeSingle();
+  const fechaFactura = String((fac as { fecha_emision?: string } | null)?.fecha_emision ?? obtenerFechaHoyGuatemala());
+  const cfg = configAgenda();
+  const body = { numeroFactura: noFactura, fechaFactura, statusCobro: 'FACTURADO', expedientes: rows.map(r => ({ id: r.idExterno, monto: montoParaAgenda(r.montoCalculado ?? 0, cfg.montoModo), ...(siActualizadoEnDe(r) ? { siActualizadoEn: siActualizadoEnDe(r) } : {}) })) };
+  try {
+    const r = await api.crearFactura(body);
+    const devueltos = Array.isArray(r.body?.expedientes) ? r.body.expedientes : [];
+    await marcarWriteback(ids, 'confirmado', `Confirmado en Agenda (${r.status}) · ${ids.length} expediente(s) FACTURADO`, devueltos,
+      devueltos.length ? {} : { status_cobro_externo: 'FACTURADO', numero_factura_externo: noFactura, fecha_factura_externo: fechaFactura });
+    return { estado: 'confirmado', detalle: `${ids.length} expediente(s) marcados FACTURADO en la Agenda con la factura ${noFactura}.` };
+  } catch (e) {
+    if (!(e instanceof AgendaApiError)) throw e;
+    const det = resumirCuerpo(e.body);
+    if (e.status === 409) {
+      await marcarWriteback(ids, 'conflicto', `409 · ${det}`);
+      await releer(ids, api).catch(() => null);
+      return { estado: 'conflicto', detalle: 'La Agenda rechazó la factura porque algún expediente cambió desde que se leyó (409). Se volvieron a leer: revisá el estado actual y reintentá el envío. No se reintenta solo.' };
+    }
+    if (e.status === 404) {
+      const texto = JSON.stringify(e.body ?? '');
+      const faltan = ids.filter(id => texto.includes(id));
+      if (faltan.length) await marcarWriteback(faltan, 'error', `404 · el expediente ya no existe en la Agenda`, [], { eliminado: true });
+      const resto = ids.filter(id => !faltan.includes(id));
+      if (resto.length) await marcarWriteback(resto, 'pendiente', `404 en otro expediente de la misma factura · ${det}`);
+      return { estado: 'error', detalle: `La Agenda ya no tiene ${faltan.length ? faltan.length + ' expediente(s)' : 'alguno de los expedientes'} (404): se sacaron de la cola. Los demás quedan pendientes de reintentar.` };
+    }
+    if (e.status === 500) {
+      const hechos = idsDe((e.body as { actualizados?: unknown } | null)?.actualizados).filter(id => ids.includes(id));
+      if (hechos.length) await marcarWriteback(hechos, 'confirmado', `Confirmado (la Agenda lo registró antes de fallar) · ${det}`, [], { status_cobro_externo: 'FACTURADO', numero_factura_externo: noFactura, fecha_factura_externo: fechaFactura });
+      const resto = ids.filter(id => !hechos.includes(id));
+      if (resto.length) await marcarWriteback(resto, 'pendiente', `500 · ${det}`);
+      return { estado: resto.length ? 'pendiente' : 'confirmado', detalle: `La Agenda falló a medias (500): ${hechos.length} confirmado(s), ${resto.length} pendiente(s). Reintentá el envío: no se re-facturan los ya hechos.` };
+    }
+    const estado: WritebackEstado = e.status === 400 || e.status === 401 ? 'error' : 'pendiente';
+    await marcarWriteback(ids, estado, `${e.status || 'red'} · ${det}`);
+    return { estado, detalle: estado === 'error' ? `La Agenda rechazó el pedido (${e.status}): ${det}` : `La Agenda no respondió (${e.status || 'red'}). La factura quedó en financiero; reintentá el envío más tarde.` };
+  }
+}
+
+/**
+ * Reintento del write-back de una factura: re-lee cada expediente pendiente, da por
+ * confirmado lo que la Agenda ya tenga facturado con este número, marca conflicto si
+ * lo tiene con OTRO número, saca lo que ya no existe y vuelve a postear el resto.
+ */
+export async function reintentarWriteback(noFactura: string, actor: string, opts: { api?: AgendaApi } = {}): Promise<WritebackResultado & { confirmadosPrevios: number; conflictos: number; enviados: number }> {
+  const api = opts.api ?? apiAgenda({ actor });
+  const base = { confirmadosPrevios: 0, conflictos: 0, enviados: 0 };
+  if (!api) return { ...base, estado: 'omitido', detalle: 'Este deploy no tiene llave de la Agenda.' };
+  const rows = (await listarExpedientesLocal({ noFactura })).filter(r => !r.eliminado && r.writebackEstado && ['pendiente', 'conflicto', 'error', 'omitido'].includes(r.writebackEstado));
+  if (!rows.length) return { ...base, estado: 'confirmado', detalle: 'Todos los expedientes de esta factura ya están confirmados en la Agenda.' };
+  const ctx = await cargarContexto();
+  const leidos = await releer(rows.map(r => r.idExterno), api, ctx);
+  const aEnviar: string[] = [];
+  for (const r of rows) {
+    const e = leidos.get(r.idExterno);
+    if (e === 'no_existe') { await marcarWriteback([r.idExterno], 'error', '404 · el expediente ya no existe en la Agenda', [], { eliminado: true }); continue; }
+    if (!e) { aEnviar.push(r.idExterno); continue; }
+    const numAgenda = String(e.cobro?.numeroFactura ?? '').trim();
+    if (numAgenda && numAgenda.toUpperCase() === noFactura.toUpperCase()) { base.confirmadosPrevios++; await marcarWriteback([r.idExterno], 'confirmado', 'La Agenda ya tenía este expediente facturado con este número.', [e]); continue; }
+    if (numAgenda) { base.conflictos++; await marcarWriteback([r.idExterno], 'conflicto', `La Agenda tiene este expediente facturado con OTRO número: ${numAgenda}. Resolvé a mano.`, [e]); continue; }
+    aEnviar.push(r.idExterno);
+  }
+  if (!aEnviar.length) return { ...base, estado: base.conflictos ? 'conflicto' : 'confirmado', detalle: base.conflictos ? `${base.conflictos} expediente(s) facturado(s) en la Agenda con otro número: hay que resolverlo a mano.` : 'Todo confirmado.' };
+  // Los que vamos a enviar quedan 'pendiente' con el actualizadoEn fresco que acabamos de leer.
+  await marcarWriteback(aEnviar, 'pendiente', 'Reintento: expediente re-leído, listo para enviar.');
+  const r = await escribirFacturaEnAgenda(noFactura, actor, { api, soloIds: aEnviar });
+  return { ...base, enviados: r.estado === 'confirmado' ? aEnviar.length : 0, ...r };
+}
+
+/**
+ * Cobro de vuelta (brief §8): cuando financiero cobra por completo una factura con
+ * expedientes de la Agenda, empuja PAGADO con POST /lote (siActualizadoEn). Lo que
+ * cambia la propia API no se avisa de vuelta → no hay loop. Nunca lanza.
+ */
+export async function notificarCobroAgenda(noFactura: string, actor: string, opts: { api?: AgendaApi } = {}): Promise<{ enviados: number; estado: 'omitido' | 'nada' | 'confirmado' | 'conflicto' | 'error'; detalle: string }> {
+  try {
+    const cfg = configAgenda();
+    if (!cfg.writeback) return { enviados: 0, estado: 'omitido', detalle: 'FACTURAR_WRITEBACK apagado.' };
+    const api = opts.api ?? apiAgenda({ actor });
+    if (!api) return { enviados: 0, estado: 'omitido', detalle: 'Sin llave.' };
+    const rows = (await listarExpedientesLocal({ noFactura })).filter(r => !r.eliminado && r.writebackEstado === 'confirmado' && r.cobroWritebackEstado !== 'confirmado');
+    if (!rows.length) return { enviados: 0, estado: 'nada', detalle: 'La factura no tiene expedientes de la Agenda pendientes de marcar PAGADO.' };
+    const sb = supabase()!; const ahora = new Date().toISOString();
+    const ids = rows.map(r => r.idExterno);
+    try {
+      const r = await api.lote(rows.map(x => ({ id: x.idExterno, statusCobro: 'PAGADO', estatusPago: 'PAGADO', ...(siActualizadoEnDe(x) ? { siActualizadoEn: siActualizadoEnDe(x) } : {}) })));
+      const devueltos = Array.isArray(r.body?.expedientes) ? r.body.expedientes : [];
+      const porId = new Map(devueltos.map(d => [d.id, d]));
+      for (const id of ids) {
+        const d = porId.get(id); const cobro = d?.cobro ?? { statusCobro: 'PAGADO', estatusPago: 'PAGADO' };
+        await sb.from('facturacion_expediente').update({ cobro_writeback_estado: 'confirmado', cobro_writeback_detalle: `PAGADO en Agenda (${r.status})`, cobro_writeback_en: ahora, status_cobro_externo: cobro.statusCobro ?? 'PAGADO', estatus_pago_externo: cobro.estatusPago ?? 'PAGADO', ...(d ? { actualizado_en_externo: d.actualizadoEn ?? null, raw: d } : {}), updated_at: ahora }).eq('fuente', FUENTE).eq('id_externo', id);
+      }
+      return { enviados: ids.length, estado: 'confirmado', detalle: `${ids.length} expediente(s) marcados PAGADO en la Agenda.` };
+    } catch (e) {
+      const esApi = e instanceof AgendaApiError;
+      const estado = esApi && e.status === 409 ? 'conflicto' : 'error';
+      const det = esApi ? `${e.status || 'red'} · ${resumirCuerpo(e.body)}` : (e instanceof Error ? e.message : String(e));
+      await sb.from('facturacion_expediente').update({ cobro_writeback_estado: estado, cobro_writeback_detalle: det.slice(0, 500), cobro_writeback_en: ahora, updated_at: ahora }).eq('fuente', FUENTE).in('id_externo', ids);
+      if (estado === 'conflicto' && esApi) await releer(ids, e.status === 409 ? (opts.api ?? apiAgenda({ actor }))! : api).catch(() => null);
+      return { enviados: 0, estado, detalle: estado === 'conflicto' ? 'La Agenda cambió el expediente antes del cobro (409): se volvió a leer; el PAGADO queda pendiente de revisar.' : `No se pudo marcar PAGADO en la Agenda: ${det}` };
+    }
+  } catch (e) {
+    return { enviados: 0, estado: 'error', detalle: e instanceof Error ? e.message : String(e) };
+  }
+}
+
+// ── Detalle de factura ──────────────────────────────────────────────────────
+
+interface DetRow { id: string; no_factura: string; id_externo: string; tipo_prueba: string | null; categoria: string | null; territorio: string | null; monto: number | string; centro_costo_id: string | null; persona: string | null }
+
+export interface ProcesosDeFactura { detalle: DetalleFacturaExpediente[]; expedientes: ExpedienteLocal[]; subtotal: number; writeback: { confirmados: number; pendientes: number; conflictos: number; errores: number; omitidos: number } }
+
+/** Qué procesos de la Agenda cubre una factura de financiero (vacío si no viene de la Agenda o falta la 016). */
+export async function procesosDeFactura(noFactura: string): Promise<ProcesosDeFactura | null> {
+  const nf = (noFactura ?? '').trim(); if (!nf) return null;
+  try {
+    // Primero el detalle: si la 016 no está en esta base (o la factura no viene de la Agenda) se corta acá, sin ruido en el log.
+    const rows = await fetchAll<DetRow>('factura_detalle_expediente', { eq: { no_factura: nf }, order: { column: 'created_at', ascending: true } });
+    if (!rows.length) return null;
+    const exps = await listarExpedientesLocal({ noFactura: nf });
+    const centros = await fetchAll<{ id: string; nombre: string | null }>('centros_costo', { select: 'id, nombre' });
+    const nombreCC = new Map(centros.map(c => [c.id, (c.nombre ?? '').trim()]));
+    const detalle = rows.map(r => ({ id: r.id, noFactura: r.no_factura, idExterno: r.id_externo, tipoPrueba: r.tipo_prueba ?? '', categoria: r.categoria ?? '', territorio: r.territorio ?? '', monto: Number(r.monto), centroCostoId: r.centro_costo_id, centroNombre: (r.centro_costo_id && nombreCC.get(r.centro_costo_id)) || '', persona: r.persona ?? '' }));
+    const wb = { confirmados: 0, pendientes: 0, conflictos: 0, errores: 0, omitidos: 0 };
+    for (const e of exps) { if (e.writebackEstado === 'confirmado') wb.confirmados++; else if (e.writebackEstado === 'conflicto') wb.conflictos++; else if (e.writebackEstado === 'error') wb.errores++; else if (e.writebackEstado === 'omitido') wb.omitidos++; else wb.pendientes++; }
+    return { detalle, expedientes: exps, subtotal: Math.round(detalle.reduce((s, d) => s + d.monto, 0) * 100) / 100, writeback: wb };
+  } catch { return null; }
+}
+
+// ── Webhook ─────────────────────────────────────────────────────────────────
+
+/** Registra el id del aviso; false si ya se había recibido (ignorar el repetido). */
+export async function registrarEventoWebhook(id: string, tipo: string, ocurrido: string | null): Promise<boolean> {
+  const sb = supabase(); if (!sb) return false;
+  const { error } = await sb.from('facturacion_webhook_evento').insert({ id, fuente: FUENTE, tipo: tipo || null, ocurrido: ocurrido && !Number.isNaN(Date.parse(ocurrido)) ? ocurrido : null });
+  if (!error) return true;
+  if (error.code === '23505') return false;
+  throw new Error(`facturacion_webhook_evento: ${error.message}`);
+}
+
+export const etiquetaEstadoCobro = (s: string | null | undefined): string => (s ? normalizarTexto(s) : 'Sin estado');

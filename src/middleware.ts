@@ -5,6 +5,7 @@ const isPublicRoute = createRouteMatcher([
   '/sign-up(.*)',
   '/no-acceso',
   '/api/cron(.*)',
+  '/api/webhook(.*)',   // FACTURACIÓN AGENDA: avisos firmados por HMAC (la firma es la auth)
 ]);
 
 export default clerkMiddleware(async (auth, req) => {

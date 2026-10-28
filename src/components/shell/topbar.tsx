@@ -17,6 +17,7 @@ const ROUTE_CRUMBS: Record<string, string[]> = {
   '/cobros':      ['Operación', 'Cobros'],
   '/clientes':    ['Operación', 'Clientes'],
   '/tarifario':   ['Operación', 'Tarifario'],
+  '/por-facturar': ['Operación', 'Por facturar'],
   '/gastos':      ['Gastos'],
   '/conciliacion': ['Gastos', 'Conciliación bancaria'],
   '/factoraje':   ['Gastos', 'Factoraje'],
@@ -35,6 +36,7 @@ function getCrumbs(pathname: string | null): string[] {
   if (pathname.startsWith('/facturacion/')) return ['Operación', 'Facturación', 'Detalle'];
   if (pathname.startsWith('/clientes/'))    return ['Operación', 'Clientes', 'Cliente'];
   if (pathname.startsWith('/tarifario/'))   return ['Operación', 'Tarifario', 'Empresa'];
+  if (pathname.startsWith('/por-facturar/')) return ['Operación', 'Por facturar', 'Cliente'];
   return ROUTE_CRUMBS[pathname] ?? [pathname.slice(1)];
 }
 

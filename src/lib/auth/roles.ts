@@ -60,6 +60,7 @@ export type Accion =
   | 'ver_presupuesto'
   | 'presupuesto'
   | 'reabrir_presupuesto'
+  | 'facturar_agenda'
   | 'gestionar_usuarios'
   | 'configurar_empresa';
 
@@ -90,6 +91,7 @@ export const MATRIZ: Record<Accion, readonly Rol[]> = {
   ver_presupuesto:    TODOS,       // ver presupuesto y comparativo (para sacar al auxiliar: REGISTRAN → CONTROL+lectura acá)
   presupuesto:        CONTROL,     // crear, editar celdas, precargar y aprobar el presupuesto
   reabrir_presupuesto: SOLO_ADMIN, // reabrir un presupuesto aprobado por la junta (queda en el log)
+  facturar_agenda:    CONTROL,     // FACTURACIÓN AGENDA (016): facturar expedientes de evaluación, mapear sus clientes y traer de la Agenda
   gestionar_usuarios: SOLO_ADMIN,
   configurar_empresa: SOLO_ADMIN,
 };
@@ -115,6 +117,7 @@ export const ACCION_LABEL: Record<Accion, string> = {
   ver_presupuesto:    'ver el presupuesto',
   presupuesto:        'editar y aprobar el presupuesto',
   reabrir_presupuesto: 'reabrir un presupuesto aprobado',
+  facturar_agenda:    'facturar expedientes de la Agenda',
   gestionar_usuarios: 'gestionar usuarios',
   configurar_empresa: 'configurar la empresa',
 };
