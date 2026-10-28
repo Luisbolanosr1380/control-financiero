@@ -16,7 +16,7 @@ export function normalizarTexto(s: string | null | undefined): string {
 /** Solo letras y dígitos (para comparar variantes de grafía). */
 const compacto = (s: string | null | undefined) => normalizarTexto(s).replace(/[^A-Z0-9]/g, '');
 
-export const TIPOS_PRUEBA = ['POLIGRAFO', 'SOCIOECONOMICO', 'COMPLETO', 'POLIGRAFO BASIC', 'INFORNET', 'VISITA DOMICILIAR', 'ENTREVISTA FORENSE'] as const;
+export const TIPOS_PRUEBA = ['POLIGRAFO', 'SOCIOECONOMICO', 'COMPLETO', 'POLIGRAFO BASIC', 'INFORNET', 'VISITA DOMICILIAR', 'ENTREVISTA FORENSE', 'SOCIOECONOMICO EMPRESARIAL'] as const;
 export const CATEGORIAS   = ['PRE EMPLEO', 'RUTINA', 'ESPECIFICO', 'INFORNET'] as const;
 export const TERRITORIOS  = ['METROPOLITANA', 'DEPARTAMENTAL'] as const;
 
@@ -27,6 +27,7 @@ export function canonTipoPrueba(s: string | null | undefined): string {
   if (c.includes('POLIGRAF') && c.includes('BASIC')) return 'POLIGRAFO BASIC';
   if (c.includes('COMPLET') || (c.includes('POLIGRAF') && c.includes('SOCIO'))) return 'COMPLETO';
   if (c.includes('POLIGRAF')) return 'POLIGRAFO';
+  if (c.includes('SOCIO') && c.includes('EMPRESARIAL')) return 'SOCIOECONOMICO EMPRESARIAL';   // FACTURACIÓN AGENDA: "SOCIO EMPRESARIAL" es otro servicio, no un socioeconómico
   if (c.includes('SOCIO'))    return 'SOCIOECONOMICO';
   if (c.includes('INFORNET')) return 'INFORNET';
   if (c.includes('VISITA'))   return 'VISITA DOMICILIAR';

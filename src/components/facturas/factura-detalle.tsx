@@ -17,6 +17,8 @@ import type { GrupoCobro } from '@/lib/db/cobros';
 import type { NotaCredito } from '@/lib/db/notas-credito';
 import type { Invoice, InvoiceStatus } from '@/lib/types';
 import { EtiquetasEditor } from '@/components/common/etiquetas-chips';
+import { ProcesosAgendaSection } from '@/components/por-facturar/procesos-agenda-section';
+import type { ProcesosDeFactura } from '@/lib/db/facturacion-agenda';
 
 const STATUS_BADGE: Record<InvoiceStatus, { cls: string; text: string }> = {
   vencido:       { cls: 'badge-wine',    text: 'Vencida' },
@@ -38,6 +40,8 @@ interface Props {
   esAdmin: boolean;              // F-045: solo admin aprueba NCs > Q5K
   /** FIX-DASHBOARD-ANALITICA-HIT: ccId → nombre, para las líneas REALES de la base. */
   nombresCC?: Record<string, string>;
+  /** FACTURACIÓN AGENDA: procesos de la Agenda que cubre esta factura (null si no viene de ahí). */
+  procesosAgenda?: ProcesosDeFactura | null;
 }
 
 const formatFechaShort = (s: string): string =>
@@ -70,7 +74,7 @@ function dedupeComponentes(g: GrupoCobro): { metodo: string; bancoNombre: string
   return [...buckets.values()];
 }
 
-export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros, notasCredito, esAdmin, nombresCC = {} }: Props) {
+export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros, notasCredito, esAdmin, nombresCC = {}, procesosAgenda = null }: Props) {
   const badge = STATUS_BADGE[inv.status] ?? { cls: 'badge-mute', text: inv.status };
   // Línea = CC real de la base; fallback legacy a LINES si no hay centroCostoId.
   const nombreLinea = (l: { line: Invoice['line']; centroCostoId?: string }): string =>
@@ -244,6 +248,9 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
           </tbody>
         </table>
       </div>
+
+      {/* FACTURACIÓN AGENDA: qué procesos de la Agenda cubre esta factura. */}
+      {procesosAgenda && <ProcesosAgendaSection noFactura={inv.noFactura} procesos={procesosAgenda} nombresCC={nombresCC} />}
 
       {/* F-035: Historial de cobros agrupados por evento (Cobro_Grupo_ID). */}
       {cobros.length > 0 && (

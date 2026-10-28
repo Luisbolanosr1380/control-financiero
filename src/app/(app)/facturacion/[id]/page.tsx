@@ -5,6 +5,7 @@ import { getBancosActivos } from '@/lib/db/bancos';
 import { getSaldoPendiente, getCobrosDeFactura } from '@/lib/db/cobros';
 import { getNotasCreditoFactura } from '@/lib/db/notas-credito';
 import { getCentrosCosto } from '@/lib/db/centros';
+import { procesosDeFactura } from '@/lib/db/facturacion-agenda';
 import { getSesion } from '@/lib/auth/guard';
 import { FacturaDetalle } from '@/components/facturas/factura-detalle';
 import { I } from '@/components/common/icons';
@@ -33,13 +34,14 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
   // F-035 + F-045: saldo + cobros + NCs vinculadas + rol del usuario actual.
   const { email, rol } = await getSesion();
 
-  const [clientes, bancos, saldoInfo, cobrosFactura, notasCredito, centros] = await Promise.all([
+  const [clientes, bancos, saldoInfo, cobrosFactura, notasCredito, centros, procesosAgenda] = await Promise.all([
     getClientes(),
     getBancosActivos(),
     getSaldoPendiente(factura.noFactura),
     getCobrosDeFactura(factura.noFactura),
     getNotasCreditoFactura(factura.id),
     getCentrosCosto(),
+    procesosDeFactura(factura.noFactura),   // FACTURACIÓN AGENDA: qué expedientes cubre (null si no viene de la Agenda)
   ]);
   const nombresCC = Object.fromEntries(centros.map(c => [c.id, c.nombre.trim()]));
 
@@ -56,6 +58,7 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
       notasCredito={notasCredito}
       esAdmin={rol === 'admin'}
       nombresCC={nombresCC}
+      procesosAgenda={procesosAgenda}
     />
   );
 }

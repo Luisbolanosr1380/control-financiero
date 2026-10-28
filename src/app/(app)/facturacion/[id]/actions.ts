@@ -26,6 +26,7 @@ import {
   registrarCobro, anularCobro, anularCobroLegacy,
   type RegistrarCobroInput, type RegistrarCobroResult, type AnularCobroResult,
 } from '@/lib/db/cobros';
+import { notificarCobroAgenda } from '@/lib/db/facturacion-agenda';
 import {
   uploadAttachment,
   CONSTANCIA_FIELD_ID,
@@ -85,6 +86,14 @@ export async function registrarCobroAction(formData: FormData): Promise<CobroRes
 
   const result = await registrarCobro(input);
   const avisos: string[] = [];
+
+  // FACTURACIÓN AGENDA (brief §8): si la factura quedó COBRADA y cubre expedientes de la
+  // Agenda, se empuja PAGADO con POST /lote (siActualizadoEn). Fail-soft: un error ahí no
+  // deshace el cobro; queda en facturacion_log y en el estado del expediente.
+  if (result.ok && result.estadoNuevo === 'COBRADO') {
+    const push = await notificarCobroAgenda(result.noFactura, permiso.email);
+    if (push.estado === 'conflicto' || push.estado === 'error') avisos.push(`Agenda: ${push.detalle}`);
+  }
 
   // Subir constancias (si las hay) — solo si los records se crearon ok.
   if (result.cobrosCreados > 0) {
