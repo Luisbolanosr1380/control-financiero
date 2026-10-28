@@ -16,7 +16,7 @@
 import { supabase, fetchAll } from '@/lib/supabase/client';
 import { nuevoIdEscritura, rpc, uuidOpcional, uuidRequerido } from '@/lib/supabase/writes';
 import { nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
-import { normalizarTexto } from '@/lib/tarifario/canon';
+import { conIva, normalizarTexto } from '@/lib/tarifario/canon';
 import { indiceAlias, nombreBase, resolverNit } from '@/lib/tarifario/lookup';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { configAgenda } from '@/lib/facturacion-agenda/config';
@@ -169,7 +169,8 @@ export async function reclasificar(filtro: { empresaIdExterno?: string } = {}, c
   const sb = supabase(); if (!sb) return 0;
   const ctx = ctxDado ?? await cargarContexto();
   const rows = await paginar<{ id_externo: string; raw: ExpedienteAgenda | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; nit_resuelto: string | null; detalle_tarifa: string | null }>(() => {
-    let q = sb.from('facturacion_expediente').select('id_externo, raw, estado_tarifa, monto_calculado, nit_resuelto, detalle_tarifa').eq('fuente', FUENTE).is('factura_id', null).order('id_externo');
+    // Solo la cola (terminados vigentes sin factura): lo demás se vuelve a clasificar cuando la Agenda lo cambie (sync).
+    let q = sb.from('facturacion_expediente').select('id_externo, raw, estado_tarifa, monto_calculado, nit_resuelto, detalle_tarifa').eq('fuente', FUENTE).is('factura_id', null).eq('terminado', true).eq('cancelado', false).eq('eliminado', false).order('id_externo');
     if (filtro.empresaIdExterno) q = q.eq('empresa_id_externo', filtro.empresaIdExterno);
     return q;
   }, 'reclasificar');
@@ -284,11 +285,154 @@ const razonPorNitDe = (clientes: readonly Customer[]): Map<string, string> => {
   return m;
 };
 
-export interface VistaPorFacturar { grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number }
+export interface VistaPorFacturar {
+  /** Solo clientes con expedientes en cola resueltos o sin tarifa (nunca el universo). */
+  grupos: GrupoCliente[];
+  kpis: KpisPorFacturar;
+  sync: SyncEstado | null;
+  /** Filas en el espejo (todas, solo como referencia). */
+  total: number;
+  sinMapear: { expedientes: number; empresas: number };
+  /** true si los agregados vinieron de la RPC de la 017 (SQL); false = fallback con consultas livianas. */
+  agregadoEnSql: boolean;
+}
 
-export async function vistaPorFacturar(): Promise<VistaPorFacturar> {
-  const [exps, clientes, sync] = await Promise.all([listarExpedientesLocal(), getClientes(), getSyncEstado()]);
-  return { grupos: agruparPorCliente(exps, razonPorNitDe(clientes)), kpis: kpisPorFacturar(exps), sync, total: exps.length };
+interface ConteoEstado { estado_tarifa: EstadoTarifa; total: number; en_cola: number; empresas_en_cola: number }
+interface GrupoRpc { nit_resuelto: string; empresa_id_externo: string | null; empresa_nombre_externo: string | null; listos: number; total_sin_iva: number | string; sin_tarifa: number; con_megapaca: number; fecha_mas_antigua: string | null }
+interface FacturadoRpc { nit_resuelto: string | null; facturados: number; writeback_pendiente: number; con_megapaca: number }
+interface ResumenRpc { conteos: ConteoEstado[]; grupos: GrupoRpc[]; facturados: FacturadoRpc[]; total: number; excluidos: number }
+
+const rpcNoExiste = (e: { code?: string; message: string }) => e.code === 'PGRST202' || /could not find the function|function .* does not exist/i.test(e.message);
+/** Filtro PostgREST de "en cola" (misma regla que enCola()). */
+const COBRO_PENDIENTE_OR = 'status_cobro_externo.is.null,status_cobro_externo.in.("PENDIENTE","SIN_STATUS","")';
+/** Lo mínimo que usamos de un builder de PostgREST (los métodos devuelven `this`); el tipo real es demasiado profundo para inferirlo acá. */
+interface Filtrable { eq(col: string, v: unknown): this; is(col: string, v: null): this; or(filtros: string): this; in(col: string, vals: unknown[]): this; not(col: string, op: string, v: unknown): this; order(col: string): this }
+type QCola = Filtrable & Consulta & PromiseLike<{ count: number | null; error: { message: string } | null }>;
+const enColaSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false).is('factura_id', null).or(COBRO_PENDIENTE_OR);
+const vigenteSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false);
+const ESTADOS: EstadoTarifa[] = ['resuelta', 'sin_tarifa', 'cliente_sin_mapear', 'excluido_psicometrica'];
+
+/** Fallback sin la 017: los mismos agregados con consultas livianas (counts por HEAD + solo las filas de la cola facturable). */
+async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>): Promise<ResumenRpc> {
+  const sel = (cols: string, head = false): QCola => (head ? sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }) : sb.from('facturacion_expediente').select(cols)).eq('fuente', FUENTE) as unknown as QCola;
+  const cuenta = async (arma: (q: QCola) => QCola): Promise<number> => { const { count, error } = await arma(sel('id', true)); if (error) throw new Error(error.message); return count ?? 0; };
+  const conteos: ConteoEstado[] = [];
+  for (const estado of ESTADOS) {
+    const [total, en_cola] = await Promise.all([cuenta(q => q.eq('estado_tarifa', estado)), cuenta(q => enColaSql(q.eq('estado_tarifa', estado)))]);
+    conteos.push({ estado_tarifa: estado, total, en_cola, empresas_en_cola: 0 });
+  }
+  const sinMapear = await paginar<{ empresa_id_externo: string | null }>(() => enColaSql(sel('empresa_id_externo').eq('estado_tarifa', 'cliente_sin_mapear')).order('id_externo'), 'sin mapear');
+  const c = conteos.find(x => x.estado_tarifa === 'cliente_sin_mapear'); if (c) c.empresas_en_cola = new Set(sinMapear.map(r => r.empresa_id_externo ?? '')).size;
+  const colaRows = await paginar<{ nit_resuelto: string | null; empresa_id_externo: string | null; empresa_nombre_externo: string | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; cobro_megapaca: number | string | null; fecha_ingreso: string | null }>(() =>
+    enColaSql(sel('nit_resuelto, empresa_id_externo, empresa_nombre_externo, estado_tarifa, monto_calculado, cobro_megapaca, fecha_ingreso').in('estado_tarifa', ['resuelta', 'sin_tarifa'])).order('id_externo'), 'cola');
+  const grupos = new Map<string, GrupoRpc>();
+  for (const r of colaRows) {
+    if (!r.nit_resuelto) continue;
+    const g = grupos.get(r.nit_resuelto) ?? { nit_resuelto: r.nit_resuelto, empresa_id_externo: r.empresa_id_externo, empresa_nombre_externo: r.empresa_nombre_externo, listos: 0, total_sin_iva: 0, sin_tarifa: 0, con_megapaca: 0, fecha_mas_antigua: null };
+    if (r.estado_tarifa === 'resuelta' && Number(r.monto_calculado ?? 0) > 0) { g.listos++; g.total_sin_iva = Math.round((Number(g.total_sin_iva) + Number(r.monto_calculado)) * 100) / 100; }
+    if (r.estado_tarifa === 'sin_tarifa') g.sin_tarifa++;
+    if (Number(r.cobro_megapaca ?? 0) > 0) g.con_megapaca++;
+    if (r.fecha_ingreso && (!g.fecha_mas_antigua || r.fecha_ingreso < g.fecha_mas_antigua)) g.fecha_mas_antigua = r.fecha_ingreso;
+    grupos.set(r.nit_resuelto, g);
+  }
+  const factRows = await paginar<{ nit_resuelto: string | null; writeback_estado: string | null; cobro_megapaca: number | string | null }>(() => vigenteSql(sel('nit_resuelto, writeback_estado, cobro_megapaca').not('factura_id', 'is', null)).order('id_externo'), 'facturados');
+  const fact = new Map<string, FacturadoRpc>();
+  for (const r of factRows) {
+    const k = r.nit_resuelto ?? '';
+    const f = fact.get(k) ?? { nit_resuelto: r.nit_resuelto, facturados: 0, writeback_pendiente: 0, con_megapaca: 0 };
+    f.facturados++; if (!r.writeback_estado || !['confirmado', 'omitido'].includes(r.writeback_estado)) f.writeback_pendiente++; if (Number(r.cobro_megapaca ?? 0) > 0) f.con_megapaca++;
+    fact.set(k, f);
+  }
+  const [total, excluidos] = await Promise.all([cuenta(q => q), cuenta(q => vigenteSql(q.eq('estado_tarifa', 'excluido_psicometrica')))]);
+  return { conteos, grupos: [...grupos.values()], facturados: [...fact.values()], total, excluidos };
+}
+
+/**
+ * Lista "Por facturar" SIN cargar el espejo: agregados por SQL (RPC de la 017) o, si
+ * falta, consultas livianas. Solo entran a la pantalla los clientes con expedientes en
+ * cola resueltos / sin tarifa; sin mapear y psicométricas se CUENTAN, no se cargan.
+ */
+export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise<VistaPorFacturar> {
+  const sb = supabase();
+  const vacio: VistaPorFacturar = { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, agregadoEnSql: false };
+  if (!sb) return vacio;
+  const [clientes, sync] = await Promise.all([getClientes(), getSyncEstado()]);
+  let r: ResumenRpc | null = null; let enSql = false;
+  if (!opts.sinRpc) {
+    const { data, error } = await sb.rpc('facturacion_agenda_resumen', { p_fuente: FUENTE });
+    if (!error && data) { r = data as ResumenRpc; enSql = true; }
+    else if (error && !rpcNoExiste(error)) console.error('facturacion_agenda_resumen:', error.message);
+  }
+  if (!r) r = await resumenSinRpc(sb);
+  const razon = razonPorNitDe(clientes);
+  const porNit = new Map<string, GrupoCliente>();
+  const base = (nit: string | null, emp: string | null, nombreExt: string | null): GrupoCliente => ({
+    clave: nit ? `n-${nit}` : `e-${emp ?? ''}`, nit, empresaIdExterno: emp ?? '', nombre: (nit && razon.get(nit)) || nombreExt || emp || '—', nombreExterno: nombreExt ?? '',
+    expedientes: 0, listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, facturados: 0, writebackPendiente: 0, conMegapaca: 0, fechaIngresoMasAntigua: null,
+  });
+  for (const g of r.grupos) {
+    const x = porNit.get(g.nit_resuelto) ?? base(g.nit_resuelto, g.empresa_id_externo, g.empresa_nombre_externo);
+    x.listos += Number(g.listos); x.totalSinIva = Math.round((x.totalSinIva + Number(g.total_sin_iva)) * 100) / 100; x.sinTarifa += Number(g.sin_tarifa); x.conMegapaca += Number(g.con_megapaca);
+    x.expedientes += Number(g.listos) + Number(g.sin_tarifa);
+    if (g.fecha_mas_antigua && (!x.fechaIngresoMasAntigua || g.fecha_mas_antigua < x.fechaIngresoMasAntigua)) x.fechaIngresoMasAntigua = g.fecha_mas_antigua;
+    porNit.set(g.nit_resuelto, x);
+  }
+  for (const f of r.facturados) {
+    const x = porNit.get(f.nit_resuelto ?? '');   // solo suma a clientes que ya están en la lista: la lista es "por facturar"
+    if (!x) continue;
+    x.facturados += Number(f.facturados); x.writebackPendiente += Number(f.writeback_pendiente); x.expedientes += Number(f.facturados);
+  }
+  const grupos = [...porNit.values()].map(g => ({ ...g, totalConIva: conIva(g.totalSinIva).total }));
+  const peso = (g: GrupoCliente) => (g.sinTarifa ? 0 : g.listos ? 1 : 2);
+  grupos.sort((a, b) => peso(a) - peso(b) || b.totalSinIva - a.totalSinIva || a.nombre.localeCompare(b.nombre, 'es'));
+  const c = (e: EstadoTarifa) => r!.conteos.find(x => x.estado_tarifa === e);
+  const listos = grupos.reduce((s, g) => s + g.listos, 0);
+  const totalSinIva = Math.round(grupos.reduce((s, g) => s + g.totalSinIva, 0) * 100) / 100;
+  const kpis: KpisPorFacturar = {
+    listos, totalSinIva, totalConIva: conIva(totalSinIva).total,
+    sinTarifa: Number(c('sin_tarifa')?.en_cola ?? 0),
+    sinMapear: Number(c('cliente_sin_mapear')?.en_cola ?? 0),
+    excluidos: Number(r.excluidos ?? 0),
+    facturados: r.facturados.reduce((s, f) => s + Number(f.facturados), 0),
+    writebackPendiente: r.facturados.reduce((s, f) => s + Number(f.writeback_pendiente), 0),
+    clientes: grupos.length,
+    clientesSinMapear: Number(c('cliente_sin_mapear')?.empresas_en_cola ?? 0),
+  };
+  return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, agregadoEnSql: enSql };
+}
+
+export interface EmpresaSinMapear { empresaIdExterno: string; empresaNombreExterno: string; expedientes: number; fechaMasAntigua: string | null; fechaMasReciente: string | null }
+export interface PaginaSinMapear { filas: EmpresaSinMapear[]; totalEmpresas: number; totalExpedientes: number; limite: number; desde: number; agregadoEnSql: boolean }
+
+/** Empresas de la Agenda sin mapear (en cola), agregadas por empresa, con búsqueda y paginación. On demand. */
+export async function empresasSinMapear(opts: { q?: string; limite?: number; desde?: number; sinRpc?: boolean } = {}): Promise<PaginaSinMapear> {
+  const sb = supabase();
+  const limite = Math.min(Math.max(Number(opts.limite ?? 25), 1), 100), desde = Math.max(Number(opts.desde ?? 0), 0);
+  const q = String(opts.q ?? '').trim().slice(0, 80).replace(/[%_\\]/g, m => `\\${m}`);
+  const vacio: PaginaSinMapear = { filas: [], totalEmpresas: 0, totalExpedientes: 0, limite, desde, agregadoEnSql: false };
+  if (!sb) return vacio;
+  if (!opts.sinRpc) {
+    const { data, error } = await sb.rpc('facturacion_agenda_sin_mapear', { p_fuente: FUENTE, p_q: q, p_limit: limite, p_offset: desde });
+    if (!error && data) {
+      const d = data as { total_empresas: number; total_expedientes: number; filas: { empresa_id_externo: string; empresa_nombre_externo: string | null; expedientes: number; fecha_mas_antigua: string | null; fecha_mas_reciente: string | null }[] };
+      return { filas: (d.filas ?? []).map(f => ({ empresaIdExterno: f.empresa_id_externo, empresaNombreExterno: f.empresa_nombre_externo ?? '', expedientes: Number(f.expedientes), fechaMasAntigua: f.fecha_mas_antigua, fechaMasReciente: f.fecha_mas_reciente })), totalEmpresas: Number(d.total_empresas ?? 0), totalExpedientes: Number(d.total_expedientes ?? 0), limite, desde, agregadoEnSql: true };
+    }
+    if (error && !rpcNoExiste(error)) console.error('facturacion_agenda_sin_mapear:', error.message);
+  }
+  // Fallback sin la 017: solo 3 columnas de las filas sin mapear en cola, agregadas en memoria.
+  const rows = await paginar<{ empresa_id_externo: string | null; empresa_nombre_externo: string | null; fecha_ingreso: string | null }>(() =>
+    enColaSql((sb.from('facturacion_expediente').select('empresa_id_externo, empresa_nombre_externo, fecha_ingreso').eq('fuente', FUENTE) as unknown as QCola).eq('estado_tarifa', 'cliente_sin_mapear')).order('id_externo'), 'sin mapear');
+  const emp = new Map<string, EmpresaSinMapear>();
+  for (const r of rows) {
+    const k = r.empresa_id_externo ?? '';
+    const e = emp.get(k) ?? { empresaIdExterno: k, empresaNombreExterno: r.empresa_nombre_externo ?? '', expedientes: 0, fechaMasAntigua: null, fechaMasReciente: null };
+    e.expedientes++; if (!e.empresaNombreExterno && r.empresa_nombre_externo) e.empresaNombreExterno = r.empresa_nombre_externo;
+    if (r.fecha_ingreso) { if (!e.fechaMasAntigua || r.fecha_ingreso < e.fechaMasAntigua) e.fechaMasAntigua = r.fecha_ingreso; if (!e.fechaMasReciente || r.fecha_ingreso > e.fechaMasReciente) e.fechaMasReciente = r.fecha_ingreso; }
+    emp.set(k, e);
+  }
+  const qn = normalizarTexto(opts.q ?? '');
+  const filt = [...emp.values()].filter(e => !qn || normalizarTexto(e.empresaNombreExterno).includes(qn) || normalizarTexto(e.empresaIdExterno).includes(qn)).sort((a, b) => b.expedientes - a.expedientes || a.empresaNombreExterno.localeCompare(b.empresaNombreExterno, 'es'));
+  return { filas: filt.slice(desde, desde + limite), totalEmpresas: filt.length, totalExpedientes: filt.reduce((s, e) => s + e.expedientes, 0), limite, desde, agregadoEnSql: false };
 }
 
 export interface ClienteSlim { id: string; name: string; nit: string }

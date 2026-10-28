@@ -1,10 +1,10 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
-import { autorizar } from '@/lib/auth/guard';
+import { autorizar, exigir } from '@/lib/auth/guard';
 import {
-  emitirFacturaAgenda, guardarMapeo, reintentarWriteback, sincronizarAgenda,
-  type EmitirInput, type EmitirResult, type MapeoResult, type ResultadoSync, type WritebackResultado,
+  emitirFacturaAgenda, empresasSinMapear, guardarMapeo, reintentarWriteback, sincronizarAgenda,
+  type EmitirInput, type PaginaSinMapear, type EmitirResult, type MapeoResult, type ResultadoSync, type WritebackResultado,
 } from '@/lib/db/facturacion-agenda';
 
 function revalidar() {
@@ -48,4 +48,11 @@ export async function reintentarWritebackAction(noFactura: string): Promise<Rein
   const r = await reintentarWriteback(noFactura, permiso.email);
   revalidar();
   return r;
+}
+
+/** Pestaña "Sin mapear": empresas de la Agenda agregadas en SQL, paginadas y on demand (consultar = 'ver'). */
+export async function empresasSinMapearAction(q: string, pagina: number, limite = 25): Promise<PaginaSinMapear> {
+  await exigir('ver');
+  const lim = Math.min(Math.max(Number(limite) || 25, 1), 100);
+  return empresasSinMapear({ q, limite: lim, desde: (Math.max(Number(pagina) || 1, 1) - 1) * lim });
 }

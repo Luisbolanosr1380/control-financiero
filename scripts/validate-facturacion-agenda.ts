@@ -58,7 +58,17 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   ok(/references facturas_clientes\(id\) on delete cascade/.test(mig) && /references facturacion_expediente\(id\)/.test(mig) && /references centros_costo\(id\)/.test(mig) && /monto\s+numeric\(12,2\) not null/.test(mig), '016: factura_detalle_expediente → factura (cascade), expediente, centro de costo; monto sin IVA');
   ok(/create or replace function facturacion_agenda_emitir\(p_actor text, p_factura jsonb, p_lineas jsonb, p_detalle jsonb\)/.test(mig) && /FACTURA_DUPLICADA/.test(mig) && /EXPEDIENTE_NO_FACTURABLE/.test(mig) && /'EMITIDA'/.test(mig) && /insert into factura_detalle_expediente/.test(mig) && /update facturacion_expediente/.test(mig), '016: RPC facturacion_agenda_emitir = factura (mismas columnas que createFactura, EMITIDA, no_factura único) + detalle + vínculo en una transacción');
   ok(!/\b(drop|truncate)\b/i.test(sin) && !/\bdelete\s+from\b/i.test(sin) && !/^\s*(begin|commit)\s*;/im.test(sin) && !/alter table (facturas_clientes|tarifario|clientes)\b/.test(sin), '016: sin drop/truncate/delete/commit; no altera facturas_clientes, tarifario ni clientes (solo agrega)');
-  ok(fs.readdirSync('supabase/migrations').filter(f => /^01[7-9]_|^0[2-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 016');
+  const m17 = rd('supabase/migrations/017_por_facturar_escala.sql');
+  const sin17 = m17.replace(/--.*$/gm, '');
+  ok(/create index if not exists idx_fact_exp_cola\s+on facturacion_expediente \(fuente, estado_tarifa, nit_resuelto, empresa_id_externo\)\s+where terminado and not cancelado and not eliminado and factura_id is null/.test(m17) && /create or replace function facturacion_agenda_resumen\(p_fuente text default 'agenda'\)/.test(m17) && /create or replace function facturacion_agenda_sin_mapear\(p_fuente text default 'agenda', p_q text default '', p_limit integer default 25, p_offset integer default 0\)/.test(m17) && /facturacion_agenda_cobro_pendiente\(status_cobro_externo\)/.test(m17) && !/\b(drop|truncate|delete|update|insert)\b/i.test(sin17) && !/^\s*(begin|commit)\s*;/im.test(sin17), '017: índice parcial de la cola + RPCs resumen / sin_mapear (solo lectura, misma regla de cola que enCola, sin drop/delete/commit)');
+  ok(fs.readdirSync('supabase/migrations').filter(f => /^01[8-9]_|^0[2-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 017');
+  const dbSrc = rd('src/lib/db/facturacion-agenda.ts');
+  const vistaBody = dbSrc.slice(dbSrc.indexOf('export async function vistaPorFacturar('), dbSrc.indexOf('export interface EmpresaSinMapear'));
+  ok(/sb\.rpc\('facturacion_agenda_resumen'/.test(vistaBody) && !/listarExpedientesLocal\(/.test(vistaBody) && !/paginar</.test(vistaBody) && /resumenSinRpc\(/.test(vistaBody), 'vistaPorFacturar: agregados por RPC (017) con fallback liviano; NUNCA listarExpedientesLocal() ni paginar del espejo en el render');
+  const smBody = dbSrc.slice(dbSrc.indexOf('export async function empresasSinMapear('), dbSrc.indexOf('export interface ClienteSlim'));
+  ok(/sb\.rpc\('facturacion_agenda_sin_mapear'/.test(smBody) && /p_limit: limite, p_offset: desde/.test(smBody), 'empresasSinMapear: agregado por empresa en SQL, con búsqueda y paginación (limit/offset)');
+  ok(/\.eq\('terminado', true\)\.eq\('cancelado', false\)\.eq\('eliminado', false\)/.test(dbSrc.slice(dbSrc.indexOf('export async function reclasificar('), dbSrc.indexOf('export interface FiltroExpedientes'))), 'reclasificar: solo re-resuelve la cola (terminados vigentes sin factura), no el espejo entero');
+  ok(/vistaPorFacturar\(\)/.test(rd('src/app/(app)/por-facturar/page.tsx')) && /SinMapearLista/.test(rd('src/components/por-facturar/por-facturar-client.tsx')) && /empresasSinMapearAction\(qAplicada, pagina, POR_PAGINA\)/.test(rd('src/components/por-facturar/sin-mapear-lista.tsx')) && /export async function empresasSinMapearAction\([^)]*\)[^{]*\{\s*await exigir\('ver'\);/.test(rd('src/app/(app)/por-facturar/actions.ts')), 'pantalla: pestaña "Sin mapear" pide las empresas on demand (action con exigir(\'ver\')), paginadas');
 
   const api = rd('src/lib/facturacion-agenda/agenda-api.ts');
   ok(/const REINTENTAR_LECTURA = \[429, 500, 503\]/.test(api) && /const REINTENTAR_ESCRITURA = \[429, 503\]/.test(api) && !/409/.test(api.replace(/\/\*[\s\S]*?\*\/|\/\/.*$|\*.*$/gm, '').replace(/REINTENTAR_\w+ = \[[^\]]*\]/g, '')), 'agenda-api: reintenta 429/503 (y 500 solo en lecturas); un 409 nunca entra a la lista de reintentos');
@@ -185,12 +195,13 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   const { firmar } = await import('../src/lib/facturacion-agenda/firma');
   const ACTOR = 'validador@agenda';
 
-  // Estado previo del sync (se restaura al final)
-  const { data: syncPrevio } = await sb.from('facturacion_sync_estado').select('*').eq('fuente', 'agenda').maybeSingle();
+  // El estado del sync en la base de prueba es SOLO de las pruebas (HIT no tiene llave real): se borra al inicio y al final.
+  // (Antes se "restauraba" el previo y una corrida con --conservar dejaba un watermark que volvía incremental la siguiente.)
 
   const limpiar = async () => {
     // Orden por FKs: detalle (→ expediente) → expedientes (→ facturas, clientes) → facturas → mapeos (→ clientes) → tarifario → clientes.
     const pasos: Array<[string, () => PromiseLike<{ error: { message: string } | null }>]> = [
+      ['volumen', () => sb.from('facturacion_expediente').delete().like('id_externo', 'recVOL%')],
       ['factura_detalle_expediente', () => sb.from('factura_detalle_expediente').delete().like('id_externo', 'recE2E%')],
       ['facturacion_expediente', () => sb.from('facturacion_expediente').delete().like('id_externo', 'recE2E%')],
       ['facturas_clientes', () => sb.from('facturas_clientes').delete().in('no_factura', FACTS)],
@@ -201,7 +212,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
       ['clientes', () => sb.from('clientes').delete().in('nit', [NIT_A, NIT_B])],
     ];
     for (const [nombre, fn] of pasos) { const { error } = await fn(); if (error) console.log(`     ✗ limpieza ${nombre}: ${error.message}`); }
-    if (syncPrevio) await sb.from('facturacion_sync_estado').upsert(syncPrevio, { onConflict: 'fuente' }); else await sb.from('facturacion_sync_estado').delete().eq('fuente', 'agenda');
+    await sb.from('facturacion_sync_estado').delete().eq('fuente', 'agenda');
   };
   if (SOLO_LIMPIAR) { await limpiar(); console.log('  · limpieza hecha'); console.log(`\n${pass} 🟢 / ${fail} 🔴`); process.exit(0); }
   await limpiar();
@@ -324,8 +335,13 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     ok(byId('recE2E008').estadoTarifa === 'cliente_sin_mapear' && byId('recE2E008').nitResuelto === null, 'e008 empresa B sin mapear → cliente sin mapear');
     ok(!byId('recE2E006').terminado && byId('recE2E007').cancelado && byId('recE2E009').statusCobroExterno === 'FACTURADO' && byId('recE2E013').cobroMegapaca === 25, 'e006 no terminado, e007 cancelado, e009 ya FACTURADO en la Agenda (fuera de la cola), e013 conserva cobroMegapaca');
     const vista = await DB.vistaPorFacturar();
-    const gA = vista.grupos.find(g => g.clave === `n-${NIT_A}`)!, gB = vista.grupos.find(g => g.clave === `e-${EMP_B}`)!;
-    ok(!!gA && gA.listos === 7 && gA.totalSinIva === 350 + 450 + 800 + 350 * 4 && gA.sinTarifa === 1 && gA.nombre === 'E2E AGENDA, S.A.' && !!gB && gB.sinMapear === 1 && vista.grupos[0].clave === gB.clave && vista.kpis.excluidos === 1 && vista.kpis.sinMapear === 1 && vista.sync?.corridas === 1, `vista "Por facturar": cliente A con 7 listos por Q${gA?.totalSinIva} y 1 sin tarifa; empresa B sin mapear primero; KPIs y sync`);
+    const gA = vista.grupos.find(g => g.clave === `n-${NIT_A}`)!;
+    ok(!!gA && gA.listos === 7 && gA.totalSinIva === 350 + 450 + 800 + 350 * 4 && gA.totalConIva === 3360 && gA.sinTarifa === 1 && gA.nombre === 'E2E AGENDA, S.A.' && gA.expedientes === 8 && vista.grupos.length === 1 && vista.agregadoEnSql && vista.kpis.excluidos === 1 && vista.kpis.sinMapear === 1 && vista.kpis.clientesSinMapear === 1 && vista.sinMapear.empresas === 1 && vista.kpis.listos === 7 && vista.kpis.clientes === 1 && vista.total === 13 && vista.sync?.corridas === 1, `vista "Por facturar" (agregados en SQL): solo el cliente A (7 listos por Q${gA?.totalSinIva}, 1 sin tarifa); sin mapear y psicométricas solo se CUENTAN (1 y 1); total 13 en el espejo`);
+    const vistaF = await DB.vistaPorFacturar({ sinRpc: true });
+    ok(!vistaF.agregadoEnSql && JSON.stringify(vistaF.grupos) === JSON.stringify(vista.grupos) && JSON.stringify(vistaF.kpis) === JSON.stringify(vista.kpis) && vistaF.total === vista.total, 'fallback sin la 017 (consultas livianas) da exactamente los mismos grupos y KPIs');
+    const sm = await DB.empresasSinMapear({});
+    const smF = await DB.empresasSinMapear({ sinRpc: true });
+    ok(sm.agregadoEnSql && sm.totalEmpresas === 1 && sm.totalExpedientes === 1 && sm.filas.length === 1 && sm.filas[0].empresaIdExterno === EMP_B && sm.filas[0].empresaNombreExterno === 'OTRA EMPRESA' && sm.filas[0].expedientes === 1 && JSON.stringify(smF.filas) === JSON.stringify(sm.filas) && (await DB.empresasSinMapear({ q: 'otra emp' })).totalEmpresas === 1 && (await DB.empresasSinMapear({ q: 'zzz' })).totalEmpresas === 0, 'pestaña "Sin mapear": la empresa B agregada por SQL (1 expediente), búsqueda por nombre; el fallback coincide');
     const det = await DB.getGrupo(`e-${EMP_B}`);
     ok(!!det && det.sugerencias.some(s => s.id === cliB!.airtable_id) && det.clientes.length > 0 && det.nit === null, 'detalle de empresa sin mapear: sugiere "OTRA EMPRESA, S.A." por nombre (contiene, sin tildes)');
     const m2 = await DB.guardarMapeo({ empresaIdExterno: EMP_B, empresaNombreExterno: 'OTRA EMPRESA', clienteAppId: cliB!.airtable_id }, ACTOR);
@@ -458,13 +474,35 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     ok(sinKey.ok && !!sinKey2.omitido, 'sin FACTURACION_API_KEY_AGENDA el sync se omite sin tocar la Agenda');
     process.env.FACTURACION_API_KEY_AGENDA = 'llave-de-prueba';
     process.env.EMPRESA_SLUG = 'golden';
+
+    console.log('\nD. Volumen: ~8,000 filas en el espejo (como Golden)');
+    const vol: Record<string, unknown>[] = [];
+    for (let i = 0; i < 7000; i++) { const emp = i % 200; vol.push({ fuente: 'agenda', id_externo: `recVOL${String(i).padStart(5, '0')}`, empresa_id_externo: `recVOLemp${String(emp).padStart(3, '0')}`, empresa_nombre_externo: `VOL EMPRESA ${String(emp).padStart(3, '0')}`, estado_tarifa: 'cliente_sin_mapear', terminado: true, cancelado: false, eliminado: false, status_cobro_externo: i % 3 ? 'PENDIENTE' : null, fecha_ingreso: `2026-${String(1 + (i % 9)).padStart(2, '0')}-15`, tipo_prueba: 'POLIGRAFO', persona: `VOL ${i}` }); }
+    for (let i = 0; i < 1000; i++) vol.push({ fuente: 'agenda', id_externo: `recVOLpsi${String(i).padStart(4, '0')}`, empresa_id_externo: `recVOLemp${String(i % 13).padStart(3, '0')}`, empresa_nombre_externo: `VOL EMPRESA ${String(i % 13).padStart(3, '0')}`, estado_tarifa: 'excluido_psicometrica', terminado: true, cancelado: false, eliminado: false, status_cobro_externo: 'PENDIENTE', fecha_ingreso: '2026-08-01', tipo_prueba: 'PSICOMETRICAS' });
+    for (let i = 0; i < vol.length; i += 1000) { const { error } = await sb.from('facturacion_expediente').insert(vol.slice(i, i + 1000)); if (error) throw new Error(`seed volumen: ${error.message}`); }
+    const { count: nVol } = await sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }).eq('fuente', 'agenda');
+    ok((nVol ?? 0) >= 8013, `espejo con ${nVol} filas (7,000 sin mapear en 200 empresas + 1,000 psicométricas + las del ciclo)`);
+    let t0 = Date.now(); const vistaV = await DB.vistaPorFacturar(); const msRpc = Date.now() - t0;
+    ok(msRpc < 2000 && vistaV.agregadoEnSql && vistaV.grupos.length === 2 && vistaV.kpis.listos === 1 && vistaV.kpis.sinTarifa === 2 && vistaV.kpis.sinMapear === 7000 && vistaV.sinMapear.empresas === 200 && vistaV.kpis.excluidos === 1001 && vistaV.total === (nVol ?? 0), `vistaPorFacturar con ${nVol} filas: ${msRpc} ms (< 2 s); la lista sigue con los 2 clientes del ciclo (1 listo, 2 sin tarifa); KPIs: 7,000 sin mapear en 200 empresas, 1,001 psicométricas — nada de eso se cargó (${JSON.stringify({ grupos: vistaV.grupos.length, kpis: vistaV.kpis })})`);
+    t0 = Date.now(); const vistaVF = await DB.vistaPorFacturar({ sinRpc: true }); const msFb = Date.now() - t0;
+    ok(JSON.stringify(vistaVF.kpis) === JSON.stringify(vistaV.kpis) && JSON.stringify(vistaVF.grupos) === JSON.stringify(vistaV.grupos), `fallback sin 017 con ${nVol} filas: ${msFb} ms, mismos KPIs y grupos (solo columnas livianas de la cola, nunca el raw)`);
+    t0 = Date.now(); const p1 = await DB.empresasSinMapear({ limite: 25 }); const msSm = Date.now() - t0;
+    const p8 = await DB.empresasSinMapear({ limite: 25, desde: 175 });
+    const p9 = await DB.empresasSinMapear({ limite: 25, desde: 200 });
+    const pq = await DB.empresasSinMapear({ q: 'VOL EMPRESA 007' });
+    ok(msSm < 2000 && p1.agregadoEnSql && p1.filas.length === 25 && p1.totalEmpresas === 200 && p1.totalExpedientes === 7000 && p1.filas[0].expedientes === 35 && p8.filas.length === 25 && p9.filas.length === 0 && p9.totalEmpresas === 200 && pq.totalEmpresas === 1 && pq.filas[0].empresaNombreExterno === 'VOL EMPRESA 007' && pq.filas[0].expedientes === 35, `"Sin mapear" paginada en SQL: página 1 = 25 de 200 empresas (${msSm} ms), la más cargada con 35; página 8 = las últimas 25, página 9 vacía; búsqueda "VOL EMPRESA 007" → 1`);
+    const pqF = await DB.empresasSinMapear({ q: 'VOL EMPRESA 007', sinRpc: true });
+    ok(JSON.stringify(pqF.filas) === JSON.stringify(pq.filas) && pqF.totalEmpresas === 1, 'fallback de "Sin mapear" coincide con la RPC');
+    const sm1 = Date.now(); const s3 = await DB.sincronizarAgenda({ actor: ACTOR, api: apiRapida() }); const msSync = Date.now() - sm1;
+    ok(s3.ok && s3.reclasificados === 0, `el sync con ${nVol} filas sigue incremental (${msSync} ms, ${s3.leidos} leídos, 0 re-resueltos: las filas sin raw se saltan)`);
   } finally {
     process.env.EMPRESA_SLUG = slugOriginal;
     servidor.close();
     if (CONSERVAR) {
-      console.log('\n  · --conservar: los datos de prueba quedan en la base (F-E2E-*, NIT 99990011K/99990012K). Limpiar con --solo-limpiar.');
+      console.log('\n  · --conservar: los datos de prueba quedan en la base (F-E2E-*, NIT 99990011K/99990012K, 8,000 filas recVOL*). Limpiar con --solo-limpiar.');
     } else {
       await limpiar();
+      const { count: v } = await sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }).like('id_externo', 'recVOL%');
       const [{ count: a }, { count: b }, { count: c }, { count: d }, { count: f }] = await Promise.all([
         sb.from('facturas_clientes').select('id', { count: 'exact', head: true }).in('no_factura', FACTS),
         sb.from('factura_detalle_expediente').select('id', { count: 'exact', head: true }).in('no_factura', FACTS),
@@ -472,7 +510,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
         sb.from('cliente_externo').select('id', { count: 'exact', head: true }).in('empresa_id_externo', [EMP_A, EMP_B]),
         sb.from('clientes').select('id', { count: 'exact', head: true }).in('nit', [NIT_A, NIT_B]),
       ]);
-      ok(a === 0 && b === 0 && c === 0 && d === 0 && f === 0, 'limpieza verificada: 0 facturas / detalle (cascade) / expedientes / mapeos / clientes de prueba');
+      ok(a === 0 && b === 0 && c === 0 && d === 0 && f === 0 && v === 0, 'limpieza verificada: 0 facturas / detalle (cascade) / expedientes / mapeos / clientes de prueba / filas de volumen');
     }
   }
   console.log(`\n${pass} 🟢 / ${fail} 🔴`);
