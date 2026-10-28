@@ -3,9 +3,10 @@
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
 import {
-  activarTarifa, aprobarTarifa, aprobarTarifasPorNit, crearTarifa, editarTarifa, resolverTarifaExpediente, verificarDuplicadoTarifa,
+  activarTarifa, aprobarTarifa, aprobarTarifasPorNit, crearTarifa, editarTarifa, listarHistorialTarifa, resolverTarifaExpediente, verificarDuplicadoTarifa,
   type AprobarLoteResult, type TarifaInput, type TarifaResult,
 } from '@/lib/db/tarifario';
+import type { HistorialTarifa } from '@/lib/tarifario/antiguedad';
 import type { Expediente, ResultadoLookup } from '@/lib/tarifario/lookup';
 
 /** TARIFARIO: crear / editar / aprobar / desactivar = 'catalogos' (admin y contador). Consultar = 'ver'. */
@@ -17,10 +18,12 @@ export async function crearTarifaAction(input: TarifaInput): Promise<TarifaResul
   return r;
 }
 
-export async function editarTarifaAction(id: string, cambios: { monto?: number; anio?: string; razonSocial?: string }): Promise<TarifaResult> {
+/** `motivo` (opcional, ej. "ajuste anual") viaja al trigger de la bitácora por la RPC. */
+export async function editarTarifaAction(id: string, cambios: { monto?: number; anio?: string; razonSocial?: string; motivo?: string }): Promise<TarifaResult> {
   const permiso = await autorizar('catalogos');
   if (!permiso.ok) return { ok: false, error: permiso.error };
-  const r = await editarTarifa(id, cambios);
+  const { motivo, ...resto } = cambios;
+  const r = await editarTarifa(id, resto, permiso.email, motivo);
   if (r.ok) revalidatePath('/tarifario', 'layout');
   return r;
 }
@@ -36,7 +39,7 @@ export async function aprobarTarifaAction(id: string): Promise<TarifaResult> {
 export async function activarTarifaAction(id: string, activo: boolean): Promise<TarifaResult> {
   const permiso = await autorizar('catalogos');
   if (!permiso.ok) return { ok: false, error: permiso.error };
-  const r = await activarTarifa(id, activo);
+  const r = await activarTarifa(id, activo, permiso.email);
   if (r.ok) revalidatePath('/tarifario', 'layout');
   return r;
 }
@@ -60,4 +63,10 @@ export async function verificarDuplicadoTarifaAction(nueva: { nit: string; tipoP
 export async function resolverTarifaAction(exp: Expediente): Promise<ResultadoLookup> {
   await exigir('ver');
   return resolverTarifaExpediente(exp);
+}
+
+/** Línea de tiempo de una tarifa ("ver histórico"): consultar = 'ver'. */
+export async function historialTarifaAction(id: string): Promise<HistorialTarifa[]> {
+  await exigir('ver');
+  return listarHistorialTarifa(id);
 }
