@@ -47,7 +47,13 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
   const ui = rd('src/components/tarifario/tarifario-client.tsx') + rd('src/components/tarifario/tarifa-form.tsx');
   ok(!/window\.(confirm|alert|prompt)\(|\bconfirm\(/.test(ui), 'pantalla sin diálogos del navegador');
   ok(/role="alertdialog"/.test(ui) && /confirmarDuplicado/.test(ui), 'aviso de combinación repetida con confirmación en el pie del modal');
-  ok(/'\/tarifario'/.test(rd('src/components/shell/sidebar.tsx')) && /'\/tarifario'/.test(rd('src/components/shell/topbar.tsx')), 'nav: Tarifario en sidebar y breadcrumb');
+  ok(/'\/tarifario'/.test(rd('src/components/shell/sidebar.tsx')) && /'\/tarifario'/.test(rd('src/components/shell/topbar.tsx')) && /startsWith\('\/tarifario\/'\)/.test(rd('src/components/shell/topbar.tsx')), 'nav: Tarifario en sidebar y breadcrumb (lista y detalle)');
+  ok(new RegExp("export async function aprobarTarifasPorNitAction\\([^)]*\\)[^{]*\\{\\s*const permiso = await autorizar\\('catalogos'\\);").test(acts), "aprobarTarifasPorNitAction: primera línea autorizar('catalogos') (aprobar en lote = mismo permiso que aprobar una)");
+  ok(fs.existsSync('src/app/(app)/tarifario/[nit]/page.tsx') && /notFound\(\)/.test(rd('src/app/(app)/tarifario/[nit]/page.tsx')), 'ruta de detalle /tarifario/[nit] (404 si el NIT no tiene tarifas)');
+  const det = rd('src/components/tarifario/empresa-detalle.tsx');
+  ok(/role="alertdialog"/.test(det) && !/window\.(confirm|alert|prompt)\(|\bconfirm\(/.test(det + rd('src/components/tarifario/empresas-lista.tsx')), 'detalle: aprobar en lote con confirmación en línea, sin diálogos del navegador');
+  ok(/puede\('catalogos'\)/.test(det), 'detalle: el botón de lote solo para quien puede aprobar (catalogos)');
+  ok(!fs.existsSync('supabase/migrations/015_tarifario_maestro.sql') && fs.readdirSync('supabase/migrations').filter(f => /^01[5-9]_/.test(f)).length === 0, 'sin migración nueva (maestro-detalle es solo lectura/UI)');
 
   console.log('\nB. Motor puro');
   const { canonCategoria, canonTerritorio, canonTipoPrueba, esSinTarifa, llaveTarifa, conIva } = await import('../src/lib/tarifario/canon');
@@ -104,10 +110,17 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
   const dd = tarifasDuplicadas(tarifas);
   ok(dd.size === 2 && dd.has('6') && dd.has('7'), 'tarifasDuplicadas marca ESPECIFICA/ESPECIFICO del mismo NIT');
 
+  const { resumenPorEmpresa, filtrarEmpresas, aprobablesDe } = await import('../src/lib/tarifario/resumen');
+  const resumen = resumenPorEmpresa([...tarifas, T('10', '53563972', 'POLIGRAFO', 'RUTINA', 'METROPOLITANA', 300, { razonSocial: 'CREDICHAPIN', aprobadoEn: '2026-01-01' })]);
+  ok(resumen.length === 3 && resumen[0].nit === '104455470' && resumen[0].semaforo === 'rojo' && resumen[0].activas === 5 && resumen[0].sinTarifa === 1 && resumen[0].pendientes === 2 && resumen[0].aprobadas === 2, `resumen por empresa: IDEA CENTRAL primero (rojo: 5 activas, 1 Q0, 2 pendientes, 2 aprobadas) → ${JSON.stringify(resumen[0])}`);
+  ok(resumen[1].nit === '22933093' && resumen[1].semaforo === 'amarillo' && resumen[1].activas === 2 && resumen[2].nit === '53563972' && resumen[2].semaforo === 'verde', 'orden: rojo → amarillo (ABIRSA, inactiva no cuenta) → verde (CREDICHAPIN)');
+  ok(filtrarEmpresas(resumen, 'abir').length === 1 && filtrarEmpresas(resumen, '5356').length === 1 && filtrarEmpresas(resumen, '').length === 3, 'buscador de empresas por razón social o NIT');
+  ok(aprobablesDe(tarifas).map(t => t.id).join(',') === '3,4,6,7', 'aprobables en lote = activas, pendientes y con monto (sin Q0 ni inactivas ni ya aprobadas)');
+
   console.log(`\nC. E2E en ${base.toUpperCase()}`);
   const { supabase } = await import('../src/lib/supabase/client');
   const sb = supabase()!;
-  const { crearTarifa, editarTarifa, aprobarTarifa, activarTarifa, getTarifario, resolverTarifaExpediente, tarifarioDisponible } = await import('../src/lib/db/tarifario');
+  const { crearTarifa, editarTarifa, aprobarTarifa, activarTarifa, getTarifario, resolverTarifaExpediente, tarifarioDisponible, listarEmpresasTarifario, listarTarifasPorNit, aprobarTarifasPorNit } = await import('../src/lib/db/tarifario');
   type TR = import('../src/lib/db/tarifario').TarifaResult;
   const NO: TR = { ok: false, error: '' };
   const disponible = await tarifarioDisponible();
@@ -143,6 +156,22 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
     ok(des.ok && lkDes.estado === 'no_encontrada', 'desactivar → el motor ya no la ve (no_encontrada)');
     const re = c1.ok ? await activarTarifa(c1.id, true) : NO;
     ok(re.ok && (await getTarifario()).find(t => t.id === (c1.ok ? c1.id : ''))?.activo === true, 'reactivar → activa de nuevo');
+    // ── Maestro-detalle: resumen por NIT, tarifas por NIT y aprobar en lote ──
+    const c4 = await crearTarifa({ nit: NIT, tipoPrueba: 'POLIGRAFO', categoria: 'RUTINA', territorio: 'DEPARTAMENTAL', monto: 89.29 }, 'validador@tarifario');
+    if (c4.ok) creados.push(c4.id);
+    const emp = (await listarEmpresasTarifario()).find(e => e.nit === NIT);
+    ok(!!emp && emp.activas === 3 && emp.sinTarifa === 1 && emp.pendientes === 2 && emp.semaforo === 'rojo' && emp.razonSocial === 'E2E TARIFARIO S.A.', `listarEmpresasTarifario: ${NIT} → 3 activas, 2 pendientes, 1 Q0, rojo (${JSON.stringify(emp)})`);
+    const porNit = await listarTarifasPorNit('9999-0001-K');
+    ok(porNit.length === 3 && porNit.every(t => t.nit === NIT), 'listarTarifasPorNit normaliza el NIT (guiones) y trae solo las del cliente');
+    const lote = await aprobarTarifasPorNit(NIT, 'lote@tarifario');
+    const trasLote = await listarTarifasPorNit(NIT);
+    ok(lote.ok && lote.aprobadas === 2 && lote.omitidasQ0 === 1 && trasLote.filter(t => t.aprobadoEn && t.aprobadoPor === 'lote@tarifario').length === 2 && trasLote.find(t => t.monto === 0)?.aprobadoEn === null, `aprobar en lote: 2 aprobadas, la Q0 queda fuera (${lote.ok ? lote.mensaje : lote.error})`);
+    const lote2 = await aprobarTarifasPorNit(NIT, 'lote@tarifario');
+    ok(lote2.ok && lote2.aprobadas === 0 && /Q0/.test(lote2.mensaje), 'segundo lote: nada que aprobar (solo queda la Q0)');
+    const empTras = (await listarEmpresasTarifario()).find(e => e.nit === NIT);
+    ok(!!empTras && empTras.pendientes === 0 && empTras.aprobadas === 2 && empTras.semaforo === 'rojo', 'resumen tras el lote: 0 pendientes, sigue rojo por la Q0');
+    const lote3 = await aprobarTarifasPorNit('00000000X', 'lote@tarifario');
+    ok(!lote3.ok && /no tiene tarifas activas/.test(lote3.ok ? '' : lote3.error), 'lote sobre un NIT sin tarifas → error claro');
   } catch (e) { fail++; console.log(`  🔴 excepción: ${(e as Error).message}`); }
   finally {
     if (creados.length) { const { error } = await sb.from('tarifario').delete().in('id', creados); if (error) console.log(`     ✗ limpieza: ${error.message}`); }

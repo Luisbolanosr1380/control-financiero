@@ -3,8 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
 import {
-  activarTarifa, aprobarTarifa, crearTarifa, editarTarifa, resolverTarifaExpediente, verificarDuplicadoTarifa,
-  type TarifaInput, type TarifaResult,
+  activarTarifa, aprobarTarifa, aprobarTarifasPorNit, crearTarifa, editarTarifa, resolverTarifaExpediente, verificarDuplicadoTarifa,
+  type AprobarLoteResult, type TarifaInput, type TarifaResult,
 } from '@/lib/db/tarifario';
 import type { Expediente, ResultadoLookup } from '@/lib/tarifario/lookup';
 
@@ -13,7 +13,7 @@ export async function crearTarifaAction(input: TarifaInput): Promise<TarifaResul
   const permiso = await autorizar('catalogos');
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await crearTarifa(input, permiso.email);
-  if (r.ok) revalidatePath('/tarifario');
+  if (r.ok) revalidatePath('/tarifario', 'layout');
   return r;
 }
 
@@ -21,7 +21,7 @@ export async function editarTarifaAction(id: string, cambios: { monto?: number; 
   const permiso = await autorizar('catalogos');
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await editarTarifa(id, cambios);
-  if (r.ok) revalidatePath('/tarifario');
+  if (r.ok) revalidatePath('/tarifario', 'layout');
   return r;
 }
 
@@ -29,7 +29,7 @@ export async function aprobarTarifaAction(id: string): Promise<TarifaResult> {
   const permiso = await autorizar('catalogos');
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await aprobarTarifa(id, permiso.email);
-  if (r.ok) revalidatePath('/tarifario');
+  if (r.ok) revalidatePath('/tarifario', 'layout');
   return r;
 }
 
@@ -37,7 +37,16 @@ export async function activarTarifaAction(id: string, activo: boolean): Promise<
   const permiso = await autorizar('catalogos');
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await activarTarifa(id, activo);
-  if (r.ok) revalidatePath('/tarifario');
+  if (r.ok) revalidatePath('/tarifario', 'layout');
+  return r;
+}
+
+/** Aprobar en lote las pendientes (no Q0) de un cliente: mismo permiso que aprobar una. */
+export async function aprobarTarifasPorNitAction(nit: string): Promise<AprobarLoteResult> {
+  const permiso = await autorizar('catalogos');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await aprobarTarifasPorNit(nit, permiso.email);
+  if (r.ok) { revalidatePath('/tarifario'); revalidatePath(`/tarifario/${encodeURIComponent(nit)}`); }
   return r;
 }
 

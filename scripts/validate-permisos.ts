@@ -69,6 +69,7 @@ function archivosUseServer(dir: string): string[] {
     editarTarifaAction: 'catalogos',
     aprobarTarifaAction: 'catalogos',
     activarTarifaAction: 'catalogos',
+    aprobarTarifasPorNitAction: 'catalogos',
     archivarPresupuestoAction: 'presupuesto',
     reabrirPresupuestoAction: 'reabrir_presupuesto',
     editarAutorizacionFelNCAction: 'anular',

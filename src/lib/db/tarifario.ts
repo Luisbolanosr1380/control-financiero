@@ -7,6 +7,7 @@ import { supabase, fetchAll } from '@/lib/supabase/client';
 import { nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
 import { canonCategoria, canonTerritorio, canonTipoPrueba, normalizarTexto, round2 } from '@/lib/tarifario/canon';
 import { buscarDuplicado, resolverTarifa, type AliasCliente, type Expediente, type ResultadoLookup, type Tarifa } from '@/lib/tarifario/lookup';
+import { resumenPorEmpresa, type EmpresaTarifario } from '@/lib/tarifario/resumen';
 import { getClientes, nitValido } from './clientes';
 
 interface Row {
@@ -29,6 +30,38 @@ export async function tarifarioDisponible(): Promise<boolean> {
 export async function getTarifario(): Promise<Tarifa[]> {
   const rows = await fetchAll<Row>('tarifario', { order: { column: 'razon_social', ascending: true } });
   return rows.map(rowToTarifa);
+}
+
+/** MAESTRO: una fila por NIT con conteos (activas / pendientes / Q0) y semáforo, ordenadas por acción requerida. */
+export async function listarEmpresasTarifario(): Promise<EmpresaTarifario[]> {
+  return resumenPorEmpresa(await getTarifario());
+}
+
+/** DETALLE: las tarifas de un NIT (activas e inactivas; la pantalla filtra). El NIT se compara normalizado. */
+export async function listarTarifasPorNit(nit: string): Promise<Tarifa[]> {
+  const k = nitComparable(nit);
+  if (!k) return [];
+  const rows = await fetchAll<Row>('tarifario', { eq: { nit: k }, order: { column: 'tipo_prueba', ascending: true } });
+  return rows.map(rowToTarifa);
+}
+
+export type AprobarLoteResult = { ok: true; aprobadas: number; omitidasQ0: number; mensaje: string } | { ok: false; error: string };
+
+/** Aprueba en lote las pendientes de un cliente: activas, sin aprobar y con monto. Las Q0 quedan fuera. */
+export async function aprobarTarifasPorNit(nit: string, actor: string): Promise<AprobarLoteResult> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'El tarifario requiere el backend Supabase.' };
+  const k = nitComparable(nit);
+  if (!k) return { ok: false, error: 'NIT inválido.' };
+  const propias = await listarTarifasPorNit(k);
+  const activas = propias.filter(t => t.activo);
+  if (activas.length === 0) return { ok: false, error: `El NIT ${k} no tiene tarifas activas.` };
+  const aprobables = activas.filter(t => !t.aprobadoEn && t.monto > 0);
+  const omitidasQ0 = activas.filter(t => t.monto <= 0).length;
+  if (aprobables.length === 0) return { ok: true, aprobadas: 0, omitidasQ0, mensaje: omitidasQ0 ? `Nada que aprobar: las ${omitidasQ0} en Q0 no se aprueban (sin tarifa definida).` : 'Nada que aprobar: todas las tarifas ya están aprobadas.' };
+  const ahora = new Date().toISOString();
+  const { error } = await sb.from('tarifario').update({ aprobado_por: actor, aprobado_en: ahora, updated_at: ahora }).in('id', aprobables.map(t => t.id));
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, aprobadas: aprobables.length, omitidasQ0, mensaje: `${aprobables.length} tarifa${aprobables.length === 1 ? '' : 's'} aprobada${aprobables.length === 1 ? '' : 's'} por ${actor}${omitidasQ0 ? ` · ${omitidasQ0} en Q0 quedaron fuera (sin tarifa definida)` : ''}.` };
 }
 
 export async function getTarifa(id: string): Promise<Tarifa | null> {
