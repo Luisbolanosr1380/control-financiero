@@ -8,7 +8,7 @@
  * "Mapear" cuando la empresa de la Agenda no apunta a un cliente de financiero.
  * Confirmaciones en línea / modal propio: sin diálogos del navegador.
  */
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
@@ -22,13 +22,17 @@ import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type 
 import type { GrupoDetalle } from '@/lib/db/facturacion-agenda';
 import { ReintentarWritebackButton } from './reintentar-writeback-button';
 import { GenerarTarifas } from '@/components/tarifario/generar-tarifas';
+import { ModalClienteForm } from '@/components/clientes/modal-cliente-form';
+import { buscarClientes } from '@/lib/clientes/buscar';
+import { etiquetaOpcionCliente } from './etiqueta-cliente';
+import type { Customer } from '@/lib/types';
 
-interface Props { datos: GrupoDetalle; writeback: boolean; configurada: boolean; montoModo: 'con_iva' | 'sin_iva' }
+interface Props { datos: GrupoDetalle; writeback: boolean; configurada: boolean; montoModo: 'con_iva' | 'sin_iva'; /** abrir "Generar tarifas" de entrada (llega de crear cliente + mapear) */ generarInicial?: boolean }
 
 const WB_BADGE: Record<WritebackEstado, string> = { confirmado: 'badge-olive', omitido: 'badge-mute', pendiente: 'badge-warn', conflicto: 'badge-wine', error: 'badge-wine' };
 const WB_TEXTO: Record<WritebackEstado, string> = { confirmado: 'En Agenda', omitido: 'Sin enviar', pendiente: 'Falta confirmar', conflicto: 'Conflicto', error: 'Error' };
 
-export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: Props) {
+export function GrupoDetalleView({ datos, writeback, configurada, montoModo, generarInicial = false }: Props) {
   const router = useRouter();
   const puede = usePuede();
   const puedeFacturar = puede('facturar_agenda');
@@ -37,7 +41,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
   const [soloListos, setSoloListos] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [creando, setCreando] = useState(false);
-  const [generando, setGenerando] = useState(false);
+  const [generando, setGenerando] = useState(generarInicial && !!datos.nit);
 
   const exps = datos.expedientes;
   const meses = useMemo(() => mesesDisponibles(exps), [exps]);
@@ -83,6 +87,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
         </div>
       </div>
 
+      {generando && generarInicial && datos.nit && <div className="card" role="status" data-recien-mapeado style={{ borderColor: 'var(--olive)', marginBottom: 10 }}><div className="card-pad" style={{ fontSize: 13 }}><strong>{datos.nombre}</strong> quedó creado y mapeado a <strong>{datos.nombreExterno || 'la empresa de la Agenda'}</strong>. Si todavía no tiene tarifario, generalo acá abajo: las filas nacen en Q0 y al cargar el precio los expedientes se resuelven solos.</div></div>}
       {generando && datos.nit && <GenerarTarifas nit={datos.nit} razonSocial={datos.nombre} modo="tarjeta" />}
       {datos.noFactura && <NoFacturaBanner datos={datos} puede={puedeFacturar} />}
       {!datos.nit && !datos.noFactura && puedeFacturar && <MapearCliente datos={datos} />}
@@ -196,26 +201,29 @@ function NoFacturaBanner({ datos, puede }: { datos: GrupoDetalle; puede: boolean
 
 function MapearCliente({ datos }: { datos: GrupoDetalle }) {
   const router = useRouter();
+  const puede = usePuede();
   const [filtro, setFiltro] = useState('');
   const [motivo, setMotivo] = useState('');
   const [modoNoFactura, setModoNoFactura] = useState(false);
   const [clienteId, setClienteId] = useState(datos.sugerencias[0]?.id ?? '');
   const [busy, setBusy] = useState(false);
-  const opciones = useMemo(() => {
-    const f = filtro.trim().toLowerCase();
-    const lista = f ? datos.clientes.filter(c => c.name.toLowerCase().includes(f) || c.nit.replace(/[^0-9A-Za-z]/g, '').includes(f.replace(/[^0-9a-z]/g, ''))) : datos.clientes;
-    return lista.slice(0, 60);
-  }, [datos.clientes, filtro]);
+  const [crear, setCrear] = useState(false);
+  // Buscador: sin tildes ni mayúsculas, por nombre / razón social / nombre comercial / marcas (020) / nombre en la Agenda / NIT; sin tope de 60.
+  const opciones = useMemo(() => buscarClientes(datos.clientes, filtro), [datos.clientes, filtro]);
+  useEffect(() => { if (filtro.trim() && opciones.length === 1 && clienteId !== opciones[0].id) setClienteId(opciones[0].id); }, [filtro, opciones, clienteId]);
   const elegido = datos.clientes.find(c => c.id === clienteId);
-  const mapear = async () => {
-    if (!clienteId) return;
+  const mapearA = async (id: string, creado?: Customer) => {
     setBusy(true);
     try {
-      const r = await mapearClienteAction({ empresaIdExterno: datos.empresaIdExterno, empresaNombreExterno: datos.nombreExterno, clienteAppId: clienteId });
-      if (r.ok) { toast.success(`"${datos.nombreExterno}" → ${r.clienteNombre} (NIT ${r.nit}) · ${r.reclasificados} expediente(s) re-resueltos`); router.push(`/por-facturar/${encodeURIComponent('n-' + r.nit)}`); }
-      else toast.error(r.error);
+      const r = await mapearClienteAction({ empresaIdExterno: datos.empresaIdExterno, empresaNombreExterno: datos.nombreExterno, clienteAppId: id });
+      if (r.ok) {
+        toast.success(`${creado ? `Cliente "${creado.name}" creado y mapeado` : `"${datos.nombreExterno}" → ${r.clienteNombre} (NIT ${r.nit})`} · ${r.reclasificados} expediente(s) re-resueltos`);
+        // Recién creado: ir al cliente con "Generar tarifas" abierto (nace sin tarifario).
+        router.push(`/por-facturar/${encodeURIComponent('n-' + r.nit)}${creado ? '?generar=1' : ''}`);
+      } else toast.error(creado ? `El cliente "${creado.name}" se creó, pero no se pudo mapear: ${r.error}` : r.error);
     } finally { setBusy(false); }
   };
+  const mapear = () => { if (clienteId) void mapearA(clienteId); };
   const marcarNoFactura = async () => {
     setBusy(true);
     try {
@@ -235,13 +243,24 @@ function MapearCliente({ datos }: { datos: GrupoDetalle }) {
           </div>
         )}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input className="input" placeholder="Buscar cliente por nombre o NIT…" value={filtro} onChange={e => setFiltro(e.target.value)} aria-label="Buscar cliente para mapear" style={{ minWidth: 260 }} />
+          <input className="input" placeholder="Buscar por nombre, razón social, marca, nombre en la Agenda o NIT…" value={filtro} onChange={e => setFiltro(e.target.value)} aria-label="Buscar cliente para mapear" style={{ minWidth: 300 }} />
           <select className="input" value={clienteId} onChange={e => setClienteId(e.target.value)} aria-label="Cliente de financiero" style={{ minWidth: 320 }}>
-            <option value="">Elegí el cliente…</option>
-            {opciones.map(c => <option key={c.id} value={c.id}>{c.name}{c.nit ? ` · NIT ${c.nit}` : ' · sin NIT'}</option>)}
+            <option value="">{filtro.trim() ? `${opciones.length} coincidencia${opciones.length === 1 ? '' : 's'}…` : 'Elegí el cliente…'}</option>
+            {opciones.map(c => <option key={c.id} value={c.id}>{etiquetaOpcionCliente(c, filtro)}</option>)}
           </select>
-          <button className="btn btn-primary" onClick={() => void mapear()} disabled={busy || !clienteId}>{busy ? <><I.Refresh size={13} /> Mapeando…</> : <><I.Check size={13} /> Mapear{elegido ? ` a ${elegido.name}` : ''}</>}</button>
+          <button className="btn btn-primary" onClick={mapear} disabled={busy || !clienteId}>{busy ? <><I.Refresh size={13} /> Mapeando…</> : <><I.Check size={13} /> Mapear{elegido ? ` a ${elegido.name}` : ''}</>}</button>
+          {puede('emitir_factura') && <button type="button" className="btn btn-ghost" onClick={() => setCrear(true)} disabled={busy} data-accion="crear-cliente-inline" title="El cliente no existe en financiero: crearlo acá y dejarlo mapeado en un paso"><I.Plus size={13} /> Crear cliente nuevo</button>}
         </div>
+        {filtro.trim() && opciones.length === 0 && <div className="cell-mute" style={{ fontSize: 12 }}>Ningún cliente coincide con &quot;{filtro.trim()}&quot;. Probá otro nombre o NIT, o creá el cliente nuevo.</div>}
+        {crear && (
+          <ModalClienteForm
+            onClose={() => setCrear(false)}
+            nombreInicial={datos.nombreExterno}
+            exigirNit
+            subtitulo={`para mapear "${datos.nombreExterno || datos.empresaIdExterno}"`}
+            onCreado={c => { void mapearA(c.id, c); }}
+          />
+        )}
         <div style={{ borderTop: '1px solid var(--line-2)', paddingTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
           <span className="cell-mute" style={{ fontSize: 12 }}>O, si no se factura por este flujo (interna / intercompany / reclutamiento = Fase A):</span>
           {!modoNoFactura

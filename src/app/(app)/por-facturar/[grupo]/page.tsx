@@ -13,12 +13,13 @@ export const dynamic = 'force-dynamic';
  * empresa de la Agenda todavía no apunta a un cliente de financiero.
  * La clave es `n-<nit>` (mapeado) o `e-<empresa.id>` (sin mapear).
  */
-export default async function PorFacturarGrupoPage({ params }: { params: Promise<{ grupo: string }> }) {
+export default async function PorFacturarGrupoPage({ params, searchParams }: { params: Promise<{ grupo: string }>; searchParams: Promise<{ generar?: string }> }) {
   await exigirPagina('ver');
-  const { grupo } = await params;
+  const [{ grupo }, sp] = await Promise.all([params, searchParams]);
   if (!(await facturacionAgendaDisponible())) notFound();
   const datos = await getGrupo(decodeURIComponent(grupo));
   if (!datos) notFound();
   const cfg = configAgenda();
-  return <GrupoDetalleView datos={datos} writeback={cfg.writeback} configurada={cfg.apiKey.length > 0} montoModo={cfg.montoModo} />;
+  // ?generar=1: llega de "crear cliente + mapear" en el panel de mapeo → abre "Generar tarifas" de una.
+  return <GrupoDetalleView datos={datos} writeback={cfg.writeback} configurada={cfg.apiKey.length > 0} montoModo={cfg.montoModo} generarInicial={sp.generar === '1'} />;
 }

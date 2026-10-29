@@ -6,7 +6,8 @@ import { BarChart, Bar, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGri
 import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
 import type { AnalisisCliente, ClienteClasificacion, Tendencia } from '@/lib/db/clientes-analisis';
-import type { Invoice } from '@/lib/types';
+import type { Customer, Invoice } from '@/lib/types';
+import { NombresClienteCard } from '@/components/clientes/nombres-cliente-card';
 
 const BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
   perdido:    { cls: 'badge-wine',    text: 'Perdido' },
@@ -33,9 +34,11 @@ function labelMes(ym: string): string {
 interface Props {
   analisis: AnalisisCliente;
   facturas: Invoice[];
+  /** 020: ficha del catálogo (razón social, nombre comercial, marcas) para la tarjeta "Nombres y marcas". */
+  cliente?: Customer | null;
 }
 
-export function ClienteDetalleClient({ analisis: a, facturas }: Props) {
+export function ClienteDetalleClient({ analisis: a, facturas, cliente }: Props) {
   const router = useRouter();
   const badge = BADGE[a.clasificacion];
 
@@ -86,6 +89,9 @@ export function ClienteDetalleClient({ analisis: a, facturas }: Props) {
           <div className="kpi-delta"><span className="vs"><span className="num">{Q(a.montoReciente)}</span> vs <span className="num">{Q(a.montoBase)}</span></span></div>
         </div>
       </div>
+
+      {/* 020: razón social / nombre comercial / marcas, editables */}
+      {cliente && <NombresClienteCard cliente={cliente} />}
 
       {/* Contexto comercial (notas cualitativas) */}
       {a.contextoComercial && (

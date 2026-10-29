@@ -15,7 +15,7 @@ import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
 import { formatearFechaConHora } from '@/lib/utils/fechas';
-import { sincronizarAgendaAction } from '@/app/(app)/por-facturar/actions';
+import { reresolverPreciosAction, sincronizarAgendaAction } from '@/app/(app)/por-facturar/actions';
 import { filtrarGrupos, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
 import type { EmpresaNoFactura, SyncEstado } from '@/lib/facturacion-agenda/tipos';
 import { quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
@@ -48,6 +48,16 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
       router.refresh();
     } finally { setBusy(false); }
   };
+  // "Re-resolver precios": solo la cola local contra mapeo + tarifario actuales (no va a la Agenda; más rápido que "Traer ahora").
+  const reresolver = async () => {
+    setBusy(true);
+    try {
+      const r = await reresolverPreciosAction();
+      if (r.ok) toast.success(r.reclasificados ? `${r.reclasificados} expediente${r.reclasificados === 1 ? '' : 's'} re-resuelto${r.reclasificados === 1 ? '' : 's'} con el mapeo y el tarifario actuales` : 'La cola ya estaba al día: nada cambió');
+      else toast.error(r.error);
+      router.refresh();
+    } finally { setBusy(false); }
+  };
 
   return (
     <div className="page">
@@ -57,6 +67,11 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
           <div className="page-subtitle">Expedientes de evaluación <strong>terminados</strong> con cobro pendiente en la Agenda de Golden, con su precio del tarifario (<strong>sin IVA</strong>). Psicométricas quedan fuera (trato aparte).</div>
         </div>
         <div className="page-actions">
+          {puedeFacturar && disponible && (
+            <button className="btn btn-ghost" onClick={() => void reresolver()} disabled={busy} data-accion="re-resolver" title="Vuelve a clasificar la cola local contra el mapeo y el tarifario actuales, sin ir a la Agenda">
+              <I.Coins size={13} /> Re-resolver precios
+            </button>
+          )}
           {puedeFacturar && disponible && (
             <button className="btn btn-secondary" onClick={() => void traer()} disabled={busy || !configurada} title={configurada ? 'GET /expedientes?cambiadosDesde=… de la Agenda' : 'Este deploy no tiene llave de la Agenda'}>
               <I.Refresh size={13} /> {busy ? 'Trayendo…' : 'Traer ahora'}

@@ -46,6 +46,12 @@ export interface Customer {
   contextoComercial?: string;   // notas cualitativas sobre la relación con el cliente
   /** false = inactivo (no se le facturan nuevas; no cuenta para el aviso de NIT repetido). */
   activo?: boolean;
+  /** Razón social (la que va en la factura); `name` es el nombre de la empresa. */
+  razonSocial?: string;
+  /** 020: marca / nombre comercial con el que opera (solo para ubicarlo; la factura sigue con la razón social). */
+  nombreComercial?: string;
+  /** 020: otros nombres / marcas (búsqueda y sugerencia de mapeo de la Agenda). */
+  aliases?: string[];
 }
 
 export interface InvoiceLine {

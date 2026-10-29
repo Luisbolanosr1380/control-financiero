@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { I } from '@/components/common/icons';
 import { Q, formatDate } from '@/lib/utils';
 import { ModalClienteForm } from '@/components/clientes/modal-cliente-form';
+import { coincideCliente } from '@/lib/clientes/buscar';
 import type { AnalisisCliente, ClienteClasificacion, Tendencia } from '@/lib/db/clientes-analisis';
 
 const BADGE: Record<ClienteClasificacion, { cls: string; text: string }> = {
@@ -32,11 +33,15 @@ interface Props {
   clientes: AnalisisCliente[];
   /** AVISO-NIT: custId → nombre(s) del otro cliente activo con el mismo NIT. */
   nitCompartido?: Record<string, string>;
+  /** 020: custId → nombres normalizados por los que se encuentra (nombre, razón social, comercial, marcas, NIT). */
+  terminos?: Record<string, string[]>;
+  /** 020: custId → nombre comercial (para mostrarlo bajo el nombre). */
+  nombreComercial?: Record<string, string>;
 }
 
 type Tab = 'todos' | 'riesgo' | 'sanos' | 'episodicos';
 
-export function ClientesListClient({ clientes, nitCompartido = {} }: Props) {
+export function ClientesListClient({ clientes, nitCompartido = {}, terminos = {}, nombreComercial = {} }: Props) {
   const puede = usePuede();
   const router = useRouter();
   const [tab, setTab] = useState<Tab>('todos');
@@ -59,8 +64,8 @@ export function ClientesListClient({ clientes, nitCompartido = {} }: Props) {
   if (tab === 'sanos')      rows = rows.filter(c => c.clasificacion === 'sano');
   if (tab === 'episodicos') rows = rows.filter(esEpisodico);
   if (search.trim()) {
-    const q = search.toLowerCase();
-    rows = rows.filter(c => c.nombre.toLowerCase().includes(q));
+    // Sin tildes ni mayúsculas; por cualquiera de los nombres del cliente (020) o su NIT.
+    rows = rows.filter(c => coincideCliente({ id: c.custId, name: c.nombre }, search, terminos[c.custId]));
   }
   // Ordenar por impacto descendente: monto promedio
   rows = [...rows].sort((a, b) => b.montoPromedio - a.montoPromedio);
@@ -106,7 +111,7 @@ export function ClientesListClient({ clientes, nitCompartido = {} }: Props) {
       <div className="toolbar">
         <div className="toolbar-search">
           <I.Search size={13} style={{ color: 'var(--ink-4)' }} />
-          <input placeholder="Buscar cliente…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input placeholder="Buscar por nombre, razón social, marca o NIT…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Buscar cliente" />
         </div>
         <div style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--ink-3)' }}>
           <span>{rows.length} resultados</span>
@@ -137,6 +142,7 @@ export function ClientesListClient({ clientes, nitCompartido = {} }: Props) {
                 <tr key={c.custId} className="clickable" onClick={() => router.push(`/clientes/${c.custId}`)}>
                   <td className="cell-strong" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={c.nombre}>
                     {c.nombre}
+                    {nombreComercial[c.custId] && <span className="cell-mute" style={{ marginLeft: 8, fontSize: 11.5, fontWeight: 400 }} title="Nombre comercial / marca">· {nombreComercial[c.custId]}</span>}
                     {nitCompartido[c.custId] && (
                       <span className="badge badge-warn" style={{ marginLeft: 8, fontSize: 10, verticalAlign: 'middle' }} title={`Mismo NIT que ${nitCompartido[c.custId]}`}>NIT compartido</span>
                     )}

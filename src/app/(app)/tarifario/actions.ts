@@ -3,11 +3,31 @@
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
 import {
-  activarTarifa, aprobarTarifa, aprobarTarifasPorNit, crearTarifa, editarTarifa, generarTarifasCliente, listarHistorialTarifa, planGenerarTarifas, resolverTarifaExpediente, verificarDuplicadoTarifa,
+  activarTarifa, aprobarTarifa, aprobarTarifasPorNit, crearTarifa, editarTarifa, generarTarifasCliente, getTarifa, listarHistorialTarifa, planGenerarTarifas, resolverTarifaExpediente, verificarDuplicadoTarifa,
   type AprobarLoteResult, type GenerarResult, type PlanGenerarCliente, type TarifaInput, type TarifaResult,
 } from '@/lib/db/tarifario';
 import type { HistorialTarifa } from '@/lib/tarifario/antiguedad';
 import type { Expediente, ResultadoLookup } from '@/lib/tarifario/lookup';
+import { reclasificar } from '@/lib/db/facturacion-agenda';
+import { nitComparable } from '@/lib/clientes/nit';
+
+/**
+ * RE-RESOLVER AUTOMÁTICO: después de tocar el tarifario de un NIT (crear, editar el monto,
+ * aprobar, activar/desactivar, lote, generar) la cola de la Agenda de ese cliente se vuelve
+ * a clasificar sola, sin esperar el cron ni "Traer ahora". Local, no toca la Agenda.
+ * Fail-soft: si falla, la tarifa ya quedó guardada y solo se omite el aviso.
+ */
+async function reresolverNit(nit: string | undefined | null): Promise<number> {
+  const k = nitComparable(nit);
+  if (!k) return 0;
+  try {
+    const n = await reclasificar({ nit: k });
+    if (n > 0) revalidatePath('/por-facturar', 'layout');
+    return n;
+  } catch (e) { console.error('re-resolver tras tarifa:', e); return 0; }
+}
+const conReresueltos = <T extends { ok: boolean; mensaje?: string }>(r: T, n: number): T =>
+  r.ok && n > 0 && typeof r.mensaje === 'string' ? { ...r, mensaje: `${r.mensaje} · ${n} expediente${n === 1 ? '' : 's'} de la Agenda re-resuelto${n === 1 ? '' : 's'}` } : r;
 
 /** TARIFARIO: crear / editar / aprobar / desactivar = 'catalogos' (admin y contador). Consultar = 'ver'. */
 export async function crearTarifaAction(input: TarifaInput): Promise<TarifaResult> {
@@ -15,7 +35,7 @@ export async function crearTarifaAction(input: TarifaInput): Promise<TarifaResul
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await crearTarifa(input, permiso.email);
   if (r.ok) revalidatePath('/tarifario', 'layout');
-  return r;
+  return r.ok ? conReresueltos(r, await reresolverNit(input.nit)) : r;
 }
 
 /** `motivo` (opcional, ej. "ajuste anual") viaja al trigger de la bitácora por la RPC. */
@@ -25,7 +45,7 @@ export async function editarTarifaAction(id: string, cambios: { monto?: number; 
   const { motivo, ...resto } = cambios;
   const r = await editarTarifa(id, resto, permiso.email, motivo);
   if (r.ok) revalidatePath('/tarifario', 'layout');
-  return r;
+  return r.ok && resto.monto !== undefined ? conReresueltos(r, await reresolverNit((await getTarifa(id))?.nit)) : r;
 }
 
 export async function aprobarTarifaAction(id: string): Promise<TarifaResult> {
@@ -33,7 +53,7 @@ export async function aprobarTarifaAction(id: string): Promise<TarifaResult> {
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await aprobarTarifa(id, permiso.email);
   if (r.ok) revalidatePath('/tarifario', 'layout');
-  return r;
+  return r.ok ? conReresueltos(r, await reresolverNit((await getTarifa(id))?.nit)) : r;
 }
 
 export async function activarTarifaAction(id: string, activo: boolean): Promise<TarifaResult> {
@@ -41,7 +61,7 @@ export async function activarTarifaAction(id: string, activo: boolean): Promise<
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await activarTarifa(id, activo, permiso.email);
   if (r.ok) revalidatePath('/tarifario', 'layout');
-  return r;
+  return r.ok ? conReresueltos(r, await reresolverNit((await getTarifa(id))?.nit)) : r;
 }
 
 /** Aprobar en lote las pendientes (no Q0) de un cliente: mismo permiso que aprobar una. */
@@ -49,7 +69,7 @@ export async function aprobarTarifasPorNitAction(nit: string): Promise<AprobarLo
   const permiso = await autorizar('catalogos');
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await aprobarTarifasPorNit(nit, permiso.email);
-  if (r.ok) { revalidatePath('/tarifario'); revalidatePath(`/tarifario/${encodeURIComponent(nit)}`); }
+  if (r.ok) { revalidatePath('/tarifario'); revalidatePath(`/tarifario/${encodeURIComponent(nit)}`); await reresolverNit(nit); }
   return r;
 }
 
@@ -82,6 +102,6 @@ export async function generarTarifasClienteAction(input: { nit: string; razonSoc
   const permiso = await autorizar('catalogos');
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await generarTarifasCliente(input, permiso.email);
-  if (r.ok) { revalidatePath('/tarifario', 'layout'); revalidatePath('/por-facturar', 'layout'); }
+  if (r.ok) { revalidatePath('/tarifario', 'layout'); revalidatePath('/por-facturar', 'layout'); await reresolverNit(r.nit); }
   return r;
 }

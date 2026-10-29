@@ -5,8 +5,8 @@ import { autorizar, exigir } from '@/lib/auth/guard';
 import { anularDetalle, crearDetalle, facturarDetalle, marcarAprobada, marcarEnviada, type DetalleResult, type FacturarDetalleResult } from '@/lib/db/detalle-facturacion';
 import type { CanalAprobacion } from '@/lib/facturacion-agenda/detalle';
 import {
-  empresasSinMapear, guardarMapeo, guardarMapeoLote, marcarNoFactura, marcarNoFacturaLote, quitarNoFactura, reintentarWriteback, sincronizarAgenda,
-  type EmpresaRef, type LoteResult, type NoFacturaResult, type PaginaSinMapear, type EmitirResult, type MapeoResult, type ResultadoSync, type WritebackResultado,
+  empresasSinMapear, guardarMapeo, guardarMapeoLote, marcarNoFactura, marcarNoFacturaLote, quitarNoFactura, reintentarWriteback, reresolverPrecios, sincronizarAgenda,
+  type EmpresaRef, type LoteResult, type NoFacturaResult, type PaginaSinMapear, type EmitirResult, type MapeoResult, type ReresolverResult, type ResultadoSync, type WritebackResultado,
 } from '@/lib/db/facturacion-agenda';
 
 function revalidar() {
@@ -22,6 +22,18 @@ export async function sincronizarAgendaAction(): Promise<ResultadoSync> {
   if (!permiso.ok) return { ok: false, leidos: 0, paginas: 0, hasta: null, reclasificados: 0, error: permiso.error };
   const r = await sincronizarAgenda({ actor: permiso.email });
   revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/**
+ * "Re-resolver precios": vuelve a clasificar la cola LOCAL contra el mapeo y el tarifario
+ * actuales, sin ir a la Agenda (más liviano que "Traer ahora", que hace el sync completo).
+ */
+export async function reresolverPreciosAction(): Promise<ReresolverResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await reresolverPrecios();
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
   return r;
 }
 

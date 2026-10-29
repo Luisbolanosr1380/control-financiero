@@ -16,6 +16,8 @@ import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { empresasSinMapearAction, empresasSinMapearTodasAction, mapearClientesLoteAction, marcarNoFacturaLoteAction } from '@/app/(app)/por-facturar/actions';
 import type { ClienteSlim, EmpresaRef, PaginaSinMapear } from '@/lib/db/facturacion-agenda';
+import { buscarClientes } from '@/lib/clientes/buscar';
+import { etiquetaOpcionCliente } from './etiqueta-cliente';
 
 const POR_PAGINA = 25;
 type Accion = 'ninguna' | 'no_factura' | 'mapear';
@@ -58,11 +60,9 @@ export function SinMapearLista({ totalEmpresas, totalExpedientes, clientes = [],
   const limpiar = () => { setSel(new Map()); setAccion('ninguna'); setMotivo(''); setClienteId(''); setFiltroCliente(''); };
   const terminar = (msg: string) => { toast.success(msg); limpiar(); setVersion(v => v + 1); router.refresh(); };
 
-  const opcionesCliente = useMemo(() => {
-    const f = filtroCliente.trim().toLowerCase();
-    const lista = f ? clientes.filter(c => c.name.toLowerCase().includes(f) || c.nit.replace(/[^0-9A-Za-z]/g, '').toLowerCase().includes(f.replace(/[^0-9a-z]/g, ''))) : clientes;
-    return lista.slice(0, 60);
-  }, [clientes, filtroCliente]);
+  // Buscador: sin tildes ni mayúsculas, por nombre / razón social / nombre comercial / marcas / nombre en la Agenda / NIT; sin tope.
+  const opcionesCliente = useMemo(() => buscarClientes(clientes, filtroCliente), [clientes, filtroCliente]);
+  useEffect(() => { if (filtroCliente.trim() && opcionesCliente.length === 1 && clienteId !== opcionesCliente[0].id) setClienteId(opcionesCliente[0].id); }, [filtroCliente, opcionesCliente, clienteId]);
   const clienteSel = clientes.find(c => c.id === clienteId);
 
   const confirmarNoFactura = async () => {
@@ -114,7 +114,7 @@ export function SinMapearLista({ totalEmpresas, totalExpedientes, clientes = [],
               <input className="input" placeholder="Buscar cliente por nombre o NIT…" value={filtroCliente} onChange={e => setFiltroCliente(e.target.value)} aria-label="Buscar cliente para mapear (lote)" style={{ minWidth: 240 }} disabled={busy} />
               <select className="input" value={clienteId} onChange={e => setClienteId(e.target.value)} aria-label="Cliente de financiero (lote)" style={{ minWidth: 300 }} disabled={busy}>
                 <option value="">Elegí el cliente…</option>
-                {opcionesCliente.map(c => <option key={c.id} value={c.id}>{c.name}{c.nit ? ` · NIT ${c.nit}` : ' · sin NIT'}</option>)}
+                {opcionesCliente.map(c => <option key={c.id} value={c.id}>{etiquetaOpcionCliente(c, filtroCliente)}</option>)}
               </select>
               <button className="btn btn-ghost" onClick={() => setAccion('ninguna')} disabled={busy}>Volver</button>
               <button className="btn btn-primary" onClick={() => void confirmarMapeo()} disabled={busy || !clienteId} data-accion="confirmar-mapear-lote">{busy ? <><I.Refresh size={13} /> Mapeando…</> : <><I.Check size={13} /> Mapear {sel.size}{clienteSel ? ` a ${clienteSel.name}` : ''}</>}</button>
