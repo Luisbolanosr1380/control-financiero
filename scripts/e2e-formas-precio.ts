@@ -2,8 +2,9 @@
  * TARIFARIO · FORMAS DE PRECIO — E2E en Chrome sobre un `next start` con la base de HIT.
  * Usuario descartable de Clerk (contador). Prueba el form de alta: con INFORNET se
  * ocultan categoría y territorio (precio único); con SOCIO EMPRESARIAL se oculta la
- * categoría y quedan los territorios; al guardar, la tabla muestra "—" en las
- * dimensiones que no aplican y en la base queda el centinela UNICA. Limpia todo.
+ * categoría y quedan los territorios; con SOCIO VIRTUAL queda la categoría y se oculta
+ * el territorio (por categoría); al guardar, la tabla muestra "—" en las dimensiones
+ * que no aplican y en la base queda el centinela UNICA. Limpia todo.
  *
  * Uso: npx tsx scripts/e2e-formas-precio.ts --env hit --base http://localhost:3012
  */
@@ -92,6 +93,30 @@ const NIT = '99990031K';
     ok(await filasSE.count() === 2 && c1[2].trim() === '—' && /METROPOLITANA|DEPARTAMENTAL/.test(c1[3]), 'tabla: 2 filas SOCIO EMPRESARIAL con "—" en categoría y su territorio');
     const { data: enBase2 } = await sb.from('tarifario').select('tipo_prueba, categoria, territorio').eq('nit', NIT).eq('tipo_prueba', 'SOCIOECONOMICO EMPRESARIAL');
     ok((enBase2 ?? []).length === 2 && enBase2!.every(r => r.categoria === 'UNICA') && new Set(enBase2!.map(r => r.territorio)).size === 2, 'en la base: SOCIOECONOMICO EMPRESARIAL · UNICA · METROPOLITANA / DEPARTAMENTAL');
+    // Forma 'categoria': SOCIO VIRTUAL muestra categoría y oculta territorio
+    await page.getByRole('button', { name: 'Nueva tarifa' }).click();
+    await dlg.locator('#tf-nit').fill(NIT);
+    await dlg.locator('#tf-tipo').selectOption('SOCIOECONOMICO VIRTUAL');
+    await page.waitForSelector('[role=dialog] [data-forma="categoria"]');
+    ok(await dlg.locator('#tf-cat').isVisible() && await dlg.getByLabel('METROPOLITANA', { exact: true }).count() === 0 && await dlg.getByLabel('DEPARTAMENTAL', { exact: true }).count() === 0 && /Por categoría \(sin territorio\)/.test(await dlg.innerText()), 'SOCIO VIRTUAL (por categoría): con categoría, sin territorios, y se explica la forma');
+    await dlg.locator('#tf-cat').selectOption('PRE EMPLEO');
+    await dlg.locator('#tf-monto').fill('450');
+    await dlg.getByRole('button', { name: 'Guardar tarifa' }).click();
+    await page.waitForFunction((n) => [...document.querySelectorAll('table tbody tr')].some(r => r.textContent?.includes(`NIT ${n}`) && r.textContent?.includes('SOCIOECONOMICO VIRTUAL')), NIT, { timeout: 30_000 });
+    const filaSV = page.locator('table tbody tr', { hasText: `NIT ${NIT}` }).filter({ hasText: 'SOCIOECONOMICO VIRTUAL' });
+    const cSV = await filaSV.first().locator('td').allInnerTexts();
+    ok(await filaSV.count() === 1 && cSV[2].trim() === 'PRE EMPLEO' && cSV[3].trim() === '—' && /450/.test(cSV[4]), `tabla: 1 fila SOCIO VIRTUAL con PRE EMPLEO, "—" en territorio y Q450 (${cSV.slice(1, 5).map(c => c.trim()).join(' | ')})`);
+    const { data: enBase3 } = await sb.from('tarifario').select('tipo_prueba, categoria, territorio, monto').eq('nit', NIT).eq('tipo_prueba', 'SOCIOECONOMICO VIRTUAL');
+    ok((enBase3 ?? []).length === 1 && enBase3![0].categoria === 'PRE EMPLEO' && enBase3![0].territorio === 'UNICA' && Number(enBase3![0].monto) === 450, 'en la base: SOCIOECONOMICO VIRTUAL · PRE EMPLEO · UNICA · Q450');
+    // Simulador: SOCIO VIRTUAL PRE EMPLEO resuelve igual pidiendo DEPARTAMENTAL
+    await page.getByLabel('NIT', { exact: true }).fill(NIT);
+    await page.getByLabel('Tipo de prueba').selectOption('SOCIOECONOMICO VIRTUAL');
+    await page.getByLabel('Categoría').selectOption('PRE EMPLEO');
+    await page.getByLabel('Territorio').selectOption('DEPARTAMENTAL');
+    await page.getByRole('button', { name: 'Resolver precio' }).click();
+    await page.waitForFunction(() => /Q450\.00 sin IVA/.test(document.body.innerText), null, { timeout: 30_000 });
+    ok(true, 'simulador: SOCIO VIRTUAL PRE EMPLEO en DEPARTAMENTAL → Q450.00 sin IVA (el territorio no cambia el precio)');
+    await page.getByLabel('Territorio').selectOption('');
     // Simulador: INFORNET sin categoría ni territorio resuelve
     await page.getByLabel('NIT', { exact: true }).fill(NIT);
     await page.getByLabel('Tipo de prueba').selectOption('INFORNET');

@@ -137,7 +137,7 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
   const dd = tarifasDuplicadas(tarifas);
   ok(dd.size === 2 && dd.has('6') && dd.has('7'), 'tarifasDuplicadas marca ESPECIFICA/ESPECIFICO del mismo NIT');
 
-  // ── FORMAS DE PRECIO (matriz / por territorio / único) ──
+  // ── FORMAS DE PRECIO (matriz / por territorio / por categoría / único) ──
   const C = await import('../src/lib/tarifario/canon');
   ok(C.formaPrecio('INFORNET') === 'unico' && C.formaPrecio('Consulta Infornet') === 'unico' && C.formaPrecio('SOCIO EMPRESARIAL') === 'territorio' && C.formaPrecio('SOCIOECONOMICO EMPRESARIAL') === 'territorio' && C.formaPrecio('POLIGRAFO') === 'matriz' && C.formaPrecio('SOCIOECONOMICO') === 'matriz' && C.formaPrecio('BACKGROUND CHECK') === 'matriz' && C.formaPrecio('MIDOT') === 'unico' && C.formaPrecio('PDA') === 'unico' && C.formaPrecio('Entrevista Gerencial') === 'unico' && C.formaPrecio('ENTREVISTA ESPECIALISTA') === 'unico' && C.formaPrecio('INSIGHT') === 'unico', 'formaPrecio: INFORNET, PDA, ENTREVISTA GERENCIAL / ESPECIALISTA, INSIGHT y MIDOT único; SOCIO EMPRESARIAL por territorio; polígrafo/socio y lo no definido (BACKGROUND CHECK) matriz');
   // SERVICIOS DE PRECIO ÚNICO (PDA, entrevistas, INSIGHT, MIDOT): canon exacto a la llave de FORMA_POR_TIPO y una sola fila UNICA/UNICA.
@@ -194,6 +194,44 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
   ok(plan.filas.length === 15 && plan.omitidas.length === 2 && plan.porTipo['BACKGROUND CHECK'] === 6, 'planGenerar no duplica: omite lo que ya existe por llave efectiva (incluso inactivo o con otra grafía); un tipo extra matriz genera 6');
   plan = G.planGenerar('11854243', [T('pd1', '11854243', 'PDA', 'PRE EMPLEO', 'METROPOLITANA', 3200)], ['PDA', 'ENTREVISTA GERENCIL', 'MIDOT', 'INSIGHT', 'ENTREVISTA ESPECIALISTA']);
   ok(plan.porTipo['ENTREVISTA GERENCIAL'] === 1 && plan.porTipo.MIDOT === 1 && plan.porTipo.INSIGHT === 1 && plan.porTipo['ENTREVISTA ESPECIALISTA'] === 1 && plan.porTipo.PDA === undefined && plan.omitidas.some(f => f.tipoPrueba === 'PDA') && plan.filas.filter(f => f.forma === 'unico').every(f => f.categoria === 'UNICA' && f.territorio === 'UNICA') && plan.filas.length === 14, 'generar para un cliente que pide PDA / entrevistas / INSIGHT / MIDOT en la Agenda: 1 fila UNICA/UNICA por servicio único; PDA se omite porque ya existe (por llave efectiva, aunque esté como matriz)');
+
+  // ── FORMA 'categoria' (por categoría, sin territorio): SOCIOECONOMICO VIRTUAL — queda completo el 2×2 ──
+  ok(C.formaPrecio('SOCIOECONOMICO VIRTUAL') === 'categoria' && C.formaPrecio('Socio Virtual') === 'categoria' && C.formaPrecio('SOCIOECONÓMICO VIRTUAL') === 'categoria' && C.formaPrecio('SOCIOECONOMICO EMPRESARIAL') === 'territorio' && C.formaPrecio('SOLO SOCIOECONOMICO') === 'matriz', "formaPrecio: SOCIOECONOMICO VIRTUAL (y 'Socio Virtual', con tilde) → 'categoria'; EMPRESARIAL sigue por territorio; el socio plano sigue matriz");
+  ok(C.canonTipoPrueba('SOCIOECONOMICO VIRTUAL') === 'SOCIOECONOMICO VIRTUAL' && C.canonTipoPrueba('socio virtual') === 'SOCIOECONOMICO VIRTUAL' && C.canonTipoPrueba('Estudio Socio-Económico Virtual') === 'SOCIOECONOMICO VIRTUAL' && C.canonTipoPrueba('SOCIOECONOMICO EMPRESARIAL') === 'SOCIOECONOMICO EMPRESARIAL' && C.canonTipoPrueba('SOLO SOCIOECONOMICO') === 'SOCIOECONOMICO' && C.canonTipoPrueba('VIRTUAL') === 'VIRTUAL' && (C.TIPOS_PRUEBA as readonly string[]).includes('SOCIOECONOMICO VIRTUAL'), 'canonTipoPrueba: SOCIO + VIRTUAL (cualquier grafía) → SOCIOECONOMICO VIRTUAL; no confunde con EMPRESARIAL ni con el socio plano; "VIRTUAL" solo no es socio; está en TIPOS_PRUEBA');
+  ok(C.usaCategoria('matriz') && C.usaTerritorio('matriz') && !C.usaCategoria('territorio') && C.usaTerritorio('territorio') && C.usaCategoria('categoria') && !C.usaTerritorio('categoria') && !C.usaCategoria('unico') && !C.usaTerritorio('unico') && C.ETIQUETA_FORMA.categoria === 'Por categoría (sin territorio)' && (C.CATEGORIAS_SOCIO as readonly string[]).join() === 'PRE EMPLEO,RUTINA', 'el 2×2 completo: matriz cat+terr · territorio solo terr · categoria solo cat · unico ninguna; etiqueta "Por categoría (sin territorio)"; CATEGORIAS_SOCIO = PRE EMPLEO, RUTINA');
+  ok(C.llaveTarifa({ nit: '1', tipoPrueba: 'Socio Virtual', categoria: 'PREEMPLEO', territorio: 'METROPOLITANA' }) === '1|SOCIOECONOMICO VIRTUAL|PRE EMPLEO|UNICA' && C.llaveTarifa({ nit: '1', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'rutina', territorio: '' }) === '1|SOCIOECONOMICO VIRTUAL|RUTINA|UNICA', 'llave efectiva de SOCIO VIRTUAL: categoría canónica + territorio UNICA (el territorio de la fila se descarta)');
+  const virt = [
+    T('sv1', '11854243', 'SOCIOECONOMICO VIRTUAL', 'PRE EMPLEO', 'UNICA', 450, { aprobadoEn: '2026-01-01' }), T('sv2', '11854243', 'SOCIOECONOMICO VIRTUAL', 'RUTINA', 'UNICA', 380),
+    T('sv3', '11854243', 'SOCIOECONOMICO', 'PRE EMPLEO', 'METROPOLITANA', 600), T('sv4', '11854243', 'SOCIOECONOMICO EMPRESARIAL', 'UNICA', 'METROPOLITANA', 700),
+    T('lv1', '222', 'SOCIOECONOMICO VIRTUAL', 'PRE EMPLEO', 'METROPOLITANA', 400), T('lv2', '222', 'SOCIOECONOMICO VIRTUAL', 'PRE EMPLEO', 'DEPARTAMENTAL', 0),
+    T('lv3', '333', 'SOCIOECONOMICO VIRTUAL', 'PRE EMPLEO', 'METROPOLITANA', 400), T('lv4', '333', 'SOCIOECONOMICO VIRTUAL', 'PRE EMPLEO', 'DEPARTAMENTAL', 500),
+    T('sv0', '444', 'SOCIOECONOMICO VIRTUAL', 'PRE EMPLEO', 'UNICA', 0),
+  ];
+  const rM = resolverTarifa(virt, { nit: '11854243', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA' });
+  const rD = resolverTarifa(virt, { nit: '11854243', tipoPrueba: 'Socio Virtual', categoria: 'PREEMPLEO', territorio: 'DEPARTAMENTAL' });
+  const rS = resolverTarifa(virt, { nit: '11854243', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'PRE EMPLEO', territorio: '' });
+  ok(rM.estado === 'ok' && rM.monto === 450 && rM.aprobada && rD.estado === 'ok' && rD.monto === 450 && rD.tarifa.id === 'sv1' && rS.estado === 'ok' && rS.monto === 450 && rM.avisos.length === 0 && rD.avisos.length === 0 && rS.avisos.length === 0, 'SOCIO VIRTUAL PRE EMPLEO Q450 resuelve igual en METROPOLITANA, DEPARTAMENTAL y sin territorio (sin avisos: el territorio no cuenta)');
+  r = resolverTarifa(virt, { nit: '11854243', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'RUTINA', territorio: 'DEPARTAMENTAL' });
+  ok(r.estado === 'ok' && r.monto === 380 && r.tarifa.id === 'sv2', 'RUTINA virtual usa su propio precio (Q380)');
+  r = resolverTarifa(virt, { nit: '11854243', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: '', territorio: 'METROPOLITANA' });
+  ok(r.estado === 'no_encontrada' && /no trae categoría/.test(r.mensaje), 'SOCIO VIRTUAL sin categoría → sin tarifa (la categoría sí importa en esta forma)');
+  r = resolverTarifa(virt, { nit: '11854243', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'ESPECIFICO', territorio: 'METROPOLITANA' });
+  ok(r.estado === 'no_encontrada' && /no tiene tarifa para SOCIOECONOMICO VIRTUAL ESPECIFICO \(precio por categoría, sin territorio\)/.test(r.mensaje), 'categoría sin fila (ESPECIFICO) → no_encontrada diciendo que es por categoría sin territorio, sin mencionar METROPOLITANA');
+  r = resolverTarifa(virt, { nit: '11854243', tipoPrueba: 'SOLO SOCIOECONOMICO', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA' });
+  const rE = resolverTarifa(virt, { nit: '11854243', tipoPrueba: 'SOCIO EMPRESARIAL', categoria: '', territorio: 'GUATEMALA' });
+  ok(r.estado === 'ok' && r.monto === 600 && r.tarifa.id === 'sv3' && rE.estado === 'ok' && rE.monto === 700, 'el socio plano (Q600, matriz) y el empresarial (Q700, por territorio) del mismo NIT no se mezclan con el virtual');
+  r = resolverTarifa(virt, { nit: '222', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'PRE EMPLEO', territorio: 'DEPARTAMENTAL' });
+  ok(r.estado === 'ok' && r.monto === 400 && r.tarifa.id === 'lv1' && /1 en Q0/.test(r.avisos.join(' ')), 'legacy cargado como matriz (METRO Q400 + DEPTO Q0): resuelve Q400 aun pidiendo DEPARTAMENTAL (Q0 no es precio) con aviso de normalizar');
+  r = resolverTarifa(virt, { nit: '333', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA' });
+  ok(r.estado === 'ambigua' && /se cobra por categoría sin territorio/.test(r.mensaje) && /2 montos distintos/.test(r.mensaje), 'legacy con dos precios distintos por territorio (400 / 500) → ambigua: el territorio nunca elige el precio, hay que dejar uno');
+  r = resolverTarifa(virt, { nit: '444', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA' });
+  ok(r.estado === 'sin_tarifa' && /^SOCIOECONOMICO VIRTUAL PRE EMPLEO está en Q0/.test(r.mensaje), 'fila en Q0 → sin tarifa (no es gratis), sin el centinela UNICA en el mensaje');
+  ok(buscarDuplicado(virt, { nit: '11854243', tipoPrueba: 'Socio Virtual', categoria: 'PRE EMPLEO', territorio: 'DEPARTAMENTAL' })?.id === 'sv1' && buscarDuplicado(virt, { nit: '11854243', tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'ESPECIFICO', territorio: 'UNICA' }) === null && tarifasDuplicadas(virt).has('lv1') && tarifasDuplicadas(virt).has('lv2') && !tarifasDuplicadas(virt).has('sv1') && !tarifasDuplicadas(virt).has('sv3'), 'duplicados por llave efectiva: otra PRE EMPLEO virtual con cualquier territorio es la misma; otra categoría no; las dos legacy del 222 cuentan como repetidas; el socio plano no');
+  plan = G.planGenerar('555', [], ['SOCIO VIRTUAL']);
+  const fv = plan.filas.filter(f => f.tipoPrueba === 'SOCIOECONOMICO VIRTUAL');
+  ok(plan.porTipo['SOCIOECONOMICO VIRTUAL'] === 2 && fv.length === 2 && fv.every(f => f.forma === 'categoria' && f.territorio === 'UNICA') && fv.map(f => f.categoria).sort().join() === 'PRE EMPLEO,RUTINA' && /SOCIOECONOMICO VIRTUAL 2 \(por categoría\)/.test(G.resumenPlan(plan)) && plan.filas.length === 12, 'generar para un cliente que pide SOCIO VIRTUAL: 2 filas (PRE EMPLEO y RUTINA; ESPECIFICO no aplica) con territorio UNICA; resumen "(por categoría)"; plantilla 10 + 2 = 12');
+  plan = G.planGenerar('555', [T('lv', '555', 'SOCIOECONOMICO VIRTUAL', 'PRE EMPLEO', 'METROPOLITANA', 400)], ['SOCIOECONOMICO VIRTUAL']);
+  ok(plan.porTipo['SOCIOECONOMICO VIRTUAL'] === 1 && plan.filas.find(f => f.tipoPrueba === 'SOCIOECONOMICO VIRTUAL')?.categoria === 'RUTINA' && plan.omitidas.some(f => f.tipoPrueba === 'SOCIOECONOMICO VIRTUAL' && f.categoria === 'PRE EMPLEO'), 'no duplica: con la PRE EMPLEO virtual ya cargada (aunque esté como matriz) solo genera RUTINA');
 
   const { resumenPorEmpresa, filtrarEmpresas, aprobablesDe } = await import('../src/lib/tarifario/resumen');
   const resumen = resumenPorEmpresa([...tarifas, T('10', '53563972', 'POLIGRAFO', 'RUTINA', 'METROPOLITANA', 300, { razonSocial: 'CREDICHAPIN', aprobadoEn: '2026-01-01' })]);
@@ -336,6 +374,18 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
     ok(rf.estado === 'ok' && rf.monto === 600, 'lookup real: SOCIO EMPRESARIAL sin categoría, GUATEMALA → Q600');
     rf = await resolverTarifaExpediente({ nit: NIT, tipoPrueba: 'SOCIO EMPRESARIAL', categoria: 'PRE EMPLEO', territorio: 'depto' });
     ok(rf.estado === 'no_encontrada' && /DEPARTAMENTAL/.test(rf.mensaje), 'lookup real: SOCIO EMPRESARIAL en DEPARTAMENTAL sin tarifa → no_encontrada con el faltante');
+    // Forma 'categoria' en la base: SOCIO VIRTUAL guarda categoría + territorio UNICA; el lookup ignora el territorio del expediente.
+    const cV = await crearTarifa({ nit: NIT, tipoPrueba: 'Socio Virtual', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA', monto: 450 }, ACTOR);
+    const fV = cV.ok ? (await getTarifario()).find(t => t.id === cV.id) : undefined;
+    ok(cV.ok && !!fV && fV.tipoPrueba === 'SOCIOECONOMICO VIRTUAL' && fV.categoria === 'PRE EMPLEO' && fV.territorio === 'UNICA', `crear SOCIO VIRTUAL PRE EMPLEO con territorio → se guarda por categoría (PRE EMPLEO / UNICA): ${cV.ok ? cV.mensaje : cV.error}`);
+    const cV2 = await crearTarifa({ nit: NIT, tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'PREEMPLEO', territorio: 'DEPARTAMENTAL', monto: 500 }, ACTOR);
+    ok(!cV2.ok && !!cV2.duplicado, 'otra PRE EMPLEO virtual en DEPARTAMENTAL → aviso de repetida (misma llave efectiva: el territorio no distingue)');
+    rf = await resolverTarifaExpediente({ nit: NIT, tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'PRE EMPLEO', territorio: 'depto' });
+    const rfM = await resolverTarifaExpediente({ nit: NIT, tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'PRE EMPLEO', territorio: 'metro' });
+    ok(rf.estado === 'ok' && rf.monto === 450 && rfM.estado === 'ok' && rfM.monto === 450, 'lookup real: SOCIO VIRTUAL PRE EMPLEO → Q450 en DEPARTAMENTAL y en METROPOLITANA por igual');
+    rf = await resolverTarifaExpediente({ nit: NIT, tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: '', territorio: 'metro' });
+    const rfR = await resolverTarifaExpediente({ nit: NIT, tipoPrueba: 'SOCIOECONOMICO VIRTUAL', categoria: 'RUTINA', territorio: 'metro' });
+    ok(rf.estado === 'no_encontrada' && /no trae categoría/.test(rf.mensaje) && rfR.estado === 'no_encontrada' && /sin territorio/.test(rfR.mensaje), 'lookup real: sin categoría → falta la categoría; RUTINA sin fila → no_encontrada (por categoría, sin territorio)');
     const pl = await planGenerarTarifas(NIT, { incluirAgenda: false, tiposExtra: ['SOCIO EMPRESARIAL'] });
     const yaHay = (await getTarifario()).filter(t => t.nit === NIT).length;
     ok(!('error' in pl) && pl.filas.length + pl.omitidas.length === 12 && pl.porTipo['SOCIOECONOMICO EMPRESARIAL'] === 1 && pl.filas.every(f => f.forma !== 'unico'), `planGenerarTarifas: plantilla (10) + SOCIO EMPRESARIAL (2) = 12 llaves; ${'error' in pl ? pl.error : `${pl.filas.length} a crear, ${pl.omitidas.length} ya existen (${yaHay} filas del NIT)`}`);
@@ -345,6 +395,10 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
     ok(g1.ok && !('error' in pl) && g1.creadas === pl.filas.length && g2.ok && g2.creadas === 0 && delNit.filter(t => t.tipoPrueba === 'POLIGRAFO').length === 6 && delNit.filter(t => t.tipoPrueba === 'SOCIOECONOMICO').length === 4 && delNit.filter(t => t.tipoPrueba === 'SOCIOECONOMICO EMPRESARIAL').length === 2 && delNit.filter(t => t.tipoPrueba === 'INFORNET').length === 1, `generar: crea ${g1.ok ? g1.creadas : '?'} en Q0 (bitácora 'alta'); la segunda corrida crea 0 (no duplica) → polígrafo 6, socio 4, socio empresarial 2, infornet 1`);
     const hG = await listarHistorialPorNit(NIT);
     ok(hG.filter(h => h.accion === 'alta' && h.usuario === ACTOR && /generadas en Q0/.test(h.motivo)).length === (g1.ok ? g1.creadas : -1), 'las generadas quedaron en la bitácora como alta con el motivo "generadas en Q0…"');
+    const plV = await planGenerarTarifas(NIT, { incluirAgenda: false, tiposExtra: ['SOCIO VIRTUAL'] });
+    const g3 = await generarTarifasCliente({ nit: NIT, tiposExtra: ['SOCIO VIRTUAL'], incluirAgenda: false }, ACTOR);
+    const virtDb = (await getTarifario()).filter(t => t.nit === NIT && t.tipoPrueba === 'SOCIOECONOMICO VIRTUAL');
+    ok(!('error' in plV) && plV.porTipo['SOCIOECONOMICO VIRTUAL'] === 1 && plV.omitidas.some(f => f.tipoPrueba === 'SOCIOECONOMICO VIRTUAL' && f.categoria === 'PRE EMPLEO') && g3.ok && g3.creadas === 1 && virtDb.length === 2 && virtDb.every(t => t.territorio === 'UNICA') && virtDb.find(t => t.categoria === 'RUTINA')?.monto === 0 && virtDb.find(t => t.categoria === 'PRE EMPLEO')?.monto === 450, `generar SOCIO VIRTUAL con la PRE EMPLEO ya cargada: crea solo RUTINA en Q0 (UNICA) → 2 filas por categoría, sin territorio (${g3.ok ? g3.creadas : g3.error})`);
   } catch (e) { fail++; console.log(`  🔴 excepción: ${(e as Error).message}`); }
   finally {
     if (creados.length) { const { error } = await sb.from('tarifario').delete().in('id', creados); if (error) console.log(`     ✗ limpieza: ${error.message}`); }

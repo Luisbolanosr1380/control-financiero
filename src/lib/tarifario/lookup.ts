@@ -17,12 +17,14 @@
  *  - Varias tarifas activas para la misma llave canónica (duplicado con
  *    distinta grafía): mismo monto → ok con aviso; distinto → ambigua.
  *  - FORMAS DE PRECIO (canon.ts): matriz (categoría × territorio, como arriba),
- *    por territorio (SOCIO EMPRESARIAL: ignora la categoría del expediente) y
- *    único (INFORNET: ignora categoría y territorio). Para las formas sin
- *    categoría, que el expediente venga sin categoría NO es "sin tarifa".
+ *    por territorio (SOCIO EMPRESARIAL: ignora la categoría del expediente),
+ *    por categoría (SOCIO VIRTUAL: ignora el territorio del expediente; la
+ *    categoría sí hace falta) y único (INFORNET: ignora categoría y territorio).
+ *    Para las formas sin categoría, que el expediente venga sin categoría NO es
+ *    "sin tarifa".
  */
 import { nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
-import { canonCategoria, canonTerritorio, canonTipoPrueba, conIva, esSinTarifa, formaPrecio, llaveTarifa, normalizarTexto, usaCategoria, usaTerritorio } from './canon';
+import { UNICA, canonCategoria, canonTerritorio, canonTipoPrueba, conIva, esSinTarifa, formaPrecio, llaveTarifa, normalizarTexto, usaCategoria, usaTerritorio } from './canon';
 
 export interface Tarifa {
   id: string;
@@ -128,18 +130,20 @@ function elegir(cands: Tarifa[], nit: string, territorio: string): { ok: Tarifa;
 }
 
 /**
- * Forma 'unico': todas las tarifas activas del tipo valen (aunque alguna legacy traiga categoría/territorio).
- * Las filas en Q0 son "sin tarifa definida", no un precio: si hay UNA con precio y el resto en Q0 (el patrón
- * real de PDA / INSIGHT cargados como matriz de 6 celdas), se usa esa y se avisa que hay que normalizar.
- * Dos o más precios distintos → ambigua. Todas en Q0 → la primera (el motor la reporta como sin tarifa).
+ * Formas SIN territorio ('unico' y 'categoria'): todas las tarifas activas de la llave valen (aunque alguna
+ * legacy traiga territorio, o categoría en el caso de único). Las filas en Q0 son "sin tarifa definida", no un
+ * precio: si hay UNA con precio y el resto en Q0 (el patrón real de PDA / INSIGHT cargados como matriz de 6
+ * celdas), se usa esa y se avisa que hay que normalizar. Dos o más precios distintos → ambigua. Todas en Q0 →
+ * la primera (el motor la reporta como sin tarifa). El territorio del expediente nunca cambia el precio.
  */
-function elegirUnico(cands: Tarifa[], nit: string, tp: string): { ok: Tarifa; avisos: string[] } | { ambigua: Tarifa[]; mensaje: string } | null {
+function elegirSinTerritorio(cands: Tarifa[], nit: string, etiqueta: string, forma: 'unico' | 'categoria'): { ok: Tarifa; avisos: string[] } | { ambigua: Tarifa[]; mensaje: string } | null {
   if (cands.length === 0) return null;
   const conPrecio = cands.filter(c => !esSinTarifa(c.monto));
   const montos = new Set(conPrecio.map(c => Number(c.monto)));
-  if (montos.size > 1) return { ambigua: conPrecio, mensaje: `${tp} es de precio único por cliente y el NIT ${nit} tiene ${montos.size} montos distintos (${[...montos].map(m => `Q${m.toFixed(2)}`).join(' · ')}): dejá uno solo en el tarifario.` };
+  const regla = forma === 'unico' ? 'es de precio único por cliente' : 'se cobra por categoría sin territorio';
+  if (montos.size > 1) return { ambigua: conPrecio, mensaje: `${etiqueta} ${regla} y el NIT ${nit} tiene ${montos.size} montos distintos (${[...montos].map(m => `Q${m.toFixed(2)}`).join(' · ')}): dejá uno solo en el tarifario.` };
   const avisos: string[] = [];
-  if (cands.length > 1) avisos.push(`${tp} tiene ${cands.length} filas para el mismo cliente (precio único${conPrecio.length === 1 ? `, ${cands.length - 1} en Q0` : ''}): conviene normalizarlas a una.`);
+  if (cands.length > 1) avisos.push(`${etiqueta} tiene ${cands.length} filas para el mismo cliente (${forma === 'unico' ? 'precio único' : 'sin territorio'}${conPrecio.length === 1 ? `, ${cands.length - 1} en Q0` : ''}): conviene normalizarlas a una.`);
   return { ok: conPrecio[0] ?? cands[0], avisos };
 }
 
@@ -160,20 +164,22 @@ export function resolverTarifa(tarifas: readonly Tarifa[], exp: Expediente, clie
     if (usaCategoria(forma) && !cat) return { estado: 'no_encontrada', nit, candidatas: delCliente, mensaje: `${tp} se cobra por categoría y el expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO).` };
     const delTipo = delCliente.filter(t => canonTipoPrueba(t.tipoPrueba) === tp);
     const cands = usaCategoria(forma) ? delTipo.filter(t => canonCategoria(t.categoria) === cat) : delTipo;
-    const r = forma === 'unico' ? elegirUnico(cands, nit, tp) : elegir(cands, nit, usaTerritorio(forma) ? ter : '');
+    const etiqueta = usaCategoria(forma) ? `${tp} ${cat}` : tp;
+    // Formas sin territorio (único / por categoría): el territorio del expediente se ignora por completo.
+    const r = !usaTerritorio(forma) ? elegirSinTerritorio(cands, nit, etiqueta, forma === 'unico' ? 'unico' : 'categoria') : elegir(cands, nit, ter);
     if (!r) {
-      const etiqueta = usaCategoria(forma) ? `${tp} ${cat}` : tp;
       const sinTerritorio = ter && usaTerritorio(forma) ? cands : [];
+      const nota = forma === 'unico' ? ' (precio único por cliente)' : forma === 'territorio' ? ' (precio por territorio, sin categoría)' : forma === 'categoria' ? ' (precio por categoría, sin territorio)' : '';
       const msg = sinTerritorio.length
         ? `El NIT ${nit} tiene ${etiqueta} pero no en ${ter} (solo ${[...new Set(sinTerritorio.map(t => canonTerritorio(t.territorio)))].join(', ')}).`
-        : `El NIT ${nit} no tiene tarifa para ${etiqueta}${ter && usaTerritorio(forma) ? ' ' + ter : ''}${forma === 'unico' ? ' (precio único por cliente)' : forma === 'territorio' ? ' (precio por territorio, sin categoría)' : ''}.`;
+        : `El NIT ${nit} no tiene tarifa para ${etiqueta}${ter && usaTerritorio(forma) ? ' ' + ter : ''}${nota}.`;
       return { estado: 'no_encontrada', nit, candidatas: delCliente, mensaje: msg };
     }
     if ('ambigua' in r) return { estado: 'ambigua', nit, candidatas: r.ambigua, mensaje: r.mensaje };
     partes.push(r.ok); avisos.push(...r.avisos);
   }
   const sinTarifa = partes.find(p => esSinTarifa(p.monto));
-  if (sinTarifa) return { estado: 'sin_tarifa', nit, tarifa: sinTarifa, componentes: partes.length > 1 ? partes : undefined, mensaje: `${canonTipoPrueba(sinTarifa.tipoPrueba)} ${canonCategoria(sinTarifa.categoria)} ${canonTerritorio(sinTarifa.territorio)} está en Q0: sin tarifa definida (no es gratis). Hay que pactarla y cargarla.` };
+  if (sinTarifa) return { estado: 'sin_tarifa', nit, tarifa: sinTarifa, componentes: partes.length > 1 ? partes : undefined, mensaje: `${[canonTipoPrueba(sinTarifa.tipoPrueba), canonCategoria(sinTarifa.categoria), canonTerritorio(sinTarifa.territorio)].filter(x => x && x !== UNICA).join(' ')} está en Q0: sin tarifa definida (no es gratis). Hay que pactarla y cargarla.` };
   const monto = partes.reduce((s, p) => s + Number(p.monto), 0);
   const { iva, total } = conIva(monto);
   const aprobada = partes.every(p => !!p.aprobadoEn);

@@ -116,7 +116,7 @@ export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio)
   const partes: Tarifa[] = []; const avisos: string[] = [];
   const prefijo = (s: string) => (servicios.length > 1 ? `${s}: ` : '');
   for (const s of servicios) {
-    // Solo las formas "matriz" cobran por categoría: SOCIO EMPRESARIAL (por territorio) e INFORNET (único) resuelven sin ella.
+    // Solo las formas con categoría (matriz y SOCIO VIRTUAL) la exigen: SOCIO EMPRESARIAL (por territorio) e INFORNET (único) resuelven sin ella.
     if (usaCategoria(formaPrecio(s)) && !cat) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: `${s} se cobra por categoría y el expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO).` };
     const r = resolverTarifa(ctx.tarifas, { nit, tipoPrueba: s, categoria: cat, territorio: ter || undefined });
     if (r.estado !== 'ok') return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: prefijo(s) + r.mensaje };

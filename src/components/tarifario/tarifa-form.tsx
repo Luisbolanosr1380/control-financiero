@@ -12,7 +12,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { crearTarifaAction, verificarDuplicadoTarifaAction } from '@/app/(app)/tarifario/actions';
-import { CATEGORIAS, ETIQUETA_FORMA, TERRITORIOS, TIPOS_PRUEBA, UNICA, canonCategoria, canonTerritorio, canonTipoPrueba, formaPrecio, usaCategoria, usaTerritorio } from '@/lib/tarifario/canon';
+import { CATEGORIAS, DESCRIPCION_FORMA, ETIQUETA_FORMA, TERRITORIOS, TIPOS_PRUEBA, UNICA, canonCategoria, canonTerritorio, canonTipoPrueba, formaPrecio, usaCategoria, usaTerritorio } from '@/lib/tarifario/canon';
 import { nitComparable } from '@/lib/clientes/nit';
 import type { Tarifa } from '@/lib/tarifario/lookup';
 
@@ -42,7 +42,7 @@ export function TarifaForm({ onClose, tarifas, inicial }: Props) {
   }, [onClose, loading]);
 
   const tipoFinal = tipo === '__otro' ? tipoOtro : tipo;
-  // FORMAS DE PRECIO: matriz pide categoría y territorio; por territorio solo territorio; único ninguna (se guardan como UNICA).
+  // FORMAS DE PRECIO: matriz pide categoría y territorio; por territorio solo territorio; por categoría solo categoría; único ninguna (lo que no aplica se guarda como UNICA).
   const forma = formaPrecio(tipoFinal);
   const categoriaEf = usaCategoria(forma) ? categoria : UNICA;
   const territoriosEf = usaTerritorio(forma) ? territorios : [UNICA];
@@ -78,7 +78,7 @@ export function TarifaForm({ onClose, tarifas, inicial }: Props) {
         if (r.duplicado) { setDuplicado(r.duplicado); setConfirmar({ descripcion: r.duplicado.descripcion }); if (creadas) router.refresh(); return; }
         toast.error(r.error); if (creadas) router.refresh(); return;
       }
-      toast.success(creadas === 1 ? `Tarifa creada: ${canonTipoPrueba(tipoFinal)}${usaCategoria(forma) ? ` · ${canonCategoria(categoria)}` : ''}${forma === 'unico' ? ' · precio único' : ''} · Q${montoNum.toFixed(2)}${montoNum === 0 ? ' (sin tarifa definida)' : ''}` : `${creadas} tarifas creadas (${territoriosEf.map(canonTerritorio).join(' y ')}).`);
+      toast.success(creadas === 1 ? `Tarifa creada: ${canonTipoPrueba(tipoFinal)}${usaCategoria(forma) ? ` · ${canonCategoria(categoria)}` : ''}${forma === 'unico' ? ' · precio único' : forma === 'categoria' ? ' · sin territorio' : ''} · Q${montoNum.toFixed(2)}${montoNum === 0 ? ' (sin tarifa definida)' : ''}` : `${creadas} tarifas creadas (${territoriosEf.map(canonTerritorio).join(' y ')}).`);
       onClose(); router.refresh();
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Error de red'); }
     finally { setLoading(false); }
@@ -111,17 +111,18 @@ export function TarifaForm({ onClose, tarifas, inicial }: Props) {
               </select>
               {tipo === '__otro' && <input aria-label="Otro tipo de prueba" type="text" className="input" style={{ marginTop: 6 }} placeholder="Nombre del tipo" value={tipoOtro} onChange={e => setTipoOtro(e.target.value)} disabled={loading} />}
             </div>
-            {usaCategoria(forma) ? (
+            {usaCategoria(forma) && (
               <div className="field" style={{ margin: 0 }}>
                 <label className="label" htmlFor="tf-cat">Categoría *</label>
                 <select id="tf-cat" className="input" value={categoria} onChange={e => setCategoria(e.target.value)} disabled={loading}>
                   {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
                 </select>
               </div>
-            ) : (
+            )}
+            {forma !== 'matriz' && (
               <div className="field" style={{ margin: 0 }} data-forma={forma}>
                 <span className="label">Forma de precio</span>
-                <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 6, lineHeight: 1.4 }}><strong>{ETIQUETA_FORMA[forma]}</strong>: {forma === 'unico' ? 'sin categoría ni territorio; un solo precio para el cliente.' : 'sin categoría; un precio por territorio.'}</div>
+                <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 6, lineHeight: 1.4 }}><strong>{ETIQUETA_FORMA[forma]}</strong>: {DESCRIPCION_FORMA[forma]}</div>
               </div>
             )}
             {usaTerritorio(forma) && (

@@ -764,6 +764,26 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     await TDB.activarTarifa(tPda!.id, false, ACTOR);
     ok((await DB.reclasificar({ nit: NIT_A })) === 0, 'sin los PDA sembrados y con la tarifa desactivada, la cola de A queda igual (0 cambios)');
 
+    // ── FORMA 'categoria' · E2E en HIT: SOCIO VIRTUAL PRE EMPLEO Q450 → el expediente resuelve igual en metro y en depto; RUTINA usa su precio; sin categoría → sin tarifa ──
+    console.log('\n   por categoría (sin territorio) · SOCIOECONOMICO VIRTUAL');
+    const filaSv = (id: string, cat: string | null, depto: string | null) => ({ fuente: 'agenda', id_externo: id, empresa_id_externo: EMP_A, empresa_nombre_externo: 'E2E AGENDA', nit_resuelto: NIT_A, tipo_cobrado: 'SOCIOECONOMICO VIRTUAL', estado_tarifa: 'sin_tarifa', detalle_tarifa: 'sembrado', terminado: true, cancelado: false, eliminado: false, status_cobro_externo: 'PENDIENTE', fecha_ingreso: '2026-10-12', tipo_prueba: 'SOCIOECONOMICO VIRTUAL', proceso_solicitado: 'SOLO SOCIOECONOMICO', categoria_prueba: cat, depto_visita: depto, persona: `PERSONA ${id.slice(-3)}`, raw: { id, empresa: { id: EMP_A, nombre: 'E2E AGENDA' }, tipoPrueba: 'SOCIOECONOMICO VIRTUAL', procesoSolicitado: 'SOLO SOCIOECONOMICO', categoriaPrueba: cat, deptoVisita: depto, terminado: true, cancelado: false, eliminado: false, fechaIngreso: '2026-10-12', cobro: { statusCobro: 'PENDIENTE' }, actualizadoEn: '2026-10-20T10:00:00.000Z', nombre: `PERSONA ${id.slice(-3)}` } });
+    const { error: eSv } = await sb.from('facturacion_expediente').insert([filaSv('recE2E920', 'PRE EMPLEO', 'GUATEMALA'), filaSv('recE2E921', 'PRE EMPLEO', 'QUETZALTENANGO'), filaSv('recE2E922', 'RUTINA', 'GUATEMALA'), filaSv('recE2E923', null, 'GUATEMALA')]);
+    const plSv = await TDB.planGenerarTarifas(NIT_A);
+    const fSv = 'error' in plSv ? [] : plSv.filas.filter(f => f.tipoPrueba === 'SOCIOECONOMICO VIRTUAL');
+    ok(!eSv && !('error' in plSv) && plSv.tiposAgenda.includes('SOCIOECONOMICO VIRTUAL') && plSv.porTipo['SOCIOECONOMICO VIRTUAL'] === 2 && fSv.every(f => f.territorio === 'UNICA' && f.forma === 'categoria') && fSv.map(f => f.categoria).sort().join() === 'PRE EMPLEO,RUTINA', `el plan de "Generar tarifas" lee de la Agenda que el cliente pide SOCIO VIRTUAL → 2 filas por categoría (PRE EMPLEO / RUTINA) con territorio UNICA (${'error' in plSv ? plSv.error : plSv.resumen})`);
+    const gSv = await TDB.generarTarifasCliente({ nit: NIT_A }, ACTOR);
+    const tSv = (await TDB.getTarifario()).filter(t => t.nit === NIT_A && t.tipoPrueba === 'SOCIOECONOMICO VIRTUAL' && t.activo);
+    const tSvPre = tSv.find(t => t.categoria === 'PRE EMPLEO'), tSvRut = tSv.find(t => t.categoria === 'RUTINA');
+    ok(gSv.ok && gSv.creadas === 2 && tSv.length === 2 && !!tSvPre && !!tSvRut && tSv.every(t => t.territorio === 'UNICA' && t.monto === 0) && (await TDB.generarTarifasCliente({ nit: NIT_A }, ACTOR) as { creadas?: number }).creadas === 0, 'generar crea las 2 virtuales en Q0 (PRE EMPLEO/UNICA y RUTINA/UNICA) y una segunda corrida crea 0 (no duplica)');
+    ok((await TDB.editarTarifa(tSvPre!.id, { monto: 450 }, ACTOR, 'precio pactado socio virtual')).ok && (await DB.reclasificar({ nit: NIT_A })) === 4, 'se carga PRE EMPLEO virtual Q450 → reclasificar({ nit }) re-resuelve los 4 sembrados');
+    locales = await DB.listarExpedientesLocal();
+    ok(['recE2E920', 'recE2E921'].every(id => byId(id).estadoTarifa === 'resuelta' && byId(id).montoCalculado === 450 && byId(id).tipoCobrado === 'SOCIOECONOMICO VIRTUAL' && byId(id).componentes[0]?.categoria === 'PRE EMPLEO' && byId(id).componentes[0]?.territorio === 'UNICA') && byId('recE2E920').territorioResuelto === 'METROPOLITANA' && byId('recE2E921').territorioResuelto === 'DEPARTAMENTAL', 'PRE EMPLEO virtual en GUATEMALA (metro) y en QUETZALTENANGO (depto) → "resuelta" Q450 por igual; el componente queda PRE EMPLEO / UNICA');
+    ok(byId('recE2E922').estadoTarifa === 'sin_tarifa' && /RUTINA está en Q0/.test(byId('recE2E922').detalleTarifa) && byId('recE2E923').estadoTarifa === 'sin_tarifa' && /no trae categoría/.test(byId('recE2E923').detalleTarifa), 'RUTINA virtual sigue "sin tarifa" (su fila está en Q0, no hereda la de PRE EMPLEO); sin categoría → "sin tarifa" porque la categoría sí importa');
+    ok((await TDB.editarTarifa(tSvRut!.id, { monto: 380 }, ACTOR, 'precio pactado socio virtual rutina')).ok && (await DB.reclasificar({ nit: NIT_A })) === 1 && (await DB.listarExpedientesLocal()).find(e => e.idExterno === 'recE2E922')?.montoCalculado === 380, 'se carga RUTINA virtual Q380 → solo ese expediente cambia (resuelta Q380)');
+    await sb.from('facturacion_expediente').delete().in('id_externo', ['recE2E920', 'recE2E921', 'recE2E922', 'recE2E923']);
+    await TDB.activarTarifa(tSvPre!.id, false, ACTOR); await TDB.activarTarifa(tSvRut!.id, false, ACTOR);
+    ok((await DB.reclasificar({ nit: NIT_A })) === 0, 'sin los virtuales sembrados y con sus tarifas desactivadas, la cola de A queda igual (0 cambios)');
+
     // ── 022 · CORTE DE ARRANQUE (facturar_desde por cliente): lo anterior sale de la cola y de "sin mapear"; sigue en la data ──
     console.log('\n   022 · corte de arranque: facturar_desde por cliente');
     const mE = await DB.guardarMapeo({ empresaIdExterno: EMP_E, empresaNombreExterno: 'E2E GENESIS', clienteAppId: idNuevo }, ACTOR);
