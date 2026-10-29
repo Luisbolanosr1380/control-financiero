@@ -2,7 +2,8 @@
 
 import { autorizar, exigir } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
-import { actualizarNombresCliente, crearCliente, verificarNitCliente, type CrearClienteInput, type CrearClienteResult, type NitDuplicado, type NombresClienteInput, type NombresClienteResult } from '@/lib/db/clientes';
+import { actualizarNombresCliente, cambiarNitCliente, crearCliente, verificarNitCliente, type CambioNitResult, type CrearClienteInput, type CrearClienteResult, type NitDuplicado, type NombresClienteInput, type NombresClienteResult, type ObjetivoNit } from '@/lib/db/clientes';
+import { reclasificar } from '@/lib/db/facturacion-agenda';
 
 export async function crearClienteAction(input: CrearClienteInput): Promise<CrearClienteResult> {
   const permiso = await autorizar('emitir_factura');
@@ -28,6 +29,35 @@ export async function editarNombresClienteAction(clienteId: string, input: Nombr
     revalidatePath('/facturacion/nueva');
   }
   return result;
+}
+
+/**
+ * 023 · CAMBIAR NIT: simula el cambio (conteo por tabla, NIT compartido, choques de llave)
+ * sin escribir. Mismo permiso que editar el cliente. `forzar` = el usuario ya aceptó compartir el NIT.
+ */
+export async function previsualizarCambioNitAction(objetivo: ObjetivoNit, nitNuevo: string, forzar = false): Promise<CambioNitResult> {
+  const permiso = await autorizar('emitir_factura');
+  if (!permiso.ok) return { ok: false, codigo: 'otro', error: permiso.error };
+  return cambiarNitCliente(objetivo, nitNuevo, permiso.email, { simular: true, forzar });
+}
+
+/**
+ * 023 · CAMBIAR NIT con arrastre (RPC transaccional) y después re-resolver la cola de la
+ * Agenda del NIT nuevo (como al mapear): los expedientes toman las tarifas en el NIT nuevo.
+ * Fail-soft en la re-resolución: el cambio ya quedó aplicado.
+ */
+export async function cambiarNitClienteAction(objetivo: ObjetivoNit, nitNuevo: string, forzar = false): Promise<CambioNitResult> {
+  const permiso = await autorizar('emitir_factura');
+  if (!permiso.ok) return { ok: false, codigo: 'otro', error: permiso.error };
+  const r = await cambiarNitCliente(objetivo, nitNuevo, permiso.email, { forzar });
+  if (!r.ok) return r;
+  let reclasificados = 0;
+  try { reclasificados = await reclasificar({ nit: r.nitNuevo }); } catch (e) { console.error('re-resolver tras cambiar NIT:', e); }
+  revalidatePath('/clientes', 'layout');
+  revalidatePath('/tarifario', 'layout');
+  revalidatePath('/por-facturar', 'layout');
+  revalidatePath('/facturacion/nueva');
+  return { ...r, reclasificados, mensaje: reclasificados ? `${r.mensaje} ${reclasificados} expediente${reclasificados === 1 ? '' : 's'} de la Agenda re-resuelto${reclasificados === 1 ? '' : 's'}.` : r.mensaje };
 }
 
 /**
