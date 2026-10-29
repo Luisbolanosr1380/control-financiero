@@ -76,6 +76,8 @@ function archivosUseServer(dir: string): string[] {
     reintentarWritebackAction: 'facturar_agenda',
     marcarNoFacturaAction: 'facturar_agenda',
     quitarNoFacturaAction: 'facturar_agenda',
+    mapearClientesLoteAction: 'facturar_agenda',
+    marcarNoFacturaLoteAction: 'facturar_agenda',
     archivarPresupuestoAction: 'presupuesto',
     reabrirPresupuestoAction: 'reabrir_presupuesto',
     editarAutorizacionFelNCAction: 'anular',

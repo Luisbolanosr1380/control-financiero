@@ -20,11 +20,12 @@ import { filtrarGrupos, type GrupoCliente, type KpisPorFacturar } from '@/lib/fa
 import type { EmpresaNoFactura, SyncEstado } from '@/lib/facturacion-agenda/tipos';
 import { quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
 import { SinMapearLista } from './sin-mapear-lista';
+import type { ClienteSlim } from '@/lib/db/facturacion-agenda';
 
-interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; noFacturan: EmpresaNoFactura[]; agregadoEnSql: boolean }
+interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; noFacturan: EmpresaNoFactura[]; clientes: ClienteSlim[]; agregadoEnSql: boolean }
 type Pestana = 'facturables' | 'sin_mapear' | 'no_facturan';
 
-export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, noFacturan, agregadoEnSql }: Props) {
+export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, noFacturan, clientes, agregadoEnSql }: Props) {
   const [pestana, setPestana] = useState<Pestana>('facturables');
   const router = useRouter();
   const puede = usePuede();
@@ -103,7 +104,7 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
         <button role="tab" aria-selected={pestana === 'no_facturan'} className={'btn ' + (pestana === 'no_facturan' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setPestana('no_facturan')} data-tab="no-facturan">No se facturan <span className="cell-mute">({noFacturan.length} empresa{noFacturan.length === 1 ? '' : 's'} · {kpis.excluidosNoFactura} exp.)</span></button>
       </div>
 
-      {pestana === 'no_facturan' ? <NoFacturanLista empresas={noFacturan} puede={puedeFacturar} /> : pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} /> : <>
+      {pestana === 'no_facturan' ? <NoFacturanLista empresas={noFacturan} puede={puedeFacturar} /> : pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} clientes={clientes} puede={puedeFacturar} /> : <>
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
           <input className="input" placeholder="Buscar cliente por nombre o NIT…" value={q} onChange={e => setQ(e.target.value)} style={{ minWidth: 300 }} aria-label="Buscar cliente" />
