@@ -13,7 +13,8 @@
  */
 import { supabase, fetchAll } from '@/lib/supabase/client';
 import { nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
-import { canonCategoria, canonTerritorio, canonTipoPrueba, normalizarTexto, round2 } from '@/lib/tarifario/canon';
+import { canonCategoria, canonTerritorio, canonTipoPrueba, dimTexto, llaveEfectiva, normalizarTexto, round2, usaCategoria, usaTerritorio } from '@/lib/tarifario/canon';
+import { planGenerar, resumenPlan, type PlanGenerar } from '@/lib/tarifario/generar';
 import { buscarDuplicado, resolverTarifa, type AliasCliente, type Expediente, type ResultadoLookup, type Tarifa } from '@/lib/tarifario/lookup';
 import { resumenPorEmpresa, type EmpresaTarifario } from '@/lib/tarifario/resumen';
 import { antiguedades, ultimoCambioPrecio, umbralEstancadaMeses, type AccionHistorial, type AntiguedadPrecio, type HistorialTarifa } from '@/lib/tarifario/antiguedad';
@@ -168,11 +169,14 @@ function validar(input: TarifaInput): { nit: string; razonSocial: string; tipoPr
   const nit = nitComparable(input.nit);
   if (!nit || nitEsPlaceholder(nit)) return 'El NIT es requerido (no vale 0 ni CF: la tarifa es por cliente).';
   if (!nitValido(input.nit) && !/^[0-9]{5,12}[0-9K]$/.test(nit)) return `"${input.nit}" no parece un NIT de Guatemala.`;
-  const tipoPrueba = canonTipoPrueba(input.tipoPrueba), categoria = canonCategoria(input.categoria), territorio = canonTerritorio(input.territorio);
+  const tipoPrueba = canonTipoPrueba(input.tipoPrueba);
   if (!tipoPrueba) return 'El tipo de prueba es requerido.';
   if (tipoPrueba === 'COMPLETO') return 'COMPLETO no se tarifa: cargá POLIGRAFO y SOCIOECONOMICO por separado (el motor los suma).';
-  if (!categoria) return 'La categoría es requerida.';
-  if (!territorio) return 'El territorio es requerido (METROPOLITANA o DEPARTAMENTAL).';
+  // FORMAS DE PRECIO: las dimensiones que el tipo no usa se guardan con el centinela UNICA (sin migración).
+  const e = llaveEfectiva({ tipoPrueba, categoria: input.categoria, territorio: input.territorio });
+  const categoria = e.categoria, territorio = e.territorio;
+  if (usaCategoria(e.forma) && !categoria) return 'La categoría es requerida.';
+  if (usaTerritorio(e.forma) && !territorio) return 'El territorio es requerido (METROPOLITANA o DEPARTAMENTAL).';
   const monto = Number(input.monto);
   if (!Number.isFinite(monto) || monto < 0) return 'El monto debe ser un número ≥ 0 (0 = sin tarifa definida).';
   const anio = String(input.anio ?? '').trim();
@@ -180,7 +184,7 @@ function validar(input: TarifaInput): { nit: string; razonSocial: string; tipoPr
   return { nit, razonSocial: normalizarTexto(input.razonSocial), tipoPrueba, categoria, territorio, monto: round2(monto), anio };
 }
 
-const descTarifa = (t: Tarifa) => `${t.razonSocial || t.nit} · ${t.tipoPrueba} · ${t.categoria} · ${t.territorio} · Q${t.monto.toFixed(2)}`;
+const descTarifa = (t: Tarifa) => `${t.razonSocial || t.nit} · ${t.tipoPrueba} · ${dimTexto(t.categoria)} · ${dimTexto(t.territorio)} · Q${t.monto.toFixed(2)}`;
 
 export async function crearTarifa(input: TarifaInput, actor: string): Promise<TarifaResult> {
   const sb = supabase(); if (!sb) return { ok: false, error: 'El tarifario requiere el backend Supabase.' };
@@ -194,7 +198,53 @@ export async function crearTarifa(input: TarifaInput, actor: string): Promise<Ta
     monto: v.monto, anio: v.anio || null, activo: true,
   }, actor);
   if ('error' in r) return { ok: false, error: /uq_tarifario_llave/.test(r.error) ? 'Esa combinación exacta ya existe en el tarifario (candado de la base).' : r.error };
-  return { ok: true, id: r.id, mensaje: `Tarifa creada: ${v.tipoPrueba} · ${v.categoria} · ${v.territorio} · Q${v.monto.toFixed(2)}${v.monto === 0 ? ' (sin tarifa definida)' : ''}` };
+  return { ok: true, id: r.id, mensaje: `Tarifa creada: ${v.tipoPrueba} · ${dimTexto(v.categoria)} · ${dimTexto(v.territorio)} · Q${v.monto.toFixed(2)}${v.monto === 0 ? ' (sin tarifa definida)' : ''}` };
+}
+
+// ── Generar tarifas para un cliente ─────────────────────────────────────────
+
+/** Tipos de prueba que la empresa pide en la Agenda (expedientes vigentes del NIT, incluidos los ya facturados). */
+async function tiposAgendaDeNit(nit: string): Promise<string[]> {
+  const sb = supabase(); if (!sb) return [];
+  const { data, error } = await sb.from('facturacion_expediente').select('tipo_cobrado, componentes').eq('fuente', 'agenda').eq('nit_resuelto', nit).eq('terminado', true).eq('cancelado', false).eq('eliminado', false).limit(2000);
+  if (error || !data) return [];
+  const tipos = new Set<string>();
+  for (const r of data as { tipo_cobrado: string | null; componentes: { tipoPrueba?: string }[] | null }[]) {
+    const t = canonTipoPrueba(r.tipo_cobrado);
+    if (t === 'COMPLETO') { tipos.add('POLIGRAFO'); tipos.add('SOCIOECONOMICO'); } else if (t) tipos.add(t);
+    for (const c of r.componentes ?? []) { const ct = canonTipoPrueba(c?.tipoPrueba); if (ct) tipos.add(ct); }
+  }
+  return [...tipos].sort();
+}
+
+export interface PlanGenerarCliente extends PlanGenerar { razonSocial: string; tiposAgenda: string[]; resumen: string; existentes: number }
+
+/** Qué se crearía para un NIT (plantilla + lo que pide en la Agenda + extras), sin escribir nada. */
+export async function planGenerarTarifas(nit: string, opts: { tiposExtra?: string[]; incluirAgenda?: boolean } = {}): Promise<PlanGenerarCliente | { error: string }> {
+  const k = nitComparable(nit);
+  if (!k || nitEsPlaceholder(k)) return { error: 'El NIT es requerido (no vale 0 ni CF).' };
+  const [todas, tiposAgenda] = await Promise.all([getTarifario(), opts.incluirAgenda === false ? Promise.resolve([] as string[]) : tiposAgendaDeNit(k)]);
+  const delNit = todas.filter(t => nitComparable(t.nit) === k);
+  const plan = planGenerar(k, delNit, tiposAgenda, opts.tiposExtra ?? []);
+  const razonSocial = delNit.find(t => t.razonSocial)?.razonSocial || (await getClientes().catch(() => [])).find(c => nitComparable(c.nit) === k)?.name || '';
+  return { ...plan, razonSocial, tiposAgenda, resumen: resumenPlan(plan), existentes: delNit.length };
+}
+
+export type GenerarResult = { ok: true; creadas: number; omitidas: number; resumen: string; nit: string; razonSocial: string } | { ok: false; error: string };
+
+/** Crea en Q0 (por la RPC, con bitácora 'alta') las filas del plan. Idempotente: una segunda corrida crea 0. */
+export async function generarTarifasCliente(input: { nit: string; razonSocial?: string; tiposExtra?: string[]; incluirAgenda?: boolean }, actor: string): Promise<GenerarResult> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'El tarifario requiere el backend Supabase.' };
+  const plan = await planGenerarTarifas(input.nit, { tiposExtra: input.tiposExtra, incluirAgenda: input.incluirAgenda });
+  if ('error' in plan) return { ok: false, error: plan.error };
+  const razon = normalizarTexto(input.razonSocial) || plan.razonSocial || '';
+  let creadas = 0;
+  for (const f of plan.filas) {
+    const r = await insertarFila(sb, { nit: plan.nit, razon_social: razon || null, tipo_prueba: f.tipoPrueba, categoria: f.categoria, territorio: f.territorio, monto: 0, anio: String(new Date().getFullYear()), activo: true }, actor, 'generadas en Q0 para completar el tarifario del cliente');
+    if ('error' in r) { if (!/uq_tarifario_llave/.test(r.error)) return { ok: false, error: `Se crearon ${creadas} y falló ${f.tipoPrueba} ${f.categoria} ${f.territorio}: ${r.error}` }; continue; }
+    creadas++;
+  }
+  return { ok: true, creadas, omitidas: plan.omitidas.length, resumen: plan.resumen, nit: plan.nit, razonSocial: razon };
 }
 
 /**

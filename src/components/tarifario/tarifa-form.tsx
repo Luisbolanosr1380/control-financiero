@@ -12,7 +12,7 @@ import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { crearTarifaAction, verificarDuplicadoTarifaAction } from '@/app/(app)/tarifario/actions';
-import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, canonCategoria, canonTerritorio, canonTipoPrueba } from '@/lib/tarifario/canon';
+import { CATEGORIAS, ETIQUETA_FORMA, TERRITORIOS, TIPOS_PRUEBA, UNICA, canonCategoria, canonTerritorio, canonTipoPrueba, formaPrecio, usaCategoria, usaTerritorio } from '@/lib/tarifario/canon';
 import { nitComparable } from '@/lib/clientes/nit';
 import type { Tarifa } from '@/lib/tarifario/lookup';
 
@@ -42,8 +42,12 @@ export function TarifaForm({ onClose, tarifas, inicial }: Props) {
   }, [onClose, loading]);
 
   const tipoFinal = tipo === '__otro' ? tipoOtro : tipo;
+  // FORMAS DE PRECIO: matriz pide categoría y territorio; por territorio solo territorio; único ninguna (se guardan como UNICA).
+  const forma = formaPrecio(tipoFinal);
+  const categoriaEf = usaCategoria(forma) ? categoria : UNICA;
+  const territoriosEf = usaTerritorio(forma) ? territorios : [UNICA];
   const montoNum = Number(String(monto).replace(/,/g, ''));
-  const valido = nitComparable(nit).length > 0 && tipoFinal.trim().length > 0 && categoria.trim().length > 0 && territorios.length > 0 && monto.trim() !== '' && Number.isFinite(montoNum) && montoNum >= 0;
+  const valido = nitComparable(nit).length > 0 && tipoFinal.trim().length > 0 && categoriaEf.trim().length > 0 && territoriosEf.length > 0 && monto.trim() !== '' && Number.isFinite(montoNum) && montoNum >= 0;
 
   // Razón social: la sugiere el tarifario si el NIT ya tiene tarifas.
   const sugerirRazon = () => {
@@ -55,26 +59,26 @@ export function TarifaForm({ onClose, tarifas, inicial }: Props) {
     setDuplicado(null); setConfirmar(null);
     if (!nitComparable(nit) || !tipoFinal || !categoria) return;
     try {
-      for (const ter of territorios) {
-        const d = await verificarDuplicadoTarifaAction({ nit, tipoPrueba: tipoFinal, categoria, territorio: ter });
+      for (const ter of territoriosEf) {
+        const d = await verificarDuplicadoTarifaAction({ nit, tipoPrueba: tipoFinal, categoria: categoriaEf, territorio: ter });
         if (d) { setDuplicado(d); return; }
       }
     } catch { /* el servidor revalida al guardar */ }
   };
-  useEffect(() => { void revisarDuplicado(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tipoFinal, categoria, territorios.join('|')]);
+  useEffect(() => { void revisarDuplicado(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [tipoFinal, categoriaEf, territoriosEf.join('|')]);
 
   const guardar = async (confirmarDuplicado = false) => {
     if (!valido) return;
     setLoading(true);
     try {
       let creadas = 0;
-      for (const ter of territorios) {
-        const r = await crearTarifaAction({ nit, razonSocial: razonSocial || undefined, tipoPrueba: tipoFinal, categoria, territorio: ter, monto: montoNum, anio, confirmarDuplicado });
+      for (const ter of territoriosEf) {
+        const r = await crearTarifaAction({ nit, razonSocial: razonSocial || undefined, tipoPrueba: tipoFinal, categoria: categoriaEf, territorio: ter, monto: montoNum, anio, confirmarDuplicado });
         if (r.ok) { creadas++; continue; }
         if (r.duplicado) { setDuplicado(r.duplicado); setConfirmar({ descripcion: r.duplicado.descripcion }); if (creadas) router.refresh(); return; }
         toast.error(r.error); if (creadas) router.refresh(); return;
       }
-      toast.success(creadas === 1 ? `Tarifa creada: ${canonTipoPrueba(tipoFinal)} · ${canonCategoria(categoria)} · Q${montoNum.toFixed(2)}${montoNum === 0 ? ' (sin tarifa definida)' : ''}` : `${creadas} tarifas creadas (${territorios.map(canonTerritorio).join(' y ')}).`);
+      toast.success(creadas === 1 ? `Tarifa creada: ${canonTipoPrueba(tipoFinal)}${usaCategoria(forma) ? ` · ${canonCategoria(categoria)}` : ''}${forma === 'unico' ? ' · precio único' : ''} · Q${montoNum.toFixed(2)}${montoNum === 0 ? ' (sin tarifa definida)' : ''}` : `${creadas} tarifas creadas (${territoriosEf.map(canonTerritorio).join(' y ')}).`);
       onClose(); router.refresh();
     } catch (e) { toast.error(e instanceof Error ? e.message : 'Error de red'); }
     finally { setLoading(false); }
@@ -107,22 +111,31 @@ export function TarifaForm({ onClose, tarifas, inicial }: Props) {
               </select>
               {tipo === '__otro' && <input aria-label="Otro tipo de prueba" type="text" className="input" style={{ marginTop: 6 }} placeholder="Nombre del tipo" value={tipoOtro} onChange={e => setTipoOtro(e.target.value)} disabled={loading} />}
             </div>
-            <div className="field" style={{ margin: 0 }}>
-              <label className="label" htmlFor="tf-cat">Categoría *</label>
-              <select id="tf-cat" className="input" value={categoria} onChange={e => setCategoria(e.target.value)} disabled={loading}>
-                {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
-              </select>
-            </div>
-            <div className="field" style={{ margin: 0, gridColumn: '1 / -1' }}>
-              <span className="label">Territorio * <span style={{ color: 'var(--ink-4)', fontWeight: 400 }}>(los dos = mismo precio en ambos)</span></span>
-              <div style={{ display: 'flex', gap: 16, fontSize: 13, marginTop: 4 }}>
-                {TERRITORIOS.map(t => (
-                  <label key={t} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                    <input type="checkbox" checked={territorios.includes(t)} onChange={e => setTerritorios(e.target.checked ? [...territorios, t] : territorios.filter(x => x !== t))} disabled={loading} /> {t}
-                  </label>
-                ))}
+            {usaCategoria(forma) ? (
+              <div className="field" style={{ margin: 0 }}>
+                <label className="label" htmlFor="tf-cat">Categoría *</label>
+                <select id="tf-cat" className="input" value={categoria} onChange={e => setCategoria(e.target.value)} disabled={loading}>
+                  {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
               </div>
-            </div>
+            ) : (
+              <div className="field" style={{ margin: 0 }} data-forma={forma}>
+                <span className="label">Forma de precio</span>
+                <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginTop: 6, lineHeight: 1.4 }}><strong>{ETIQUETA_FORMA[forma]}</strong>: {forma === 'unico' ? 'sin categoría ni territorio; un solo precio para el cliente.' : 'sin categoría; un precio por territorio.'}</div>
+              </div>
+            )}
+            {usaTerritorio(forma) && (
+              <div className="field" style={{ margin: 0, gridColumn: '1 / -1' }}>
+                <span className="label">Territorio * <span style={{ color: 'var(--ink-4)', fontWeight: 400 }}>(los dos = mismo precio en ambos)</span></span>
+                <div style={{ display: 'flex', gap: 16, fontSize: 13, marginTop: 4 }}>
+                  {TERRITORIOS.map(t => (
+                    <label key={t} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                      <input type="checkbox" checked={territorios.includes(t)} onChange={e => setTerritorios(e.target.checked ? [...territorios, t] : territorios.filter(x => x !== t))} disabled={loading} /> {t}
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="field" style={{ margin: 0 }}>
               <label className="label" htmlFor="tf-monto">Monto sin IVA (Q) *</label>
               <input id="tf-monto" type="text" inputMode="decimal" className="input num" placeholder="0.00" value={monto} onChange={e => setMonto(e.target.value)} disabled={loading} />

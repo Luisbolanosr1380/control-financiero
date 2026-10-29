@@ -23,6 +23,7 @@ import { filtrarExpedientes, mesesDisponibles, type FiltroCobro } from '@/lib/fa
 import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import type { GrupoDetalle } from '@/lib/db/facturacion-agenda';
 import { ReintentarWritebackButton } from './reintentar-writeback-button';
+import { GenerarTarifas } from '@/components/tarifario/generar-tarifas';
 
 interface Props { datos: GrupoDetalle; writeback: boolean; configurada: boolean; montoModo: 'con_iva' | 'sin_iva' }
 
@@ -38,6 +39,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
   const [soloListos, setSoloListos] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [dialogo, setDialogo] = useState(false);
+  const [generando, setGenerando] = useState(false);
   const [ultima, setUltima] = useState<{ noFactura: string; facturaAppId: string; total: number; writeback: { estado: WritebackEstado; detalle: string } } | null>(null);
 
   const exps = datos.expedientes;
@@ -68,10 +70,12 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
           </div>
         </div>
         <div className="page-actions">
+          {datos.nit && sinTarifa > 0 && puedeFacturar && !generando && <button className="btn btn-secondary" onClick={() => setGenerando(true)} data-accion="generar-tarifas"><I.Plus size={13} /> Generar tarifas faltantes</button>}
           {datos.nit && <Link href={`/tarifario/${encodeURIComponent(datos.nit)}`} className="btn btn-ghost"><I.Coins size={13} /> Tarifario del cliente</Link>}
         </div>
       </div>
 
+      {generando && datos.nit && <GenerarTarifas nit={datos.nit} razonSocial={datos.nombre} modo="tarjeta" />}
       {datos.noFactura && <NoFacturaBanner datos={datos} puede={puedeFacturar} />}
       {!datos.nit && !datos.noFactura && puedeFacturar && <MapearCliente datos={datos} />}
       {!datos.nit && !datos.noFactura && !puedeFacturar && <div className="card" role="status" style={{ borderColor: 'var(--wine)', marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Esta empresa de la Agenda todavía no está mapeada a un cliente: un admin o contador tiene que mapearla antes de facturar.</div></div>}

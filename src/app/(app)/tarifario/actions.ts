@@ -3,8 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
 import {
-  activarTarifa, aprobarTarifa, aprobarTarifasPorNit, crearTarifa, editarTarifa, listarHistorialTarifa, resolverTarifaExpediente, verificarDuplicadoTarifa,
-  type AprobarLoteResult, type TarifaInput, type TarifaResult,
+  activarTarifa, aprobarTarifa, aprobarTarifasPorNit, crearTarifa, editarTarifa, generarTarifasCliente, listarHistorialTarifa, planGenerarTarifas, resolverTarifaExpediente, verificarDuplicadoTarifa,
+  type AprobarLoteResult, type GenerarResult, type PlanGenerarCliente, type TarifaInput, type TarifaResult,
 } from '@/lib/db/tarifario';
 import type { HistorialTarifa } from '@/lib/tarifario/antiguedad';
 import type { Expediente, ResultadoLookup } from '@/lib/tarifario/lookup';
@@ -69,4 +69,19 @@ export async function resolverTarifaAction(exp: Expediente): Promise<ResultadoLo
 export async function historialTarifaAction(id: string): Promise<HistorialTarifa[]> {
   await exigir('ver');
   return listarHistorialTarifa(id);
+}
+
+/** GENERAR TARIFAS: qué se crearía para un NIT (plantilla + lo que pide en la Agenda). Consultar = 'ver'. */
+export async function planGenerarTarifasAction(nit: string, tiposExtra: string[] = []): Promise<PlanGenerarCliente | { error: string }> {
+  await exigir('ver');
+  return planGenerarTarifas(nit, { tiposExtra });
+}
+
+/** GENERAR TARIFAS: crea en Q0 las filas faltantes según la forma de cada servicio (mismo permiso que crear una). */
+export async function generarTarifasClienteAction(input: { nit: string; razonSocial?: string; tiposExtra?: string[] }): Promise<GenerarResult> {
+  const permiso = await autorizar('catalogos');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await generarTarifasCliente(input, permiso.email);
+  if (r.ok) { revalidatePath('/tarifario', 'layout'); revalidatePath('/por-facturar', 'layout'); }
+  return r;
 }

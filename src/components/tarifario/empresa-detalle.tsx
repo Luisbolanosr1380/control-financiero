@@ -19,6 +19,7 @@ import type { Tarifa } from '@/lib/tarifario/lookup';
 import { aprobablesDe, semaforoDe } from '@/lib/tarifario/resumen';
 import { fechaDesdeTexto, precioDesdeMasAntiguo, type AntiguedadPrecio } from '@/lib/tarifario/antiguedad';
 import { TarifasTabla } from './tarifas-tabla';
+import { GenerarTarifas } from './generar-tarifas';
 
 interface Props { nit: string; tarifas: Tarifa[]; antiguedad: Record<string, AntiguedadPrecio>; umbralMeses: number }
 
@@ -27,6 +28,7 @@ export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses }: Props)
   const puede = usePuede();
   const puedeAprobar = puede('catalogos');
   const [confirmando, setConfirmando] = useState(false);
+  const [generando, setGenerando] = useState(false);
   const [busy, setBusy] = useState(false);
   const activas = tarifas.filter(t => t.activo);
   const razonSocial = tarifas.find(t => t.razonSocial)?.razonSocial ?? '';
@@ -55,6 +57,7 @@ export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses }: Props)
           <div className="page-subtitle"><span className="num">NIT {nit}</span> · precios sin IVA por tipo de prueba, categoría y territorio.</div>
         </div>
         <div className="page-actions">
+          {puedeAprobar && !confirmando && !generando && <button className="btn btn-secondary" onClick={() => setGenerando(true)} data-accion="generar-tarifas"><I.Plus size={13} /> Generar tarifas faltantes</button>}
           {puedeAprobar && !confirmando && (
             <button className="btn btn-primary" disabled={aprobables.length === 0 || busy} title={aprobables.length === 0 ? 'No hay tarifas pendientes con monto' : undefined} onClick={() => setConfirmando(true)}>
               <I.Check size={13} /> Aprobar todas las de este cliente{aprobables.length ? ` (${aprobables.length})` : ''}
@@ -62,6 +65,8 @@ export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses }: Props)
           )}
         </div>
       </div>
+
+      {generando && <GenerarTarifas nit={nit} razonSocial={razonSocial} modo="tarjeta" />}
 
       {confirmando && (
         <div role="alertdialog" aria-label="Confirmar aprobación en lote" className="card" style={{ marginBottom: 14, borderColor: 'var(--olive)' }}>

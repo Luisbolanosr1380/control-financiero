@@ -17,7 +17,33 @@ export function normalizarTexto(s: string | null | undefined): string {
 const compacto = (s: string | null | undefined) => normalizarTexto(s).replace(/[^A-Z0-9]/g, '');
 
 export const TIPOS_PRUEBA = ['POLIGRAFO', 'SOCIOECONOMICO', 'COMPLETO', 'POLIGRAFO BASIC', 'INFORNET', 'VISITA DOMICILIAR', 'ENTREVISTA FORENSE', 'SOCIOECONOMICO EMPRESARIAL'] as const;
-export const CATEGORIAS   = ['PRE EMPLEO', 'RUTINA', 'ESPECIFICO', 'INFORNET'] as const;
+export const CATEGORIAS   = ['PRE EMPLEO', 'RUTINA', 'ESPECIFICO'] as const;
+
+/**
+ * FORMAS DE PRECIO (confirmadas con el CFO): no todos los servicios se cobran con la misma llave.
+ *  - matriz:     NIT × tipo × categoría × territorio (POLIGRAFO, SOCIOECONOMICO, BASIC, FORENSE, VISITA; default).
+ *  - territorio: NIT × tipo × territorio, sin categoría (SOCIOECONOMICO EMPRESARIAL).
+ *  - unico:      NIT × tipo, sin categoría ni territorio (INFORNET).
+ * Las dimensiones que no aplican se guardan con el centinela 'UNICA' (las columnas siguen NOT NULL y la
+ * clave única nit × tipo × categoría × territorio sigue sirviendo; sin migración).
+ */
+export type FormaPrecio = 'matriz' | 'territorio' | 'unico';
+export const UNICA = 'UNICA';
+const FORMA_POR_TIPO: Record<string, FormaPrecio> = { 'SOCIOECONOMICO EMPRESARIAL': 'territorio', INFORNET: 'unico' };
+/** Forma de precio de un tipo de prueba (canónico o no). Lo no declarado (BACKGROUND CHECK, MIDOT…) es matriz hasta que el CFO decida. */
+export const formaPrecio = (tipoPrueba: string | null | undefined): FormaPrecio => FORMA_POR_TIPO[canonTipoPrueba(tipoPrueba)] ?? 'matriz';
+export const usaCategoria  = (forma: FormaPrecio): boolean => forma === 'matriz';
+export const usaTerritorio = (forma: FormaPrecio): boolean => forma !== 'unico';
+export const ETIQUETA_FORMA: Record<FormaPrecio, string> = { matriz: 'Por categoría y territorio', territorio: 'Por territorio (sin categoría)', unico: 'Precio único por cliente' };
+export const esUnica = (v: string | null | undefined): boolean => normalizarTexto(v) === UNICA;
+/** Texto de una dimensión para la pantalla: el centinela se muestra como "—". */
+export const dimTexto = (v: string | null | undefined): string => (esUnica(v) ? '—' : normalizarTexto(v));
+
+/** Llave EFECTIVA de una tarifa según la forma de su tipo: las dimensiones que no aplican quedan en UNICA. */
+export function llaveEfectiva(t: { tipoPrueba: string; categoria: string | null | undefined; territorio: string | null | undefined }): { tipoPrueba: string; categoria: string; territorio: string; forma: FormaPrecio } {
+  const tipoPrueba = canonTipoPrueba(t.tipoPrueba); const forma = formaPrecio(tipoPrueba);
+  return { tipoPrueba, forma, categoria: usaCategoria(forma) ? canonCategoria(t.categoria) : UNICA, territorio: usaTerritorio(forma) ? canonTerritorio(t.territorio) : UNICA };
+}
 export const TERRITORIOS  = ['METROPOLITANA', 'DEPARTAMENTAL'] as const;
 
 /** Tipo de prueba canónico. "COMPLETO" = polígrafo + socioeconómico (lo arma el motor). */
@@ -39,6 +65,7 @@ export function canonTipoPrueba(s: string | null | undefined): string {
 export function canonCategoria(s: string | null | undefined): string {
   const c = compacto(s);
   if (!c) return '';
+  if (c === 'UNICA') return 'UNICA';   // centinela de las formas sin categoría
   if (/^PRE/.test(c))          return 'PRE EMPLEO';     // PREEMPLEO, PREEMEPLEO, PREEMMPLEO, PREEE…
   if (c.includes('ESPECIF'))   return 'ESPECIFICO';     // ESPECIFICA / ESPECÍFICO
   if (/^RUTIN/.test(c))        return 'RUTINA';
@@ -50,6 +77,7 @@ export function canonCategoria(s: string | null | undefined): string {
 export function canonTerritorio(s: string | null | undefined): string {
   const c = compacto(s);
   if (!c) return '';
+  if (c === 'UNICA') return 'UNICA';   // centinela de la forma 'unico'
   if (/^(METRO|LOCAL|CAPITAL|CIUDAD|GUATEMALA|GT)/.test(c) || c.includes('METROPOL')) return 'METROPOLITANA';
   if (/^(DEPART|DEPTO|DPTO|INTERIOR)/.test(c) || c.includes('DEPARTAMENT'))          return 'DEPARTAMENTAL';
   return normalizarTexto(s);
@@ -59,7 +87,8 @@ export interface LlaveTarifa { nit: string | null | undefined; tipoPrueba: strin
 
 /** Llave canónica de una tarifa: NIT comparable + tipo + categoría + territorio. */
 export function llaveTarifa(t: LlaveTarifa): string {
-  return [nitComparable(t.nit), canonTipoPrueba(t.tipoPrueba), canonCategoria(t.categoria), canonTerritorio(t.territorio)].join('|');
+  const e = llaveEfectiva(t);
+  return [nitComparable(t.nit), e.tipoPrueba, e.categoria, e.territorio].join('|');
 }
 
 /** Q0 (o negativo) NO es gratis: es "sin tarifa definida". */
