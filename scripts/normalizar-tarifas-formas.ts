@@ -2,11 +2,11 @@
  * TARIFARIO · Normalización a las FORMAS DE PRECIO (canon.ts).
  *
  * Las tarifas de servicios de precio único (INFORNET, PDA, ENTREVISTA GERENCIAL /
- * ESPECIALISTA, INSIGHT, MIDOT) o por territorio (SOCIO EMPRESARIAL) que quedaron
- * con categoría/territorio "de matriz" (p. ej.
+ * ESPECIALISTA, INSIGHT, MIDOT), por territorio (SOCIO EMPRESARIAL) o por
+ * categoría (SOCIO VIRTUAL) que quedaron con categoría/territorio "de matriz" (p. ej.
  * INFORNET · PRE EMPLEO · METROPOLITANA, o categoría 'INFORNET') se llevan al
- * centinela: categoria = 'UNICA' (y territorio = 'UNICA' para único). Por cada
- * NIT + tipo (+ territorio si aplica) se deja UNA fila activa (se prefiere la
+ * centinela: categoria = 'UNICA' (y territorio = 'UNICA' para único y por categoría). Por cada
+ * NIT + tipo (+ territorio o categoría si aplica) se deja UNA fila activa (se prefiere la
  * aprobada; si no, la más vieja) y las demás se DESACTIVAN (nunca se borra:
  * queda el histórico). Si las filas del grupo tienen montos distintos es un
  * conflicto: se reporta y no se toca (igual que los conflictos del tarifario).
@@ -38,7 +38,7 @@ const ACTOR = 'normalizacion-formas@tarifario';
   const grupos = new Map<string, typeof candidatas>();
   for (const t of candidatas) { const k = llaveTarifa(t); grupos.set(k, [...(grupos.get(k) ?? []), t]); }
   console.log(`\nNormalización de formas de precio · ${BASE.toUpperCase()} · ${APLICAR ? 'APLICANDO' : 'dry-run'}`);
-  console.log(`  ${candidatas.length} tarifa(s) activa(s) de servicios único / por territorio en ${grupos.size} llave(s) efectiva(s)\n`);
+  console.log(`  ${candidatas.length} tarifa(s) activa(s) de servicios único / por territorio / por categoría en ${grupos.size} llave(s) efectiva(s)\n`);
   let cambios = 0, desactivadas = 0, conflictos = 0, enOrden = 0;
   for (const [k, filas] of grupos) {
     const e = llaveEfectiva(filas[0]);

@@ -17,7 +17,7 @@ import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
 import { csvEscape } from '@/lib/facturacion/reporte-csv';
 import { activarTarifaAction, aprobarTarifaAction, editarTarifaAction, historialTarifaAction } from '@/app/(app)/tarifario/actions';
-import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, canonCategoria, canonTerritorio, canonTipoPrueba, dimTexto, esSinTarifa, esUnica } from '@/lib/tarifario/canon';
+import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, canonCategoria, canonTerritorio, canonTipoPrueba, dimTexto, esSinTarifa, esUnica, formaPrecio } from '@/lib/tarifario/canon';
 import { tarifasDuplicadas, type Tarifa } from '@/lib/tarifario/lookup';
 import { ETIQUETAS_ACCION, UMBRAL_ESTANCADA_MESES_DEFAULT, crecimiento, puntosPrecio, textoAntiguedad, type AntiguedadPrecio, type HistorialTarifa } from '@/lib/tarifario/antiguedad';
 import { TarifaForm } from './tarifa-form';
@@ -140,7 +140,7 @@ export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, an
                     <td><div className="cell-strong" style={{ fontSize: 12.5 }}>{t.razonSocial || '—'}</div><div className="num cell-mute" style={{ fontSize: 11 }}>NIT {t.nit}{duplicadas.has(t.id) && <span className="badge badge-wine" style={{ fontSize: 9.5, marginLeft: 6 }}>Repetida</span>}</div></td>
                     <td style={{ fontSize: 12 }}>{canonTipoPrueba(t.tipoPrueba)}{canonTipoPrueba(t.tipoPrueba) !== t.tipoPrueba.trim().toUpperCase() && <span className="cell-mute" style={{ fontSize: 10.5 }}> ({t.tipoPrueba})</span>}</td>
                     <td style={{ fontSize: 12 }} title={esUnica(t.categoria) ? 'Sin categoría: la forma de precio de este servicio no la usa' : undefined}>{dimTexto(t.categoria)}{!esUnica(t.categoria) && canonCategoria(t.categoria) !== t.categoria.trim().toUpperCase() && <span className="cell-mute" style={{ fontSize: 10.5 }}> ({t.categoria})</span>}</td>
-                    <td style={{ fontSize: 12 }} title={esUnica(t.territorio) ? 'Sin territorio: precio único por cliente' : undefined}>{dimTexto(t.territorio)}</td>
+                    <td style={{ fontSize: 12 }} title={esUnica(t.territorio) ? (formaPrecio(t.tipoPrueba) === 'categoria' ? 'Sin territorio: precio por categoría, el mismo en metro y depto' : 'Sin territorio: precio único por cliente') : undefined}>{dimTexto(t.territorio)}</td>
                     <td className="num" style={{ whiteSpace: 'nowrap' }}>
                       {editando === t.id ? (
                         <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>

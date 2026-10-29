@@ -3,7 +3,7 @@
 /**
  * TARIFARIO · "Generar tarifas" para un cliente: pide el plan al servidor (plantilla
  * polígrafo + socio, más los servicios que la empresa pide en la Agenda, según la
- * FORMA de cada uno: matriz / por territorio / único), lo muestra para confirmar y
+ * FORMA de cada uno: matriz / por territorio / por categoría / único), lo muestra para confirmar y
  * crea las filas en Q0. Confirmación en línea, sin diálogos del navegador.
  * Se usa en el detalle del tarifario, en el hub (con NIT a mano) y en "Por facturar".
  */

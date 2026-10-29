@@ -3,12 +3,13 @@
  *
  * Arma las filas en Q0 que le faltan a un NIT según la FORMA de cada servicio
  * (canon.ts): matriz → categorías × territorios; por territorio → 2 filas con
- * categoría UNICA; único → 1 fila UNICA/UNICA. Plantilla estándar (polígrafo +
+ * categoría UNICA; por categoría → 1 fila por categoría del socio (PRE EMPLEO y
+ * RUTINA) con territorio UNICA; único → 1 fila UNICA/UNICA. Plantilla estándar (polígrafo +
  * socio) más los tipos que la empresa pide en la Agenda (así CIBUS / APOLO
  * reciben socio empresarial e infornet aunque no estén en la plantilla). No
  * duplica: lo que ya existe (activo o inactivo, por llave efectiva) se omite.
  */
-import { CATEGORIAS, TERRITORIOS, UNICA, canonTipoPrueba, formaPrecio, llaveTarifa, type FormaPrecio } from './canon';
+import { CATEGORIAS, CATEGORIAS_SOCIO, TERRITORIOS, UNICA, canonTipoPrueba, formaPrecio, llaveTarifa, type FormaPrecio } from './canon';
 import type { Tarifa } from './lookup';
 
 export interface PlanFila { tipoPrueba: string; categoria: string; territorio: string; forma: FormaPrecio; origen: 'plantilla' | 'agenda' | 'extra' }
@@ -17,7 +18,7 @@ export interface PlanGenerar { nit: string; filas: PlanFila[]; omitidas: PlanFil
 /** Plantilla estándar: polígrafo (3 categorías × 2 territorios) + socioeconómico (2 × 2) = 10 filas. */
 export const PLANTILLA: ReadonlyArray<{ tipoPrueba: string; categorias: readonly string[] }> = [
   { tipoPrueba: 'POLIGRAFO', categorias: ['PRE EMPLEO', 'RUTINA', 'ESPECIFICO'] },
-  { tipoPrueba: 'SOCIOECONOMICO', categorias: ['PRE EMPLEO', 'RUTINA'] },
+  { tipoPrueba: 'SOCIOECONOMICO', categorias: CATEGORIAS_SOCIO },
 ];
 
 /** Filas que corresponden a un tipo según su forma (categorías de la plantilla o las 3 estándar). */
@@ -26,6 +27,8 @@ export function filasDeTipo(tipoPrueba: string, origen: PlanFila['origen'], cate
   const forma = formaPrecio(tipo);
   if (forma === 'unico') return [{ tipoPrueba: tipo, categoria: UNICA, territorio: UNICA, forma, origen }];
   if (forma === 'territorio') return TERRITORIOS.map(ter => ({ tipoPrueba: tipo, categoria: UNICA, territorio: ter, forma, origen }));
+  // Por categoría (SOCIO VIRTUAL): una fila por categoría del socio (ESPECIFICO no aplica), territorio UNICA.
+  if (forma === 'categoria') return (categorias ?? CATEGORIAS_SOCIO).map(cat => ({ tipoPrueba: tipo, categoria: cat, territorio: UNICA, forma, origen }));
   const cats = categorias ?? CATEGORIAS;
   return cats.flatMap(cat => TERRITORIOS.map(ter => ({ tipoPrueba: tipo, categoria: cat, territorio: ter, forma, origen })));
 }
@@ -55,7 +58,8 @@ export function planGenerar(nit: string, existentes: readonly Tarifa[], tiposAge
   return { nit, filas, omitidas, porTipo };
 }
 
-/** Resumen legible: "POLIGRAFO 6 · SOCIOECONOMICO 4 · SOCIOECONOMICO EMPRESARIAL 2 (por territorio) · INFORNET 1 (único)". */
+/** Resumen legible: "POLIGRAFO 6 · SOCIOECONOMICO 4 · SOCIOECONOMICO EMPRESARIAL 2 (por territorio) · SOCIOECONOMICO VIRTUAL 2 (por categoría) · INFORNET 1 (único)". */
+const NOTA_FORMA: Record<FormaPrecio, string> = { matriz: '', territorio: ' (por territorio)', categoria: ' (por categoría)', unico: ' (único)' };
 export function resumenPlan(plan: PlanGenerar): string {
-  return Object.entries(plan.porTipo).map(([t, n]) => { const f = formaPrecio(t); return `${t} ${n}${f === 'unico' ? ' (único)' : f === 'territorio' ? ' (por territorio)' : ''}`; }).join(' · ') || 'nada que crear';
+  return Object.entries(plan.porTipo).map(([t, n]) => `${t} ${n}${NOTA_FORMA[formaPrecio(t)]}`).join(' · ') || 'nada que crear';
 }
