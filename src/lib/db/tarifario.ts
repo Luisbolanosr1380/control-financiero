@@ -210,9 +210,12 @@ async function tiposAgendaDeNit(nit: string): Promise<string[]> {
   if (error || !data) return [];
   const tipos = new Set<string>();
   for (const r of data as { tipo_cobrado: string | null; componentes: { tipoPrueba?: string }[] | null }[]) {
-    const t = canonTipoPrueba(r.tipo_cobrado);
-    if (t === 'COMPLETO') { tipos.add('POLIGRAFO'); tipos.add('SOCIOECONOMICO'); } else if (t) tipos.add(t);
-    for (const c of r.componentes ?? []) { const ct = canonTipoPrueba(c?.tipoPrueba); if (ct) tipos.add(ct); }
+    // tipo_cobrado = un servicio o una lista "A + B" (completo en un registro). 'COMPLETO' suelto solo queda en filas viejas sin re-resolver: se expande.
+    for (const parte of String(r.tipo_cobrado ?? '').split(' + ')) {
+      const t = canonTipoPrueba(parte);
+      if (t === 'COMPLETO') { tipos.add('POLIGRAFO'); tipos.add('SOCIOECONOMICO'); } else if (t) tipos.add(t);
+    }
+    for (const c of r.componentes ?? []) { const ct = canonTipoPrueba(c?.tipoPrueba); if (ct && ct !== 'COMPLETO') tipos.add(ct); }
   }
   return [...tipos].sort();
 }

@@ -5,9 +5,15 @@
  *  - Cola = terminado, no cancelado, no eliminado, sin factura y con el cobro
  *    todavía PENDIENTE / sin estado del lado de la Agenda.
  *  - PSICOMETRICAS se excluye por completo (trato aparte): ni como "sin tarifa".
- *  - tipo_prueba ← tipoPrueba (canon existente); procesoSolicitado decide si se
- *    cobra uno (SOLO POLIGRAFO / SOLO SOCIOECONOMICO) o los dos (COMPLETO =
- *    POLIGRAFO + SOCIOECONOMICO, lo arma el motor).
+ *  - El PRECIO sale del `tipoPrueba` de la fila, NUNCA de `procesoSolicitado`
+ *    (fix "COMPLETO doble"): la Agenda parte un COMPLETO en DOS expedientes
+ *    (uno POLIGRAFO, otro SOCIOECONOMICO, ambos con procesoSolicitado =
+ *    COMPLETO). Cada fila cobra SOLO su servicio; entre las dos suman el
+ *    completo. La suma solo nace de una LISTA en tipoPrueba ("POLIGRAFO,
+ *    SOCIOECONOMICO" = completo entero en un registro). "COMPLETO" suelto no
+ *    es un servicio → sin tarifa (dato a limpiar en la Agenda).
+ *    procesoSolicitado solo decide cuando la fila no trae tipoPrueba y nombra
+ *    UN servicio ("SOLO POLIGRAFO").
  *  - categoría ← categoriaPrueba (canon). null → "sin tarifa".
  *  - territorio ← deptoVisita: GUATEMALA → METROPOLITANA; cualquier otro →
  *    DEPARTAMENTAL; vacío → el motor resuelve si el precio es igual en ambos.
@@ -35,15 +41,31 @@ export function territorioDesdeDepto(depto: string | null | undefined): '' | 'ME
 }
 
 /**
- * Qué se cobra: COMPLETO → los dos; SOLO X → X; si procesoSolicitado no decide,
- * el tipo de prueba del expediente (canon).
+ * Servicios que cobra la fila, a partir de su `tipoPrueba`:
+ *  - un servicio ("POLIGRAFO") → ese y nada más, aunque procesoSolicitado diga
+ *    COMPLETO (la otra mitad es su propia fila);
+ *  - una lista ("POLIGRAFO, SOCIOECONOMICO") → cada servicio, sin repetir;
+ *    el token "COMPLETO" dentro de la lista no cuenta ("COMPLETO, SOCIOECONOMICO"
+ *    = solo socio);
+ *  - sin tipoPrueba utilizable → procesoSolicitado solo si nombra UN servicio
+ *    ("SOLO POLIGRAFO"); "COMPLETO" suelto → [] (sin tarifa).
  */
+export function serviciosDe(tipoPrueba: string | null | undefined, procesoSolicitado: string | null | undefined): string[] {
+  const partes = String(tipoPrueba ?? '').split(/[,+/;]|\s+Y\s+/i).map(canonTipoPrueba).filter(t => t && t !== 'COMPLETO');
+  const unicos = [...new Set(partes)];
+  if (unicos.length) return unicos;
+  const p = canonTipoPrueba(procesoSolicitado);
+  return p && p !== 'COMPLETO' ? [p] : [];
+}
+
+/** Texto del servicio cobrado: un servicio, o la lista unida con " + " (completo en un registro). '' si no hay. */
 export function tipoCobrado(procesoSolicitado: string | null | undefined, tipoPrueba: string | null | undefined): string {
-  const p = compacto(procesoSolicitado);
-  if (p.includes('COMPLET')) return 'COMPLETO';
-  if (p.startsWith('SOLO')) return canonTipoPrueba(procesoSolicitado);
-  const t = canonTipoPrueba(tipoPrueba);
-  return t || canonTipoPrueba(procesoSolicitado);
+  return serviciosDe(tipoPrueba, procesoSolicitado).join(' + ');
+}
+
+/** La fila es una MITAD de un completo: procesoSolicitado = COMPLETO pero cobra un solo servicio. */
+export function esMitadDeCompleto(e: Pick<ExpedienteAgenda, 'tipoPrueba' | 'procesoSolicitado'>): boolean {
+  return compacto(e.procesoSolicitado).includes('COMPLET') && serviciosDe(e.tipoPrueba, e.procesoSolicitado).length === 1;
 }
 
 /** Categoría del expediente: el doc del 28-oct manda `categoriaPrueba`; `categoria` es el alias viejo. */
@@ -73,7 +95,8 @@ export interface Clasificacion {
 
 /** Clasifica un expediente de la Agenda contra el mapeo de clientes y el tarifario (motor existente). */
 export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio): Clasificacion {
-  const tipo = tipoCobrado(exp.procesoSolicitado, exp.tipoPrueba);
+  const servicios = serviciosDe(exp.tipoPrueba, exp.procesoSolicitado);
+  const tipo = servicios.join(' + ');
   const cat = canonCategoria(categoriaDe(exp));
   const ter = territorioDesdeDepto(exp.deptoVisita);
   const base = { tipoCobrado: tipo, categoriaCanon: cat, territorio: ter, componentes: [] as ComponentePrecio[] };
@@ -82,19 +105,29 @@ export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio)
   if (empresaId && ctx.noFacturaEmpresas?.has(empresaId)) return { ...base, estado: 'excluido_no_factura', nit: null, monto: null, detalle: `La empresa está marcada como "no se factura" por este flujo (${ctx.noFacturaEmpresas.get(empresaId) || 'interno / no aplica'}).` };
   const nit = empresaId ? (ctx.nitPorEmpresa.get(empresaId) ?? null) : null;
   if (!nit) return { ...base, estado: 'cliente_sin_mapear', nit: null, monto: null, detalle: empresaId ? `La empresa "${exp.empresa?.nombre ?? empresaId}" no está mapeada a un cliente de financiero.` : 'El expediente no trae empresa.' };
-  if (!tipo) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: 'El expediente no trae tipo de prueba ni proceso solicitado.' };
-  // Solo las formas "matriz" cobran por categoría: SOCIO EMPRESARIAL (por territorio) e INFORNET (único) resuelven sin ella.
-  if (usaCategoria(formaPrecio(tipo)) && !cat) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: `${tipo} se cobra por categoría y el expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO).` };
-  const r = resolverTarifa(ctx.tarifas, { nit, tipoPrueba: tipo, categoria: cat, territorio: ter || undefined });
-  if (r.estado === 'ok') {
-    const partes = r.componentes ?? [r.tarifa];
-    return {
-      ...base, estado: 'resuelta', nit, monto: round2(r.monto),
-      componentes: partes.map(t => ({ tipoPrueba: canonTipoPrueba(t.tipoPrueba), categoria: canonCategoria(t.categoria), territorio: normalizarTexto(t.territorio), monto: Number(t.monto), tarifarioId: t.id, aprobada: !!t.aprobadoEn })),
-      detalle: r.avisos.join(' '),
-    };
+  if (!servicios.length) {
+    // "COMPLETO" suelto no es un servicio: cada mitad viene en su propia fila con POLIGRAFO o SOCIOECONOMICO.
+    const detalle = compacto(exp.procesoSolicitado).includes('COMPLET')
+      ? 'La fila dice COMPLETO pero no trae el servicio (tipoPrueba): cada mitad de un completo viene en su propia fila como POLIGRAFO o SOCIOECONOMICO. Dato a revisar en la Agenda; no se cobra a ciegas.'
+      : 'El expediente no trae tipo de prueba ni proceso solicitado.';
+    return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle };
   }
-  return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: r.mensaje };
+  // Cada servicio de la fila se cotiza por separado y se SUMA solo si la fila trae varios (lista en tipoPrueba).
+  const partes: Tarifa[] = []; const avisos: string[] = [];
+  const prefijo = (s: string) => (servicios.length > 1 ? `${s}: ` : '');
+  for (const s of servicios) {
+    // Solo las formas "matriz" cobran por categoría: SOCIO EMPRESARIAL (por territorio) e INFORNET (único) resuelven sin ella.
+    if (usaCategoria(formaPrecio(s)) && !cat) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: `${s} se cobra por categoría y el expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO).` };
+    const r = resolverTarifa(ctx.tarifas, { nit, tipoPrueba: s, categoria: cat, territorio: ter || undefined });
+    if (r.estado !== 'ok') return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: prefijo(s) + r.mensaje };
+    partes.push(...(r.componentes ?? [r.tarifa])); avisos.push(...r.avisos);
+  }
+  const monto = round2(partes.reduce((s, t) => s + Number(t.monto), 0));
+  return {
+    ...base, estado: 'resuelta', nit, monto,
+    componentes: partes.map(t => ({ tipoPrueba: canonTipoPrueba(t.tipoPrueba), categoria: canonCategoria(t.categoria), territorio: normalizarTexto(t.territorio), monto: Number(t.monto), tarifarioId: t.id, aprobada: !!t.aprobadoEn })),
+    detalle: [...new Set(avisos)].join(' '),
+  };
 }
 
 /** true si el cobro del lado de la Agenda sigue pendiente (o sin estado). */
@@ -183,7 +216,8 @@ export interface DetalleFactura { idExterno: string; tipoPrueba: string; categor
 
 /**
  * Arma la factura de un grupo de expedientes de UN cliente: un renglón de
- * detalle por servicio (COMPLETO → polígrafo + socio) y una línea por centro
+ * detalle por servicio (una fila con lista "POLIGRAFO + SOCIOECONOMICO" → dos
+ * renglones; cada MITAD de un completo ya es su propia fila) y una línea por centro
  * de costo con subtotal (sin IVA) + IVA 12 % + total. `centroDe(tipo)` decide
  * el centro de cada servicio; si devuelve null, se reporta en `sinCentro`.
  */

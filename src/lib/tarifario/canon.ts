@@ -46,7 +46,12 @@ export function llaveEfectiva(t: { tipoPrueba: string; categoria: string | null 
 }
 export const TERRITORIOS  = ['METROPOLITANA', 'DEPARTAMENTAL'] as const;
 
-/** Tipo de prueba canónico. "COMPLETO" = polígrafo + socioeconómico (lo arma el motor). */
+/**
+ * Tipo de prueba canónico. "COMPLETO" = polígrafo + socioeconómico pedidos JUNTOS en un
+ * mismo texto ("POLIGRAFO, SOCIOECONOMICO"). El motor de la Agenda parte primero la lista
+ * por coma y canoniza cada servicio: una fila cuyo tipoPrueba es un solo servicio nunca
+ * se vuelve COMPLETO por su procesoSolicitado (fix "COMPLETO doble").
+ */
 export function canonTipoPrueba(s: string | null | undefined): string {
   const c = compacto(s);
   if (!c) return '';

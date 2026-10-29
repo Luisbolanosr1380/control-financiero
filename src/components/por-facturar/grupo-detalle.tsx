@@ -16,7 +16,7 @@ import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
 import { crearDetalleAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
-import { armarFactura, centroPorServicio, enCola, facturable } from '@/lib/facturacion-agenda/mapeo';
+import { armarFactura, centroPorServicio, enCola, esMitadDeCompleto, facturable } from '@/lib/facturacion-agenda/mapeo';
 import { filtrarExpedientes, mesesDisponibles, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
 import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import type { GrupoDetalle } from '@/lib/db/facturacion-agenda';
@@ -138,6 +138,28 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
   );
 }
 
+/**
+ * Servicio REAL de la fila (lo que se cobra) y, debajo, el proceso: una mitad de un
+ * COMPLETO dice "COMPLETO · esta fila cobra solo X; la otra mitad es su propia fila"
+ * para que se vea que su precio es el de esa mitad y no el de los dos.
+ */
+function ServicioCell({ e }: { e: ExpedienteLocal }) {
+  const servicio = e.tipoCobrado || e.tipoPrueba || '—';
+  const proceso = (e.procesoSolicitado ?? '').trim();
+  const mitad = esMitadDeCompleto(e);
+  const completoEnUno = /COMPLET/i.test(proceso) && e.tipoCobrado.includes(' + ');
+  const sinServicio = /COMPLET/i.test(proceso) && !e.tipoCobrado;
+  return (
+    <>
+      <div data-servicio={e.tipoCobrado || ''}>{servicio}</div>
+      {mitad && <div className="cell-mute" style={{ fontSize: 11 }} title="La Agenda parte un completo en dos expedientes: uno POLIGRAFO y otro SOCIOECONOMICO. Esta fila cobra solo su servicio; la otra mitad es su propia fila.">COMPLETO · mitad: solo {servicio.toLowerCase()}</div>}
+      {completoEnUno && <div className="cell-mute" style={{ fontSize: 11 }} title="Este registro trae los dos servicios en la misma fila: se cobran los dos.">COMPLETO en un registro</div>}
+      {sinServicio && <div className="cell-mute" style={{ fontSize: 11, color: 'var(--wine)' }}>COMPLETO sin servicio: dato a revisar en la Agenda</div>}
+      {!mitad && !completoEnUno && !sinServicio && proceso && proceso.toUpperCase() !== e.tipoCobrado ? <div className="cell-mute" style={{ fontSize: 11 }}>{proceso}</div> : null}
+    </>
+  );
+}
+
 function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede: boolean; sel: boolean; onToggle: () => void }) {
   const esFacturable = facturable(e);
   const estadoCobro = [e.statusCobroExterno, e.estatusPagoExterno].filter(Boolean).join(' · ') || 'sin estado';
@@ -146,7 +168,7 @@ function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede
       {puede && <td><input type="checkbox" checked={sel} onChange={onToggle} disabled={!esFacturable} aria-label={`Seleccionar ${e.persona || e.idExterno}`} /></td>}
       <td><div className="cell-strong">{e.persona || '—'}</div><div className="cell-mute" style={{ fontSize: 11 }}>{e.puesto || e.idExterno}{e.statusProceso ? ` · ${e.statusProceso}` : ''}</div></td>
       <td className="num" style={{ fontSize: 12 }}>{e.fechaIngreso ?? '—'}</td>
-      <td><div>{e.tipoCobrado || e.tipoPrueba || '—'}</div>{e.procesoSolicitado && e.procesoSolicitado.toUpperCase() !== e.tipoCobrado ? <div className="cell-mute" style={{ fontSize: 11 }}>{e.procesoSolicitado}</div> : null}</td>
+      <td><ServicioCell e={e} /></td>
       <td title={e.categoriaPrueba || 'sin categoría'}>{e.categoriaCanon || <span className="cell-mute">—</span>}</td>
       <td title={e.deptoVisita || 'sin depto. de visita'}>{e.territorioResuelto || <span className="cell-mute">no indicado</span>}</td>
       <td className="num">
