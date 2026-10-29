@@ -20,6 +20,7 @@ import { aprobablesDe, semaforoDe } from '@/lib/tarifario/resumen';
 import { fechaDesdeTexto, precioDesdeMasAntiguo, type AntiguedadPrecio } from '@/lib/tarifario/antiguedad';
 import { TarifasTabla } from './tarifas-tabla';
 import { GenerarTarifas } from './generar-tarifas';
+import { CambiarNitModal } from '@/components/clientes/cambiar-nit-modal';
 
 interface Props { nit: string; tarifas: Tarifa[]; antiguedad: Record<string, AntiguedadPrecio>; umbralMeses: number }
 
@@ -27,6 +28,9 @@ export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses }: Props)
   const router = useRouter();
   const puede = usePuede();
   const puedeAprobar = puede('catalogos');
+  // 023: "Cambiar NIT" por NIT (también sirve para tarifas huérfanas en un NIT sin cliente); al aplicar, navega al NIT nuevo.
+  const puedeCambiarNit = puede('emitir_factura');
+  const [cambiandoNit, setCambiandoNit] = useState(false);
   const [confirmando, setConfirmando] = useState(false);
   const [generando, setGenerando] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -57,6 +61,7 @@ export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses }: Props)
           <div className="page-subtitle"><span className="num">NIT {nit}</span> · precios sin IVA por tipo de prueba, categoría y territorio.</div>
         </div>
         <div className="page-actions">
+          {puedeCambiarNit && !confirmando && <button className="btn btn-ghost" onClick={() => setCambiandoNit(true)} data-accion="cambiar-nit" title="Corregir el NIT de estas tarifas y del cliente, su mapeo, expedientes y detalles, de una sola vez"><I.Refresh size={13} /> Cambiar NIT</button>}
           {puedeAprobar && !confirmando && !generando && <button className="btn btn-secondary" onClick={() => setGenerando(true)} data-accion="generar-tarifas"><I.Plus size={13} /> Generar tarifas faltantes</button>}
           {puedeAprobar && !confirmando && (
             <button className="btn btn-primary" disabled={aprobables.length === 0 || busy} title={aprobables.length === 0 ? 'No hay tarifas pendientes con monto' : undefined} onClick={() => setConfirmando(true)}>
@@ -67,6 +72,7 @@ export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses }: Props)
       </div>
 
       {generando && <GenerarTarifas nit={nit} razonSocial={razonSocial} modo="tarjeta" />}
+      {cambiandoNit && <CambiarNitModal objetivo={{ nitViejo: nit }} nitActual={nit} nombre={razonSocial || `NIT ${nit}`} onClose={() => setCambiandoNit(false)} onHecho={r => router.push(`/tarifario/${encodeURIComponent(r.nitNuevo)}`)} />}
 
       {confirmando && (
         <div role="alertdialog" aria-label="Confirmar aprobación en lote" className="card" style={{ marginBottom: 14, borderColor: 'var(--olive)' }}>

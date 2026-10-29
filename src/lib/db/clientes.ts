@@ -1,12 +1,14 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { dataSource, writeSource } from '../config/data-source';
 import { sbClientesRecords } from '../supabase/records';
-import { insertar, actualizarPorAppId } from '../supabase/writes';
+import { insertar, actualizarPorAppId, rpc } from '../supabase/writes';
 import { CUSTOMERS } from '../mock-data';
 import type { Customer } from '../types';
 import type { FieldSet } from 'airtable';
-import { buscarNitDuplicado, AVISO_NIT } from '../clientes/nit';
+import { buscarNitDuplicado, nitComparable, nitEsPlaceholder, AVISO_NIT } from '../clientes/nit';
 import { limpiarAliases } from '../clientes/buscar';
+import { nitNuevoAceptable, resumenMovidas, type CambioNitResult, type CodigoCambioNit, type MovidasNit, type ObjetivoNit } from '../clientes/cambiar-nit';
+export { resumenMovidas, type CambioNitOk, type CambioNitError, type CambioNitResult, type ChoqueTarifa, type CodigoCambioNit, type MovidasNit, type ObjetivoNit } from '../clientes/cambiar-nit';
 
 // Campos reales de la tabla CLIENTES en Airtable
 const FC = {
@@ -236,5 +238,62 @@ export async function actualizarNombresCliente(clienteId: string, input: Nombres
     const msg = err instanceof Error ? err.message : String(err);
     if (FALTA_020.test(msg)) return { ok: false, error: 'Falta aplicar la migración 020 (nombre comercial / marcas) en esta base.' };
     return { ok: false, error: `No se pudo actualizar: ${msg}` };
+  }
+}
+
+// ============================================================
+// 023 · CAMBIAR NIT con arrastre. El NIT es la llave de cruce entre el cliente,
+// su tarifario (+ bitácora), el mapeo de la Agenda, los expedientes resueltos y
+// los detalles de facturación. La RPC `cliente_cambiar_nit` lo cambia en TODO en
+// una transacción, con guardas (placeholder/CF, choque de llave del tarifario
+// —nunca pisa—, NIT compartido con otro cliente → confirmación explícita) y un
+// modo simulación para el resumen del modal. La re-resolución de la cola la hace
+// la action (reclasificar por NIT), fuera de la transacción.
+// ============================================================
+
+interface RpcMov { clientes: number; tarifario: number; tarifario_historial: number; cliente_externo: number; facturacion_expediente: number; detalle_facturacion: number }
+interface RpcCambioNit {
+  ok: boolean; codigo?: CodigoCambioNit; error?: string; simulado?: boolean; nit_viejo?: string; nit_nuevo?: string; cliente_id?: string | null; cliente_nombre?: string | null;
+  compartido_con?: string | null; destino?: string | null; motivo?: string; movidas?: RpcMov; movera?: RpcMov;
+  choques?: { tipo_prueba: string; categoria: string; territorio: string; monto_viejo: number | string; monto_nuevo: number | string }[];
+}
+const movidasDe = (m?: RpcMov): MovidasNit => ({ clientes: Number(m?.clientes ?? 0), tarifario: Number(m?.tarifario ?? 0), tarifarioHistorial: Number(m?.tarifario_historial ?? 0), clienteExterno: Number(m?.cliente_externo ?? 0), facturacionExpediente: Number(m?.facturacion_expediente ?? 0), detalleFacturacion: Number(m?.detalle_facturacion ?? 0) });
+
+/**
+ * Cambia (o simula cambiar, `simular`) el NIT en todas las tablas. Valida en la app lo
+ * mismo que la RPC (placeholder, formato) para dar el mensaje sin ir a la base.
+ */
+export async function cambiarNitCliente(objetivo: ObjetivoNit, nitNuevo: string, actor: string, opts: { forzar?: boolean; simular?: boolean; motivo?: string } = {}): Promise<CambioNitResult> {
+  if (writeSource('facturacion') !== 'supabase') return { ok: false, codigo: 'otro', error: 'Cambiar el NIT requiere el backend Supabase (facturación está en rollback).' };
+  const clienteId = (objetivo.clienteId ?? '').trim();
+  const nitViejo = nitComparable(objetivo.nitViejo);
+  if (!clienteId && nitEsPlaceholder(nitViejo)) return { ok: false, codigo: 'nit_viejo_placeholder', error: 'Indicá el cliente o un NIT viejo real (no vacío, 0 ni CF).' };
+  const nuevoTxt = (nitNuevo ?? '').trim();
+  const nuevo = nitComparable(nuevoTxt);
+  if (nitEsPlaceholder(nuevo)) return { ok: false, codigo: 'nit_placeholder', error: 'El NIT nuevo no puede ser vacío, 0 ni CF: tiene que identificar al cliente.' };
+  if (!nitValido(nuevoTxt) && !nitNuevoAceptable(nuevo)) return { ok: false, codigo: 'nit_invalido', error: `"${nuevoTxt}" no parece un NIT de Guatemala (dígitos + verificador, ej. 1234567-8) ni 'CF'.` };
+  try {
+    const r = await rpc<RpcCambioNit>('cliente_cambiar_nit', {
+      p_actor: actor, p_nit_nuevo: nuevoTxt, p_cliente_id: clienteId || null, p_nit_viejo: clienteId ? null : nitViejo,
+      p_forzar: !!opts.forzar, p_simular: !!opts.simular, p_motivo: (opts.motivo ?? '').trim().replace(/\s+/g, ' ').slice(0, 200) || null,
+    }, opts.simular ? [] : ['clientes']);
+    if (!r.ok) {
+      return {
+        ok: false, codigo: r.codigo ?? 'otro', error: r.error ?? 'No se pudo cambiar el NIT.', nitViejo: r.nit_viejo, nitNuevo: r.nit_nuevo, compartidoCon: r.compartido_con ?? null, destino: r.destino ?? null,
+        choques: r.choques?.map(c => ({ tipoPrueba: c.tipo_prueba, categoria: c.categoria, territorio: c.territorio, montoViejo: Number(c.monto_viejo), montoNuevo: Number(c.monto_nuevo) })),
+        movera: r.movera ? movidasDe(r.movera) : undefined,
+      };
+    }
+    const movidas = movidasDe(r.simulado ? r.movera : r.movidas);
+    const quien = r.cliente_nombre ? `"${r.cliente_nombre}"` : `las tarifas del NIT ${r.nit_viejo}`;
+    return {
+      ok: true, simulado: !!r.simulado, nitViejo: r.nit_viejo ?? nitViejo, nitNuevo: r.nit_nuevo ?? nuevo, clienteId: r.cliente_id ?? null, clienteNombre: r.cliente_nombre ?? null,
+      compartidoCon: r.compartido_con ?? null, destino: r.destino ?? null, movidas, motivo: r.motivo,
+      mensaje: r.simulado ? `Se moverán: ${resumenMovidas(movidas)}.` : `NIT de ${quien}: ${r.nit_viejo || '(sin NIT)'} → ${r.nit_nuevo}. Movido: ${resumenMovidas(movidas)}.`,
+    };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/could not find the function|function .*cliente_cambiar_nit.* does not exist|PGRST202/i.test(msg)) return { ok: false, codigo: 'sin_rpc', error: 'Falta aplicar la migración 023 (cliente_cambiar_nit) en esta base.' };
+    return { ok: false, codigo: 'otro', error: `No se pudo cambiar el NIT: ${msg.replace(/^cliente_cambiar_nit: /, '')}` };
   }
 }
