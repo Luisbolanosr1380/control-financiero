@@ -138,6 +138,55 @@ export async function guardarMapeo(input: { empresaIdExterno: string; empresaNom
 
 export type NoFacturaResult = { ok: true; reclasificados: number; estado: 'marcada' | 'quitada' } | { ok: false; error: string };
 
+export interface EmpresaRef { empresaIdExterno: string; empresaNombreExterno?: string }
+export type LoteResult = { ok: true; aplicadas: number; reclasificados: number; nit?: string; clienteNombre?: string } | { ok: false; error: string };
+
+const empresasValidas = (empresas: readonly EmpresaRef[]): EmpresaRef[] => {
+  const vistos = new Set<string>(); const out: EmpresaRef[] = [];
+  for (const e of empresas ?? []) { const id = String(e?.empresaIdExterno ?? '').trim(); if (id && !vistos.has(id)) { vistos.add(id); out.push({ empresaIdExterno: id, empresaNombreExterno: (e.empresaNombreExterno ?? '').trim() }); } }
+  return out;
+};
+
+/** MASIVO: mapea varias empresas de la Agenda al MISMO cliente (Walmart/… → la matriz) en un solo write y re-resuelve todas de una. */
+export async function guardarMapeoLote(input: { empresas: EmpresaRef[]; clienteAppId: string }, actor: string): Promise<LoteResult> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+  const empresas = empresasValidas(input.empresas);
+  if (!empresas.length) return { ok: false, error: 'Elegí al menos una empresa.' };
+  if (empresas.length > 500) return { ok: false, error: 'Hasta 500 empresas por lote.' };
+  const cliente = (await getClientes()).find(c => c.id === input.clienteAppId);
+  if (!cliente) return { ok: false, error: 'El cliente elegido no existe.' };
+  if (cliente.activo === false) return { ok: false, error: `El cliente ${cliente.name} está inactivo.` };
+  const nit = nitComparable(cliente.nit);
+  if (nitEsPlaceholder(nit)) return { ok: false, error: `El cliente ${cliente.name} no tiene NIT: cargáselo antes de mapearlo (el tarifario va por NIT).` };
+  const clienteUuid = await uuidOpcional('clientes', input.clienteAppId);
+  const ahora = new Date().toISOString();
+  const { error } = await sb.from('cliente_externo').upsert(empresas.map(e => ({
+    fuente: FUENTE, empresa_id_externo: e.empresaIdExterno, empresa_nombre_externo: e.empresaNombreExterno || null,
+    nit, cliente_id: clienteUuid, activo: true, creado_por: actor, no_factura: false, motivo_no_factura: null, updated_at: ahora,
+  })), { onConflict: 'fuente,empresa_id_externo' });
+  if (error) return { ok: false, error: `No se pudo guardar el mapeo: ${error.message}` };
+  const reclasificados = await reclasificar({ empresasIdExterno: empresas.map(e => e.empresaIdExterno) });
+  return { ok: true, aplicadas: empresas.length, reclasificados, nit, clienteNombre: cliente.name };
+}
+
+/** MASIVO: marca varias empresas como "no se factura" con UN motivo; conserva el mapeo que tuvieran. */
+export async function marcarNoFacturaLote(input: { empresas: EmpresaRef[]; motivo?: string }, actor: string): Promise<LoteResult> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+  const empresas = empresasValidas(input.empresas);
+  if (!empresas.length) return { ok: false, error: 'Elegí al menos una empresa.' };
+  if (empresas.length > 500) return { ok: false, error: 'Hasta 500 empresas por lote.' };
+  const motivo = String(input.motivo ?? '').trim().replace(/\s+/g, ' ').slice(0, 200);
+  const previos = new Map((await getMapeos()).map(m => [m.empresaIdExterno, m]));
+  const ahora = new Date().toISOString();
+  const { error } = await sb.from('cliente_externo').upsert(empresas.map(e => { const p = previos.get(e.empresaIdExterno); return {
+    fuente: FUENTE, empresa_id_externo: e.empresaIdExterno, empresa_nombre_externo: e.empresaNombreExterno || p?.empresaNombreExterno || null,
+    nit: p?.nit ?? '', cliente_id: p?.clienteId ?? null, activo: true, creado_por: actor, no_factura: true, motivo_no_factura: motivo || null, updated_at: ahora,
+  }; }), { onConflict: 'fuente,empresa_id_externo' });
+  if (error) return { ok: false, error: /no_factura/.test(error.message) ? 'Falta aplicar la migración 018_agenda_no_factura en esta base.' : `No se pudo marcar: ${error.message}` };
+  const reclasificados = await reclasificar({ empresasIdExterno: empresas.map(e => e.empresaIdExterno) });
+  return { ok: true, aplicadas: empresas.length, reclasificados };
+}
+
 /**
  * 018: marca una empresa de la Agenda como "no se factura" por este flujo (interna /
  * intercompany / reclutamiento = Fase A). Todos sus expedientes, presentes y futuros, pasan
@@ -202,13 +251,14 @@ export async function procesarExpedientes(exps: readonly ExpedienteAgenda[], ctx
  * (a partir del `raw` guardado). Así un "sin tarifa" se resuelve solo cuando el
  * CFO carga la tarifa, y un "cliente sin mapear" al mapear la empresa.
  */
-export async function reclasificar(filtro: { empresaIdExterno?: string } = {}, ctxDado?: Contexto): Promise<number> {
+export async function reclasificar(filtro: { empresaIdExterno?: string; empresasIdExterno?: string[] } = {}, ctxDado?: Contexto): Promise<number> {
   const sb = supabase(); if (!sb) return 0;
   const ctx = ctxDado ?? await cargarContexto();
   const rows = await paginar<{ id_externo: string; raw: ExpedienteAgenda | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; nit_resuelto: string | null; detalle_tarifa: string | null }>(() => {
     // Solo la cola (terminados vigentes sin factura): lo demás se vuelve a clasificar cuando la Agenda lo cambie (sync).
     let q = sb.from('facturacion_expediente').select('id_externo, raw, estado_tarifa, monto_calculado, nit_resuelto, detalle_tarifa').eq('fuente', FUENTE).is('factura_id', null).eq('terminado', true).eq('cancelado', false).eq('eliminado', false).order('id_externo');
     if (filtro.empresaIdExterno) q = q.eq('empresa_id_externo', filtro.empresaIdExterno);
+    if (filtro.empresasIdExterno) q = q.in('empresa_id_externo', filtro.empresasIdExterno);
     return q;
   }, 'reclasificar');
   const cambiados: ExpedienteAgenda[] = [];
@@ -322,6 +372,8 @@ const razonPorNitDe = (clientes: readonly Customer[]): Map<string, string> => {
   return m;
 };
 
+export interface ClienteSlim { id: string; name: string; nit: string }
+
 export interface VistaPorFacturar {
   /** Solo clientes con expedientes en cola resueltos o sin tarifa (nunca el universo). */
   grupos: GrupoCliente[];
@@ -332,6 +384,8 @@ export interface VistaPorFacturar {
   sinMapear: { expedientes: number; empresas: number };
   /** 018: empresas marcadas "no se factura" con su motivo y cuántos expedientes tienen. */
   noFacturan: EmpresaNoFactura[];
+  /** Clientes activos de financiero (id de app, nombre, NIT) para el selector de "Mapear todas a un cliente". */
+  clientes: ClienteSlim[];
   /** true si los agregados vinieron de la RPC de la 017 (SQL); false = fallback con consultas livianas. */
   agregadoEnSql: boolean;
 }
@@ -399,7 +453,7 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>): Prom
  */
 export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise<VistaPorFacturar> {
   const sb = supabase();
-  const vacio: VistaPorFacturar = { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], agregadoEnSql: false };
+  const vacio: VistaPorFacturar = { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], clientes: [], agregadoEnSql: false };
   if (!sb) return vacio;
   const [clientes, sync] = await Promise.all([getClientes(), getSyncEstado()]);
   let r: ResumenRpc | null = null; let enSql = false;
@@ -445,7 +499,8 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
     clientesSinMapear: Number(c('cliente_sin_mapear')?.empresas_en_cola ?? 0),
   };
   const noFacturan: EmpresaNoFactura[] = (r.no_facturan ?? []).map(n => ({ empresaIdExterno: n.empresa_id_externo, empresaNombreExterno: n.empresa_nombre_externo ?? '', motivo: n.motivo_no_factura ?? '', expedientes: Number(n.expedientes ?? 0), marcadoPor: n.creado_por ?? '', marcadoEn: n.updated_at ?? null }));
-  return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, noFacturan, agregadoEnSql: enSql };
+  const clientesSlim: ClienteSlim[] = clientes.filter(c => c.activo !== false).map(c => ({ id: c.id, name: c.name, nit: c.nit }));
+  return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, noFacturan, clientes: clientesSlim, agregadoEnSql: enSql };
 }
 
 export interface EmpresaSinMapear { empresaIdExterno: string; empresaNombreExterno: string; expedientes: number; fechaMasAntigua: string | null; fechaMasReciente: string | null }
@@ -454,7 +509,7 @@ export interface PaginaSinMapear { filas: EmpresaSinMapear[]; totalEmpresas: num
 /** Empresas de la Agenda sin mapear (en cola), agregadas por empresa, con búsqueda y paginación. On demand. */
 export async function empresasSinMapear(opts: { q?: string; limite?: number; desde?: number; sinRpc?: boolean } = {}): Promise<PaginaSinMapear> {
   const sb = supabase();
-  const limite = Math.min(Math.max(Number(opts.limite ?? 25), 1), 100), desde = Math.max(Number(opts.desde ?? 0), 0);
+  const limite = Math.min(Math.max(Number(opts.limite ?? 25), 1), 1000), desde = Math.max(Number(opts.desde ?? 0), 0);
   const q = String(opts.q ?? '').trim().slice(0, 80).replace(/[%_\\]/g, m => `\\${m}`);
   const vacio: PaginaSinMapear = { filas: [], totalEmpresas: 0, totalExpedientes: 0, limite, desde, agregadoEnSql: false };
   if (!sb) return vacio;
@@ -482,7 +537,6 @@ export async function empresasSinMapear(opts: { q?: string; limite?: number; des
   return { filas: filt.slice(desde, desde + limite), totalEmpresas: filt.length, totalExpedientes: filt.reduce((s, e) => s + e.expedientes, 0), limite, desde, agregadoEnSql: false };
 }
 
-export interface ClienteSlim { id: string; name: string; nit: string }
 export interface GrupoDetalle {
   clave: string; nit: string | null; empresaIdExterno: string; nombre: string; nombreExterno: string;
   grupo: GrupoCliente | null; expedientes: ExpedienteLocal[]; cliente: ClienteSlim | null; sugerencias: ClienteSlim[]; clientes: ClienteSlim[]; centros: CentroCosto[];

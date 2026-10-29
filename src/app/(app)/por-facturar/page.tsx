@@ -17,7 +17,7 @@ export const dynamic = 'force-dynamic';
 export default async function PorFacturarPage() {
   await exigirPagina('ver');
   const disponible = await facturacionAgendaDisponible();
-  const vista: VistaPorFacturar = disponible ? await vistaPorFacturar() : { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], agregadoEnSql: false };
+  const vista: VistaPorFacturar = disponible ? await vistaPorFacturar() : { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], clientes: [], agregadoEnSql: false };
   const cfg = configAgenda();
-  return <PorFacturarClient disponible={disponible} configurada={cfg.apiKey.length > 0} writeback={cfg.writeback} grupos={vista.grupos} kpis={vista.kpis} sync={vista.sync} total={vista.total} sinMapear={vista.sinMapear} noFacturan={vista.noFacturan} agregadoEnSql={vista.agregadoEnSql} />;
+  return <PorFacturarClient disponible={disponible} configurada={cfg.apiKey.length > 0} writeback={cfg.writeback} grupos={vista.grupos} kpis={vista.kpis} sync={vista.sync} total={vista.total} sinMapear={vista.sinMapear} noFacturan={vista.noFacturan} clientes={vista.clientes} agregadoEnSql={vista.agregadoEnSql} />;
 }

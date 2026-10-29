@@ -3,8 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
 import {
-  emitirFacturaAgenda, empresasSinMapear, guardarMapeo, marcarNoFactura, quitarNoFactura, reintentarWriteback, sincronizarAgenda,
-  type EmitirInput, type NoFacturaResult, type PaginaSinMapear, type EmitirResult, type MapeoResult, type ResultadoSync, type WritebackResultado,
+  emitirFacturaAgenda, empresasSinMapear, guardarMapeo, guardarMapeoLote, marcarNoFactura, marcarNoFacturaLote, quitarNoFactura, reintentarWriteback, sincronizarAgenda,
+  type EmitirInput, type EmpresaRef, type LoteResult, type NoFacturaResult, type PaginaSinMapear, type EmitirResult, type MapeoResult, type ResultadoSync, type WritebackResultado,
 } from '@/lib/db/facturacion-agenda';
 
 function revalidar() {
@@ -72,4 +72,29 @@ export async function quitarNoFacturaAction(empresaIdExterno: string): Promise<N
   const r = await quitarNoFactura(empresaIdExterno, permiso.email);
   if (r.ok) revalidatePath('/por-facturar', 'layout');
   return r;
+}
+
+/** MASIVO: mapear varias empresas de la Agenda al mismo cliente (un solo write + re-resolución). */
+export async function mapearClientesLoteAction(input: { empresas: EmpresaRef[]; clienteAppId: string }): Promise<LoteResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await guardarMapeoLote(input, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** MASIVO: marcar varias empresas como "no se factura" con un motivo. */
+export async function marcarNoFacturaLoteAction(input: { empresas: EmpresaRef[]; motivo?: string }): Promise<LoteResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await marcarNoFacturaLote(input, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** Todas las empresas del filtro actual (para "seleccionar todo el filtro": Walmart en 3 clics). */
+export async function empresasSinMapearTodasAction(q: string): Promise<EmpresaRef[]> {
+  await exigir('ver');
+  const r = await empresasSinMapear({ q, limite: 1000, desde: 0 });
+  return r.filas.map(f => ({ empresaIdExterno: f.empresaIdExterno, empresaNombreExterno: f.empresaNombreExterno }));
 }

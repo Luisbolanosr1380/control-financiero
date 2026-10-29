@@ -70,11 +70,17 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   const cuerpoClas = mapeoSrc.slice(mapeoSrc.indexOf('export function clasificarExpediente('));
   ok(cuerpoClas.indexOf('esPsicometrica(exp)') < cuerpoClas.indexOf('noFacturaEmpresas?.has(') && cuerpoClas.indexOf('noFacturaEmpresas?.has(') < cuerpoClas.indexOf('nitPorEmpresa.get('), 'motor: orden psicométricas → no se factura → mapeo a NIT → cliente sin mapear');
   for (const fn of ['marcarNoFacturaAction', 'quitarNoFacturaAction']) ok(new RegExp(`export async function ${fn}\\([^)]*\\)[^{]*\\{\\s*const permiso = await autorizar\\('facturar_agenda'\\);`).test(rd('src/app/(app)/por-facturar/actions.ts')), `${fn}: primera línea autorizar('facturar_agenda')`);
+  for (const fn of ['mapearClientesLoteAction', 'marcarNoFacturaLoteAction']) ok(new RegExp(`export async function ${fn}\\([^)]*\\)[^{]*\\{\\s*const permiso = await autorizar\\('facturar_agenda'\\);`).test(rd('src/app/(app)/por-facturar/actions.ts')), `${fn}: primera línea autorizar('facturar_agenda') (masivo)`);
+  ok(/export async function empresasSinMapearTodasAction\([^)]*\)[^{]*\{\s*await exigir\('ver'\);/.test(rd('src/app/(app)/por-facturar/actions.ts')), "empresasSinMapearTodasAction: exigir('ver') (seleccionar todo el filtro)");
+  const dbLote = rd('src/lib/db/facturacion-agenda.ts');
+  ok((dbLote.match(/export async function (guardarMapeoLote|marcarNoFacturaLote)\(/g) ?? []).length === 2 && /\.upsert\(empresas\.map\(/.test(dbLote) && /q\.in\('empresa_id_externo', filtro\.empresasIdExterno\)/.test(dbLote), 'lote: guardarMapeoLote / marcarNoFacturaLote = UN upsert con todas las empresas + una sola re-resolución (reclasificar con in)');
+  const smUI = rd('src/components/por-facturar/sin-mapear-lista.tsx');
+  ok(/data-barra-masiva/.test(smUI) && /aria-label="Seleccionar toda la página"/.test(smUI) && /data-accion="seleccionar-filtro"/.test(smUI) && /data-accion="confirmar-no-factura-lote"/.test(smUI) && /data-accion="confirmar-mapear-lote"/.test(smUI) && /Mapear →/.test(smUI) && !/window\.(confirm|alert|prompt)\(/.test(smUI), 'pestaña "Sin mapear": checkbox por fila, toda la página, todo el filtro, barra masiva (no se factura con motivo / mapear a un cliente), "Mapear →" individual se mantiene');
   ok(/data-accion="no-factura"/.test(rd('src/components/por-facturar/grupo-detalle.tsx')) && /NoFacturaBanner/.test(rd('src/components/por-facturar/grupo-detalle.tsx')) && /data-tab="no-facturan"/.test(rd('src/components/por-facturar/por-facturar-client.tsx')) && /quitarNoFacturaAction/.test(rd('src/components/por-facturar/por-facturar-client.tsx')), 'pantalla: tercera opción "No se factura" con motivo en el panel Mapear, banner reversible en el detalle y pestaña "No se facturan"');
   const dbSrc = rd('src/lib/db/facturacion-agenda.ts');
   const vistaBody = dbSrc.slice(dbSrc.indexOf('export async function vistaPorFacturar('), dbSrc.indexOf('export interface EmpresaSinMapear'));
   ok(/sb\.rpc\('facturacion_agenda_resumen'/.test(vistaBody) && !/listarExpedientesLocal\(/.test(vistaBody) && !/paginar</.test(vistaBody) && /resumenSinRpc\(/.test(vistaBody), 'vistaPorFacturar: agregados por RPC (017) con fallback liviano; NUNCA listarExpedientesLocal() ni paginar del espejo en el render');
-  const smBody = dbSrc.slice(dbSrc.indexOf('export async function empresasSinMapear('), dbSrc.indexOf('export interface ClienteSlim'));
+  const smBody = dbSrc.slice(dbSrc.indexOf('export async function empresasSinMapear('), dbSrc.indexOf('export interface GrupoDetalle'));
   ok(/sb\.rpc\('facturacion_agenda_sin_mapear'/.test(smBody) && /p_limit: limite, p_offset: desde/.test(smBody), 'empresasSinMapear: agregado por empresa en SQL, con búsqueda y paginación (limit/offset)');
   ok(/\.eq\('terminado', true\)\.eq\('cancelado', false\)\.eq\('eliminado', false\)/.test(dbSrc.slice(dbSrc.indexOf('export async function reclasificar('), dbSrc.indexOf('export interface FiltroExpedientes'))), 'reclasificar: solo re-resuelve la cola (terminados vigentes sin factura), no el espejo entero');
   ok(/vistaPorFacturar\(\)/.test(rd('src/app/(app)/por-facturar/page.tsx')) && /SinMapearLista/.test(rd('src/components/por-facturar/por-facturar-client.tsx')) && /empresasSinMapearAction\(qAplicada, pagina, POR_PAGINA\)/.test(rd('src/components/por-facturar/sin-mapear-lista.tsx')) && /export async function empresasSinMapearAction\([^)]*\)[^{]*\{\s*await exigir\('ver'\);/.test(rd('src/app/(app)/por-facturar/actions.ts')), 'pantalla: pestaña "Sin mapear" pide las empresas on demand (action con exigir(\'ver\')), paginadas');
@@ -504,8 +510,24 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     locales = await DB.listarExpedientesLocal();
     ok(nf4.ok && byId('recE2E008').estadoTarifa === 'sin_tarifa' && byId('recE2E008').nitResuelto === NIT_B, 'al quitarla recupera el mapeo que tenía (vuelve a sin_tarifa con su NIT, no a sin mapear)');
     ok(!(await DB.quitarNoFactura(EMP_B, ACTOR)).ok && !(await DB.marcarNoFactura({ empresaIdExterno: '' }, ACTOR)).ok, 'quitar una marca inexistente / marcar sin empresa → error claro');
+    // ── MASIVO ──
+    console.log('\n   masivo · lote de "no se factura" y de mapeo al mismo cliente');
+    ok(!(await DB.marcarNoFacturaLote({ empresas: [], motivo: 'x' }, ACTOR)).ok && !(await DB.guardarMapeoLote({ empresas: [{ empresaIdExterno: EMP_C }], clienteAppId: 'rec_no' }, ACTOR)).ok, 'lote vacío / cliente inexistente → error claro');
+    const lote1 = await DB.marcarNoFacturaLote({ empresas: [{ empresaIdExterno: EMP_B, empresaNombreExterno: 'OTRA EMPRESA' }, { empresaIdExterno: EMP_C, empresaNombreExterno: 'GOLDEN TALENT' }, { empresaIdExterno: EMP_C }], motivo: ' reclutamiento — Fase A ' }, ACTOR);
+    locales = await DB.listarExpedientesLocal(); vNF = await DB.vistaPorFacturar(); smNF = await DB.empresasSinMapear({});
+    ok(lote1.ok && lote1.aplicadas === 2 && lote1.reclasificados === 2 && byId('recE2E008').estadoTarifa === 'excluido_no_factura' && byId('recE2E014').estadoTarifa === 'excluido_no_factura' && vNF.noFacturan.length === 2 && vNF.noFacturan.every(n => n.motivo === 'reclutamiento — Fase A') && vNF.kpis.excluidosNoFactura === 2 && smNF.totalEmpresas === 0 && !vNF.grupos.some(g => g.nit === NIT_B), 'lote "no se factura" (B mapeada + C sin mapear, con un id repetido): 2 marcadas con UN motivo, sus 2 expedientes fuera de la cola, "Sin mapear" vacía, "No se facturan" con 2');
+    ok((await DB.quitarNoFactura(EMP_B, ACTOR)).ok && (await DB.quitarNoFactura(EMP_C, ACTOR)).ok, 'se quitan las dos marcas');
+    const lote2 = await DB.guardarMapeoLote({ empresas: [{ empresaIdExterno: EMP_B, empresaNombreExterno: 'OTRA EMPRESA' }, { empresaIdExterno: EMP_C, empresaNombreExterno: 'GOLDEN TALENT' }], clienteAppId: cliA!.airtable_id }, ACTOR);
+    locales = await DB.listarExpedientesLocal(); vNF = await DB.vistaPorFacturar(); smNF = await DB.empresasSinMapear({});
+    const gAL = vNF.grupos.find(g => g.nit === NIT_A);
+    ok(lote2.ok && lote2.aplicadas === 2 && lote2.nit === NIT_A && lote2.reclasificados === 2 && byId('recE2E008').nitResuelto === NIT_A && byId('recE2E008').estadoTarifa === 'resuelta' && byId('recE2E008').montoCalculado === 350 && byId('recE2E014').nitResuelto === NIT_A && byId('recE2E014').estadoTarifa === 'resuelta' && byId('recE2E014').montoCalculado === 350 && smNF.totalEmpresas === 0 && vNF.grupos.length === 1 && !!gAL && gAL.listos === 3, 'lote "mapear todas a un cliente" (caso Walmart → matriz): B y C quedan con el NIT de A y sus expedientes resuelven precio (Q350 c/u); la lista muestra un solo cliente con 3 listos');
+    const todas = await DB.empresasSinMapear({ limite: 1000 });
+    ok(todas.totalEmpresas === 0 && todas.limite === 1000, 'empresasSinMapear acepta limite 1000 (para "seleccionar todo el filtro")');
+    // restaurar: B → su cliente; C → marcada "intercompany" para la sección de volumen
+    ok((await DB.guardarMapeo({ empresaIdExterno: EMP_B, empresaNombreExterno: 'OTRA EMPRESA', clienteAppId: cliB!.airtable_id }, ACTOR)).ok, 'B vuelve a su propio cliente');
     const nf5 = await DB.marcarNoFactura({ empresaIdExterno: EMP_C, empresaNombreExterno: 'GOLDEN TALENT', motivo: 'intercompany' }, ACTOR);
-    ok(nf5.ok, 'GOLDEN TALENT queda marcada para la sección de volumen');
+    locales = await DB.listarExpedientesLocal();
+    ok(nf5.ok && byId('recE2E008').estadoTarifa === 'sin_tarifa' && byId('recE2E014').estadoTarifa === 'excluido_no_factura', 'GOLDEN TALENT queda marcada para la sección de volumen; B sin tarifa con su NIT');
 
     // Sin llave / HIT
     process.env.EMPRESA_SLUG = 'hit';
