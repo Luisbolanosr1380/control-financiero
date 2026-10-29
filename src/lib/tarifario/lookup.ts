@@ -145,6 +145,8 @@ export function resolverTarifa(tarifas: readonly Tarifa[], exp: Expediente, clie
   if (delCliente.length === 0) return { estado: 'no_encontrada', nit, candidatas: [], mensaje: `El NIT ${nit} no tiene tarifario cargado.` };
 
   const tipo = canonTipoPrueba(exp.tipoPrueba), cat = canonCategoria(exp.categoria), ter = canonTerritorio(exp.territorio);
+  // 'COMPLETO' acá es un pedido EXPLÍCITO de los dos servicios (lookup manual / canon de "POLIGRAFO, SOCIOECONOMICO").
+  // El motor de la Agenda (mapeo.ts) nunca lo pasa: cotiza cada servicio de la fila por separado (fix "COMPLETO doble").
   const tipos = tipo === 'COMPLETO' ? ['POLIGRAFO', 'SOCIOECONOMICO'] : [tipo];
   const partes: Tarifa[] = []; const avisos: string[] = [];
   for (const tp of tipos) {
