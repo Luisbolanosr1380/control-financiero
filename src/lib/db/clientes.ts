@@ -1,11 +1,12 @@
 import { airtable, USE_MOCK, TABLES } from './airtable';
 import { dataSource, writeSource } from '../config/data-source';
 import { sbClientesRecords } from '../supabase/records';
-import { insertar } from '../supabase/writes';
+import { insertar, actualizarPorAppId } from '../supabase/writes';
 import { CUSTOMERS } from '../mock-data';
 import type { Customer } from '../types';
 import type { FieldSet } from 'airtable';
 import { buscarNitDuplicado, AVISO_NIT } from '../clientes/nit';
+import { limpiarAliases } from '../clientes/buscar';
 
 // Campos reales de la tabla CLIENTES en Airtable
 const FC = {
@@ -16,12 +17,19 @@ const FC = {
   DIAS_CREDITO: 'Dias Credito',
   CONTEXTO:     'Contexto_Comercial',
   ACTIVO:       'Activo',
+  // 020 (solo Supabase; en Airtable nunca existieron)
+  NOMBRE_COMERCIAL: 'Nombre comercial',
+  ALIASES:          'Aliases',
 } as const;
 
 function recordToCustomer(record: { id: string; fields: FieldSet }): Customer {
   const f = record.fields;
   const nombre = String(f[FC.NOMBRE] ?? f[FC.RAZON_SOCIAL] ?? '').trim();
   const contexto = String(f[FC.CONTEXTO] ?? '').trim();
+  const razonSocial = String(f[FC.RAZON_SOCIAL] ?? '').trim();
+  const nombreComercial = String(f[FC.NOMBRE_COMERCIAL] ?? '').trim();
+  const aliasesRaw = f[FC.ALIASES];
+  const aliases = Array.isArray(aliasesRaw) ? aliasesRaw.map(a => String(a ?? '').trim()).filter(Boolean) : [];
   return {
     id:           record.id,
     name:         nombre,
@@ -37,6 +45,9 @@ function recordToCustomer(record: { id: string; fields: FieldSet }): Customer {
     onTimeRate:   0,
     contextoComercial: contexto || undefined,
     activo:       typeof f[FC.ACTIVO] === 'boolean' ? Boolean(f[FC.ACTIVO]) : undefined,
+    razonSocial:  razonSocial || undefined,
+    nombreComercial: nombreComercial || undefined,
+    aliases:      aliases.length ? aliases : undefined,
   };
 }
 
@@ -92,6 +103,10 @@ export interface CrearClienteInput {
   instruccionesCobro?: string;
   contextoComercial?: string;
   activo?: boolean;                 // default true
+  /** 020: marca / nombre comercial (opcional; solo para ubicarlo). */
+  nombreComercial?: string;
+  /** 020: otros nombres / marcas (opcional). */
+  aliases?: string[];
   /** AVISO-NIT: el usuario ya vio el aviso de NIT repetido y quiere crear igual. */
   confirmarNitDuplicado?: boolean;
 }
@@ -160,9 +175,18 @@ export async function crearCliente(input: CrearClienteInput): Promise<CrearClien
     return { ok: false, error: `${AVISO_NIT(dupNit.name)}. Confirmá para crearlo de todos modos.`, nitDuplicado: { clienteId: dupNit.id, nombre: dupNit.name } };
   }
 
+  // 020: nombre comercial + aliases. Solo se mandan si vienen con valor: así el alta
+  // sigue funcionando en una base donde la 020 todavía no está aplicada.
+  const nombreComercial = (input.nombreComercial ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const aliases = limpiarAliases(input.aliases, [nombre, input.razonSocial, nombreComercial]);
+  const extra020: Record<string, unknown> = {};
+  if (nombreComercial) extra020.nombre_comercial = nombreComercial;
+  if (aliases.length) extra020.aliases = aliases;
+
   try {
     const razon = input.razonSocial?.trim() || nombre;
     const res = await insertar('clientes', {
+      ...extra020,
       nombre_empresa:       nombre,
       razon_social:         razon,
       etiqueta:             razon,   // en Airtable se autollenaba = razón social
@@ -181,6 +205,36 @@ export async function crearCliente(input: CrearClienteInput): Promise<CrearClien
     return { ok: true, clienteId: res.airtable_id, mensaje: `Cliente "${nombre}" creado.` };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
+    if (Object.keys(extra020).length && FALTA_020.test(msg)) return { ok: false, error: 'Nombre comercial / marcas requieren la migración 020 en esta base (todavía no está aplicada). Creá el cliente sin esos campos o aplicá la 020.' };
     return { ok: false, error: `No se pudo crear el cliente: ${msg}` };
+  }
+}
+
+/** La columna de la 020 no existe en la base (PostgREST: "Could not find the 'aliases' column…" / 42703). */
+const FALTA_020 = /nombre_comercial|aliases/i;
+
+export interface NombresClienteInput { nombreComercial?: string; aliases?: string[] }
+export type NombresClienteResult = { ok: true; nombreComercial: string; aliases: string[]; mensaje: string } | { ok: false; error: string };
+
+/**
+ * 020: edita el nombre comercial y los otros nombres / marcas de un cliente existente.
+ * No toca el nombre ni la razón social (la que va en la factura). Solo Supabase, mismo
+ * gate que el alta.
+ */
+export async function actualizarNombresCliente(clienteId: string, input: NombresClienteInput): Promise<NombresClienteResult> {
+  if (writeSource('facturacion') !== 'supabase') {
+    return { ok: false, error: 'Editar clientes requiere el backend Supabase (facturación está en rollback).' };
+  }
+  const cliente = await getCliente(clienteId);
+  if (!cliente) return { ok: false, error: 'El cliente no existe.' };
+  const nombreComercial = (input.nombreComercial ?? '').replace(/\s+/g, ' ').trim().slice(0, 120);
+  const aliases = limpiarAliases(input.aliases, [cliente.name, cliente.razonSocial, nombreComercial]);
+  try {
+    await actualizarPorAppId('clientes', clienteId, { nombre_comercial: nombreComercial || null, aliases });
+    return { ok: true, nombreComercial, aliases, mensaje: `Nombres de "${cliente.name}" actualizados${aliases.length ? ` · ${aliases.length} marca${aliases.length === 1 ? '' : 's'}` : ''}.` };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (FALTA_020.test(msg)) return { ok: false, error: 'Falta aplicar la migración 020 (nombre comercial / marcas) en esta base.' };
+    return { ok: false, error: `No se pudo actualizar: ${msg}` };
   }
 }

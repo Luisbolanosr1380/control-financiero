@@ -16,6 +16,7 @@
 import { supabase, fetchAll } from '@/lib/supabase/client';
 import { nuevoIdEscritura, rpc, uuidOpcional, uuidRequerido } from '@/lib/supabase/writes';
 import { nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
+import { nombresDe } from '@/lib/clientes/buscar';
 import { conIva, normalizarTexto } from '@/lib/tarifario/canon';
 import { indiceAlias, nombreBase, resolverNit } from '@/lib/tarifario/lookup';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
@@ -259,7 +260,7 @@ export async function procesarExpedientes(exps: readonly ExpedienteAgenda[], ctx
  * (a partir del `raw` guardado). Así un "sin tarifa" se resuelve solo cuando el
  * CFO carga la tarifa, y un "cliente sin mapear" al mapear la empresa.
  */
-export async function reclasificar(filtro: { empresaIdExterno?: string; empresasIdExterno?: string[] } = {}, ctxDado?: Contexto): Promise<number> {
+export async function reclasificar(filtro: { empresaIdExterno?: string; empresasIdExterno?: string[]; /** solo los expedientes ya resueltos a este NIT (tras tocar su tarifario) */ nit?: string } = {}, ctxDado?: Contexto): Promise<number> {
   const sb = supabase(); if (!sb) return 0;
   const ctx = ctxDado ?? await cargarContexto();
   const rows = await paginar<{ id_externo: string; raw: ExpedienteAgenda | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; nit_resuelto: string | null; detalle_tarifa: string | null }>(() => {
@@ -267,6 +268,7 @@ export async function reclasificar(filtro: { empresaIdExterno?: string; empresas
     let q = sb.from('facturacion_expediente').select('id_externo, raw, estado_tarifa, monto_calculado, nit_resuelto, detalle_tarifa').eq('fuente', FUENTE).is('factura_id', null).eq('terminado', true).eq('cancelado', false).eq('eliminado', false).order('id_externo');
     if (filtro.empresaIdExterno) q = q.eq('empresa_id_externo', filtro.empresaIdExterno);
     if (filtro.empresasIdExterno) q = q.in('empresa_id_externo', filtro.empresasIdExterno);
+    if (filtro.nit) q = q.eq('nit_resuelto', filtro.nit);
     return q;
   }, 'reclasificar');
   const cambiados: ExpedienteAgenda[] = [];
@@ -381,7 +383,39 @@ const razonPorNitDe = (clientes: readonly Customer[]): Map<string, string> => {
   return m;
 };
 
-export interface ClienteSlim { id: string; name: string; nit: string }
+/**
+ * Cliente de financiero para los buscadores del mapeo. Además del nombre y el NIT lleva
+ * (020) la razón social, el nombre comercial, las marcas y los nombres con los que ya
+ * aparece en la Agenda: el buscador encuentra al cliente por cualquiera de ellos.
+ */
+export interface ClienteSlim { id: string; name: string; nit: string; razonSocial?: string; nombreComercial?: string; aliases?: string[]; nombresAgenda?: string[] }
+
+/** NIT comparable → nombres de la Agenda ya mapeados a ese NIT (para buscar "banco cuscatlan" y dar con CUSCATLAN TCU). Las marcadas "no se factura" no cuentan. */
+const nombresAgendaPorNit = (mapeos: readonly ClienteExterno[]): Map<string, string[]> => {
+  const m = new Map<string, string[]>();
+  for (const x of mapeos) {
+    if (!x.activo || x.noFactura || !x.nit || !x.empresaNombreExterno) continue;
+    const l = m.get(x.nit) ?? []; if (!l.includes(x.empresaNombreExterno)) l.push(x.empresaNombreExterno); m.set(x.nit, l);
+  }
+  return m;
+};
+const slimDe = (c: Customer, agenda?: Map<string, string[]>): ClienteSlim => {
+  const s: ClienteSlim = { id: c.id, name: c.name, nit: c.nit };
+  if (c.razonSocial && c.razonSocial !== c.name) s.razonSocial = c.razonSocial;
+  if (c.nombreComercial) s.nombreComercial = c.nombreComercial;
+  if (c.aliases?.length) s.aliases = c.aliases;
+  const na = agenda?.get(nitComparable(c.nit)); if (na?.length) s.nombresAgenda = na;
+  return s;
+};
+
+export type ReresolverResult = { ok: true; reclasificados: number } | { ok: false; error: string };
+
+/** "Re-resolver precios": re-clasifica toda la cola local contra mapeo + tarifario actuales. No toca la Agenda. */
+export async function reresolverPrecios(): Promise<ReresolverResult> {
+  if (!supabase()) return { ok: false, error: 'Supabase no está configurado.' };
+  try { return { ok: true, reclasificados: await reclasificar() }; }
+  catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
+}
 const DETALLES_VACIOS = (): VistaPorFacturar['detalles'] => ({ borrador: { n: 0, total: 0 }, enviada: { n: 0, total: 0 }, aprobada: { n: 0, total: 0 }, facturada: { n: 0, total: 0 }, anulada: { n: 0, total: 0 } });
 
 export interface VistaPorFacturar {
@@ -474,7 +508,7 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
   const sb = supabase();
   const vacio: VistaPorFacturar = { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], clientes: [], detalles: DETALLES_VACIOS(), agregadoEnSql: false };
   if (!sb) return vacio;
-  const [clientes, sync] = await Promise.all([getClientes(), getSyncEstado()]);
+  const [clientes, sync, mapeos] = await Promise.all([getClientes(), getSyncEstado(), getMapeos().catch(() => [] as ClienteExterno[])]);
   let r: ResumenRpc | null = null; let enSql = false;
   if (!opts.sinRpc) {
     const { data, error } = await sb.rpc('facturacion_agenda_resumen', { p_fuente: FUENTE });
@@ -518,7 +552,8 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
     clientesSinMapear: Number(c('cliente_sin_mapear')?.empresas_en_cola ?? 0),
   };
   const noFacturan: EmpresaNoFactura[] = (r.no_facturan ?? []).map(n => ({ empresaIdExterno: n.empresa_id_externo, empresaNombreExterno: n.empresa_nombre_externo ?? '', motivo: n.motivo_no_factura ?? '', expedientes: Number(n.expedientes ?? 0), marcadoPor: n.creado_por ?? '', marcadoEn: n.updated_at ?? null }));
-  const clientesSlim: ClienteSlim[] = clientes.filter(c => c.activo !== false).map(c => ({ id: c.id, name: c.name, nit: c.nit }));
+  const agenda = nombresAgendaPorNit(mapeos);
+  const clientesSlim: ClienteSlim[] = clientes.filter(c => c.activo !== false).map(c => slimDe(c, agenda));
   const detalles = DETALLES_VACIOS();
   for (const d of r.detalles ?? []) { const k = d.estado as keyof typeof detalles; if (detalles[k]) detalles[k] = { n: Number(d.n), total: Number(d.total) }; }
   return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, noFacturan, clientes: clientesSlim, detalles, agregadoEnSql: enSql };
@@ -571,7 +606,8 @@ export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
   if (!exps.length) return null;
   const [clientes, centros, mapeos] = await Promise.all([getClientes(), getCentrosCostoActivos(), getMapeos()]);
   const marca = mapeos.find(m => m.activo && m.noFactura && m.empresaIdExterno === exps[0].empresaIdExterno);
-  const slim = (c: Customer): ClienteSlim => ({ id: c.id, name: c.name, nit: c.nit });
+  const agenda = nombresAgendaPorNit(mapeos);
+  const slim = (c: Customer): ClienteSlim => slimDe(c, agenda);
   const activos = clientes.filter(c => c.activo !== false);
   const razon = razonPorNitDe(clientes);
   const grupo = agruparPorCliente(exps, razon)[0] ?? null;
@@ -581,18 +617,23 @@ export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
     const c = activos.find(x => nitComparable(x.nit) === p.nit) ?? clientes.find(x => nitComparable(x.nit) === p.nit);
     cliente = c ? slim(c) : null;
   } else if (nombreExterno) {
-    // Sugerencias para mapear: el alias del tarifario/catálogo (motor existente) + "contiene" sin tildes.
+    // Sugerencias para mapear: el alias del tarifario/catálogo (motor existente) + "contiene" sin tildes sobre TODOS los
+    // nombres del cliente (nombre, razón social, nombre comercial, marcas —020— y nombres de la Agenda ya mapeados).
+    // Así la Agenda "CALZADO CHICOTE" sugiere "Distribuidora Suprema" si esa marca está en sus aliases. Exacto primero.
     const tarifas = await getTarifario().catch(() => []);
-    const nitSug = resolverNit({ empresa: nombreExterno }, indiceAlias(tarifas, activos.map(c => ({ nombre: c.name, nit: c.nit }))));
+    const slims = activos.map(slim);
+    const nitSug = resolverNit({ empresa: nombreExterno }, indiceAlias(tarifas, slims.flatMap(s => nombresDe(s).map(nombre => ({ nombre, nit: s.nit })))));
     const base = nombreBase(nombreExterno);
-    const vistos = new Set<string>();
-    for (const c of activos) {
-      const nb = nombreBase(c.name);
-      const porNit = !!nitSug && nitComparable(c.nit) === nitSug;
-      const porNombre = !!base && !!nb && (nb.includes(base) || base.includes(nb));
-      if ((porNit || porNombre) && !vistos.has(c.id)) { vistos.add(c.id); sugerencias.push(slim(c)); }
+    const puntuadas: Array<{ s: ClienteSlim; p: number }> = [];
+    for (const s of slims) {
+      const nombres = nombresDe(s).map(nombreBase).filter(Boolean);
+      const porNit = !!nitSug && nitComparable(s.nit) === nitSug;
+      const exacto = !!base && nombres.some(nb => nb === base);
+      const contiene = !!base && nombres.some(nb => nb.includes(base) || (nb.length >= 4 && base.includes(nb)));
+      const p = exacto ? 3 : porNit ? 2 : contiene ? 1 : 0;
+      if (p) puntuadas.push({ s, p });
     }
-    sugerencias = sugerencias.slice(0, 8);
+    sugerencias = puntuadas.sort((a, b) => b.p - a.p || a.s.name.localeCompare(b.s.name, 'es')).slice(0, 8).map(x => x.s);
   }
   return {
     clave, nit: p.tipo === 'nit' ? p.nit : null, empresaIdExterno: exps[0].empresaIdExterno, nombre: grupo?.nombre ?? cliente?.name ?? nombreExterno, nombreExterno,

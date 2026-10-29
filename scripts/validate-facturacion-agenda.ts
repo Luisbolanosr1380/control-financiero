@@ -41,8 +41,8 @@ const ok = (c: boolean, m: string) => { if (c) { pass++; console.log(`  🟢 ${m
 const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
-const NIT_A = '99990011K', NIT_B = '99990012K';
-const EMP_A = 'recE2EempA', EMP_B = 'recE2EempB', EMP_C = 'recE2EempC';
+const NIT_A = '99990011K', NIT_B = '99990012K', NIT_C = '99990013K';
+const EMP_A = 'recE2EempA', EMP_B = 'recE2EempB', EMP_C = 'recE2EempC', EMP_D = 'recE2EempD';
 const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP'];
 
 (async () => {
@@ -69,8 +69,24 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   const sin19 = m19.replace(/--.*$/gm, '');
   ok(/create table if not exists detalle_facturacion \(/.test(m19) && /check \(estado in \('borrador', 'enviada', 'aprobada', 'facturada', 'anulada'\)\)/.test(m19) && /correlativo\s+text not null unique default \('DET-'/.test(m19) && /aprobado_canal in \('correo', 'link', 'otro'\)/.test(m19) && /alter table facturacion_expediente add column if not exists detalle_id uuid references detalle_facturacion\(id\)/.test(m19) && /create index if not exists idx_fact_exp_detalle/.test(m19), '019: detalle_facturacion (5 estados, correlativo DET-0001, canal de aprobación) + facturacion_expediente.detalle_id con índice');
   ok(/create or replace function detalle_facturacion_crear\(p_actor text, p_ids_externos text\[\], p_notas text default null\)/.test(m19) && /EXPEDIENTE_RESERVADO/.test(m19) && /EXPEDIENTE_NO_FACTURABLE/.test(m19) && /DETALLE_VARIOS_CLIENTES/.test(m19) && /create or replace function detalle_facturacion_anular/.test(m19) && /DETALLE_FACTURADO/.test(m19) && /'detalles',/.test(m19) && !/\b(drop|truncate)\b/i.test(sin19) && !/\bdelete\s+from\b/i.test(sin19) && !/^\s*(begin|commit)\s*;/im.test(sin19) && !/facturacion_agenda_emitir/.test(sin19), '019: RPC crear (reserva todo o nada: resueltos, en cola, un cliente, no reservados) y anular (libera; nunca facturada); resumen cuenta detalles; no toca la RPC de emisión; sin drop/delete/commit');
-  ok(fs.readdirSync('supabase/migrations').filter(f => /^02\d_|^0[3-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 019');
+  const m20 = rd('supabase/migrations/020_clientes_nombre_comercial_aliases.sql');
+  const sin20 = m20.replace(/--.*$/gm, '');
+  ok(/alter table clientes add column if not exists nombre_comercial text;/.test(m20) && /alter table clientes add column if not exists aliases text\[\] not null default '\{\}';/.test(m20) && /create index if not exists idx_clientes_aliases on clientes using gin \(aliases\);/.test(m20) && !/\b(drop|truncate)\b/i.test(sin20) && !/\bdelete\s+from\b/i.test(sin20) && !/^\s*(begin|commit)\s*;/im.test(sin20) && !/\b(update|insert)\b/i.test(sin20), '020: clientes.nombre_comercial + aliases text[] (default {}) + índice GIN; idempotente, sin drop/delete/commit, no toca datos');
+  ok(fs.readdirSync('supabase/migrations').filter(f => /^02[1-9]_|^0[3-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 020');
   const dbSrc19 = rd('src/lib/db/facturacion-agenda.ts');
+  // ── PULIDO: buscador por todos los nombres, crear cliente inline, re-resolver, nombre comercial / marcas ──
+  const buscarSrc = rd('src/lib/clientes/buscar.ts');
+  ok(/normalize\('NFD'\)\.replace\(\/\\p\{Diacritic\}\/gu, ''\)/.test(buscarSrc) && /\.toLowerCase\(\)/.test(buscarSrc) && !/from '@\/lib\/(db|supabase)/.test(buscarSrc), 'buscar.ts: normaliza sin tildes ni mayúsculas en los dos lados; puro (sin IO)');
+  const grupoSrc = rd('src/components/por-facturar/grupo-detalle.tsx'), smSrc = rd('src/components/por-facturar/sin-mapear-lista.tsx');
+  ok(/buscarClientes\(datos\.clientes, filtro\)/.test(grupoSrc) && /buscarClientes\(clientes, filtroCliente\)/.test(smSrc) && !/slice\(0, 60\)/.test(grupoSrc + smSrc) && /etiquetaOpcionCliente\(c, filtro\)/.test(grupoSrc) && /etiquetaOpcionCliente\(c, filtroCliente\)/.test(smSrc), 'panel de mapeo (individual y lote): buscador por todos los nombres + NIT, sin el tope de 60; la opción dice por qué nombre apareció');
+  ok(/data-accion="crear-cliente-inline"/.test(grupoSrc) && /<ModalClienteForm/.test(grupoSrc) && /exigirNit/.test(grupoSrc) && /onCreado=\{c => \{ void mapearA\(c\.id, c\); \}\}/.test(grupoSrc) && /\?generar=1/.test(grupoSrc) && /generarInicial/.test(rd('src/app/(app)/por-facturar/[grupo]/page.tsx')), 'crear cliente inline desde "Mapear": reusa el modal de alta (NIT obligatorio), mapea en el mismo paso y abre "Generar tarifas" en el cliente');
+  const pfc = rd('src/components/por-facturar/por-facturar-client.tsx');
+  ok(/data-accion="re-resolver"/.test(pfc) && /reresolverPreciosAction/.test(pfc) && /export async function reresolverPrecios\(\)/.test(dbSrc19) && /return \{ ok: true, reclasificados: await reclasificar\(\) \}/.test(dbSrc19), '"Re-resolver precios" en el tablero: reclasificar() local, sin ir a la Agenda');
+  ok(/nombresAgendaPorNit/.test(dbSrc19) && /slimDe\(c, agenda\)/.test(dbSrc19) && /nombresDe\(s\)\.map\(nombreBase\)/.test(dbSrc19) && /exacto \? 3 : porNit \? 2 : contiene \? 1 : 0/.test(dbSrc19), 'ClienteSlim lleva razón social / nombre comercial / marcas / nombres en la Agenda; la sugerencia de mapeo los usa (exacto primero)');
+  const modal = rd('src/components/clientes/modal-cliente-form.tsx'), card = rd('src/components/clientes/nombres-cliente-card.tsx');
+  ok(/aria-label="Nombre comercial"/.test(modal) && /<ChipsInput/.test(modal) && /nombreComercial: nombreComercial\.trim\(\) \|\| undefined/.test(modal) && /editarNombresClienteAction/.test(card) && /data-accion="editar-nombres"/.test(card) && !/window\.(confirm|alert|prompt)\(/.test(modal + card + grupoSrc + smSrc + rd('src/components/clientes/chips-input.tsx')), 'form de cliente (crear) y tarjeta "Nombres y marcas" (editar): nombre comercial + chips de marcas; sin diálogos del navegador');
+  ok(/coincideCliente\(\{ id: c\.custId, name: c\.nombre \}, search, terminos\[c\.custId\]\)/.test(rd('src/components/clientes/list-client.tsx')) && /terminosDe\(c\)/.test(rd('src/app/(app)/clientes/page.tsx')), 'lista de Clientes: busca por nombre, razón social, nombre comercial, marcas y NIT (sin tildes)');
+  ok(/if \(Object\.keys\(extra020\)\.length && FALTA_020\.test\(msg\)\)/.test(rd('src/lib/db/clientes.ts')) && /export async function actualizarNombresCliente\(/.test(rd('src/lib/db/clientes.ts')), 'db/clientes: alta sin 020 sigue funcionando (los campos nuevos solo viajan si vienen); editar nombres avisa si falta la 020');
   const emitirBody = dbSrc19.slice(dbSrc19.indexOf('export async function emitirFacturaAgenda('), dbSrc19.indexOf('// ── Write-back a la Agenda'));
   ok(/input\.detalleId/.test(emitirBody) && /detalle\.estado !== 'aprobada'/.test(emitirBody) && /exactamente los/.test(emitirBody), 'emitirFacturaAgenda: exige un detalle APROBADO y exactamente sus expedientes (todo lo de la Agenda pasa por el detalle)');
   const detSrc = rd('src/lib/db/detalle-facturacion.ts');
@@ -222,6 +238,22 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   ok(A.resumirCuerpo({ error: 'Datos inválidos', detalles: [{ campo: 'statusCobro', problema: 'No es una opción válida' }] }) === 'Datos inválidos · statusCobro: No es una opción válida', 'resumirCuerpo: formato de error del doc (error + detalles[campo, problema])');
   const { configAgenda } = await import('../src/lib/facturacion-agenda/config');
   ok(!configAgenda({ EMPRESA_SLUG: 'hit', FACTURAR_WRITEBACK: 'ON', FACTURACION_API_KEY_AGENDA: 'k' } as unknown as NodeJS.ProcessEnv).writeback && configAgenda({ EMPRESA_SLUG: 'golden', FACTURACION_API_KEY_AGENDA: 'k' } as unknown as NodeJS.ProcessEnv).writeback && !configAgenda({ EMPRESA_SLUG: 'golden', FACTURAR_WRITEBACK: 'OFF' } as unknown as NodeJS.ProcessEnv).writeback && configAgenda({} as unknown as NodeJS.ProcessEnv).montoModo === 'con_iva' && configAgenda({ FACTURACION_AGENDA_MONTO: 'sin_iva' } as unknown as NodeJS.ProcessEnv).montoModo === 'sin_iva', 'config: FACTURAR_WRITEBACK default ON, OFF apaga, en HIT siempre OFF; monto a la Agenda con IVA por default');
+  // ── BUSCADOR DE CLIENTES (puro): sin tildes/mayúsculas, por cualquiera de los nombres, por NIT, sin tope ──
+  const B = await import('../src/lib/clientes/buscar');
+  type Buscable = import('../src/lib/clientes/buscar').ClienteBuscable;
+  const cl = (id: string, name: string, nit = '', extra: Partial<Buscable> = {}): Buscable => ({ id, name, nit, ...extra });
+  const muchos = Array.from({ length: 80 }, (_, i) => cl(`c${i}`, `CLIENTE ${String(i).padStart(2, '0')} RELLENO, S.A.`, `1000${String(i).padStart(3, '0')}1`));
+  const cusc = cl('cus', 'CUSCATLAN TCU', '2222222-2', { razonSocial: 'BANCO CUSCATLAN DE GUATEMALA, S.A.', nombresAgenda: ['BANCO CUSCATLAN'] });
+  const supr = cl('sup', 'DISTRIBUIDORA SUPREMA, S.A.', '3333333-3', { nombreComercial: 'Calzado Chicote', aliases: ['Chicote', 'Zapatería Chicote'] });
+  const todos = [...muchos.slice(0, 40), cusc, ...muchos.slice(40), supr];
+  ok(B.normalizarBusqueda('  Cuscatlán, S.A. ') === 'cuscatlan s a' && B.normalizarBusqueda('ÁÉÍÓÚ ñ') === 'aeiou n', 'normalizarBusqueda: sin tildes, minúsculas, puntuación fuera');
+  const ids = (q: string) => B.buscarClientes(todos, q).map(c => c.id);
+  ok(ids('cuscatlan')[0] === 'cus' && ids('cuscatlán')[0] === 'cus' && ids('CUSCATLAN')[0] === 'cus' && ids('22222222')[0] === 'cus' && ids('2222222-2').length === 1, '"cuscatlan" / "cuscatlán" / "CUSCATLAN" y el NIT encuentran el mismo cliente');
+  ok(ids('banco cuscatlan')[0] === 'cus' && ids('banco cuscatlan de guatemala')[0] === 'cus', '"banco cuscatlan" lo encuentra por el nombre de la Agenda y por la razón social');
+  ok(ids('calzado chicote')[0] === 'sup' && ids('zapateria chicote')[0] === 'sup' && ids('chicote').length === 1 && B.nombreQueCoincide(supr, 'calzado chicote') === 'Calzado Chicote' && B.nombreQueCoincide(supr, 'suprema') === '', 'alias "calzado chicote" → Distribuidora Suprema (por su razón social); la etiqueta dice por qué nombre apareció');
+  ok(ids('relleno').length === 80 && ids('CLIENTE 75')[0] === 'c75' && ids('').length === 82 && B.buscarClientes(todos, '', { limite: 60 }).length === 60, 'sin tope: los 80 "relleno" aparecen; el cliente 75 (más allá de los primeros 60) se encuentra; con consulta vacía, la lista completa por nombre');
+  ok(ids('zzz nada').length === 0 && B.puntajeCliente(cusc, 'cuscatlan tcu') > B.puntajeCliente(cusc, 'tcu') && B.puntajeCliente(supr, 'distribuidora suprema, s.a.') > B.puntajeCliente(supr, 'calzado chicote') && B.puntajeCliente(supr, 'calzado chicote') > B.puntajeCliente(supr, 'zapateria'), 'sin coincidencia → vacío; exacto > contiene; el nombre principal pesa más que una marca');
+  ok(B.limpiarAliases([' Chicote ', 'chicoté', '', null, 'DISTRIBUIDORA SUPREMA, S.A.', 'Marca X'], ['Distribuidora Suprema, S.A.']).join('|') === 'Chicote|Marca X' && B.nombresDe(supr).join('|') === 'DISTRIBUIDORA SUPREMA, S.A.|Calzado Chicote|Chicote|Zapatería Chicote', 'limpiarAliases: sin vacíos, sin repetidos (sin tildes), sin el nombre propio; nombresDe en orden nombre → comercial → marcas');
   }
 
   console.log(`\nC. Ciclo real en ${base.toUpperCase()} contra un doble del API`);
@@ -244,11 +276,11 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
       ['facturacion_expediente', () => sb.from('facturacion_expediente').delete().like('id_externo', 'recE2E%')],
       ['detalle_facturacion', () => sb.from('detalle_facturacion').delete().in('nit', [NIT_A, NIT_B])],
       ['facturas_clientes', () => sb.from('facturas_clientes').delete().in('no_factura', FACTS)],
-      ['cliente_externo', () => sb.from('cliente_externo').delete().in('empresa_id_externo', [EMP_A, EMP_B, EMP_C])],
+      ['cliente_externo', () => sb.from('cliente_externo').delete().in('empresa_id_externo', [EMP_A, EMP_B, EMP_C, EMP_D])],
       ['facturacion_webhook_evento', () => sb.from('facturacion_webhook_evento').delete().like('id', 'fact_evt_e2e%')],
       ['facturacion_log', () => sb.from('facturacion_log').delete().eq('actor', ACTOR)],
       ['tarifario', () => sb.from('tarifario').delete().in('nit', [NIT_A, NIT_B])],
-      ['clientes', () => sb.from('clientes').delete().in('nit', [NIT_A, NIT_B])],
+      ['clientes', () => sb.from('clientes').delete().in('nit', [NIT_A, NIT_B, NIT_C])],
     ];
     for (const [nombre, fn] of pasos) { const { error } = await fn(); if (error) console.log(`     ✗ limpieza ${nombre}: ${error.message}`); }
     await sb.from('facturacion_sync_estado').delete().eq('fuente', 'agenda');
@@ -621,6 +653,37 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     locales = await DB.listarExpedientesLocal(); const vFP = await DB.vistaPorFacturar(); const gAFP = vFP.grupos.find(g => g.nit === NIT_A)!;
     ok(recl === 2 && byId('recE2E015').estadoTarifa === 'resuelta' && byId('recE2E015').montoCalculado === 750 && byId('recE2E015').territorioResuelto === 'DEPARTAMENTAL' && byId('recE2E016').estadoTarifa === 'resuelta' && byId('recE2E016').montoCalculado === 44.64 && M_enCola(byId('recE2E015')) && gAFP.listos === 3 && gAFP.sinTarifa === 1, 'al cargar los precios pasan de "sin tarifa" a "resuelta" y facturables (listos 1 → 3; queda 1 sin tarifa: la SOCIO RUTINA en Q0)');
 
+    // ── 020 · NOMBRE COMERCIAL / MARCAS: guardar, leer, sugerir, buscar; RE-RESOLVER por NIT ──
+    console.log('\n   020 · nombre comercial / marcas → sugerencia y buscador; re-resolver por NIT');
+    const CDB = await import('../src/lib/db/clientes');
+    const nb = await CDB.actualizarNombresCliente(cliB!.airtable_id, { nombreComercial: ' Chicote  E2E ', aliases: ['CALZADO CHICOTE E2E', 'calzado chicoté e2e', 'OTRA EMPRESA, S.A.', ''] });
+    ok(nb.ok && nb.nombreComercial === 'Chicote E2E' && nb.aliases.join('|') === 'CALZADO CHICOTE E2E', `actualizarNombresCliente: nombre comercial limpio y marcas sin repetidos ni el nombre propio (${nb.ok ? nb.mensaje : nb.error})`);
+    const catalogo = await CDB.getClientes();
+    const cB = catalogo.find(c => c.id === cliB!.airtable_id)!, cA = catalogo.find(c => c.id === cliA!.airtable_id)!;
+    ok(cB.nombreComercial === 'Chicote E2E' && cB.aliases?.join() === 'CALZADO CHICOTE E2E' && cA.razonSocial === 'E2E AGENDA, SOCIEDAD ANONIMA' && cA.nombreComercial === undefined && cA.aliases === undefined, 'getClientes lee nombre comercial, marcas y razón social de la base (020)');
+    const nuevo = await CDB.crearCliente({ nombreEmpresa: 'E2E CHICOTE NUEVO, S.A.', razonSocial: 'E2E CHICOTE NUEVO, SOCIEDAD ANONIMA', nit: NIT_C, nombreComercial: 'Chicote Nuevo', aliases: ['Marca Nueva E2E', 'E2E CHICOTE NUEVO, S.A.'] });
+    const cC = nuevo.ok ? (await CDB.getClientes()).find(c => c.id === nuevo.clienteId) : undefined;
+    ok(nuevo.ok && !!cC && cC.nombreComercial === 'Chicote Nuevo' && cC.aliases?.join() === 'Marca Nueva E2E' && cC.razonSocial === 'E2E CHICOTE NUEVO, SOCIEDAD ANONIMA', `crearCliente con nombre comercial y marcas (${nuevo.ok ? nuevo.mensaje : nuevo.error})`);
+    // Empresa de la Agenda que se llama como la MARCA del cliente B (con tilde) → la sugerencia la encuentra por el alias.
+    const { error: eD } = await sb.from('facturacion_expediente').insert({ fuente: 'agenda', id_externo: 'recE2E900', empresa_id_externo: EMP_D, empresa_nombre_externo: 'CALZADO CHICOTÉ E2E', estado_tarifa: 'cliente_sin_mapear', detalle_tarifa: 'sin mapear', terminado: true, cancelado: false, eliminado: false, status_cobro_externo: 'PENDIENTE', fecha_ingreso: '2026-10-09', tipo_prueba: 'POLIGRAFO', proceso_solicitado: 'SOLO POLIGRAFO', categoria_prueba: 'PRE EMPLEO', depto_visita: 'GUATEMALA', persona: 'PERSONA 900', raw: { id: 'recE2E900', empresa: { id: EMP_D, nombre: 'CALZADO CHICOTÉ E2E' }, tipoPrueba: 'POLIGRAFO', procesoSolicitado: 'SOLO POLIGRAFO', categoriaPrueba: 'PRE EMPLEO', deptoVisita: 'GUATEMALA', terminado: true, cancelado: false, eliminado: false, fechaIngreso: '2026-10-09', cobro: { statusCobro: 'PENDIENTE' }, actualizadoEn: '2026-10-20T10:00:00.000Z', nombre: 'PERSONA 900' } });
+    const detD = await DB.getGrupo(`e-${EMP_D}`);
+    ok(!eD && !!detD && detD.sugerencias[0]?.id === cliB!.airtable_id && detD.sugerencias.length === 1, `Agenda "CALZADO CHICOTÉ E2E" → sugiere "OTRA EMPRESA, S.A." por su marca (sin tildes), y solo a ese (${eD ? eD.message : detD?.sugerencias.map(x => x.name).join(', ')})`);
+    const slimA = detD!.clientes.find(c => c.id === cliA!.airtable_id)!, slimB = detD!.clientes.find(c => c.id === cliB!.airtable_id)!;
+    ok(slimA.razonSocial === 'E2E AGENDA, SOCIEDAD ANONIMA' && slimA.nombresAgenda?.join() === 'E2E AGENDA' && slimB.nombreComercial === 'Chicote E2E' && slimB.aliases?.join() === 'CALZADO CHICOTE E2E' && slimB.nombresAgenda?.join() === 'OTRA EMPRESA', `los clientes del panel llevan razón social, nombre comercial, marcas y los nombres con los que ya aparecen en la Agenda (sin las marcadas "no se factura") (A: ${slimA.nombresAgenda?.join('|')} · B: ${slimB.nombresAgenda?.join('|')})`);
+    const { buscarClientes: buscarC } = await import('../src/lib/clientes/buscar');
+    const idNuevo = nuevo.ok ? nuevo.clienteId : 'x';
+    ok(buscarC(detD!.clientes, 'calzado chicote')[0]?.id === cliB!.airtable_id && buscarC(detD!.clientes, 'otra émpresa')[0]?.id === cliB!.airtable_id && buscarC(detD!.clientes, 'e2e agenda')[0]?.id === cliA!.airtable_id && buscarC(detD!.clientes, 'agénda sociedad anonima')[0]?.id === cliA!.airtable_id && buscarC(detD!.clientes, NIT_B)[0]?.id === cliB!.airtable_id && buscarC(detD!.clientes, 'marca nueva')[0]?.id === idNuevo, 'buscador del panel: por marca, nombre en la Agenda (con tilde), razón social, NIT y la marca del cliente recién creado');
+    // Re-resolver por NIT: cargar precio a la SOCIO RUTINA Q0 del cliente A → e005 pasa a resuelta SIN sync; volver a Q0 → vuelve a "sin tarifa".
+    const rutina = (await TDB.getTarifario()).find(t => t.nit === NIT_A && t.tipoPrueba === 'SOCIOECONOMICO' && t.categoria === 'RUTINA' && t.activo)!;
+    ok((await TDB.editarTarifa(rutina.id, { monto: 500 }, ACTOR, 'precio pactado')).ok, 'se carga Q500 a SOCIO RUTINA (estaba en Q0)');
+    const rNit = await DB.reclasificar({ nit: NIT_A });
+    locales = await DB.listarExpedientesLocal();
+    ok(rNit === 1 && byId('recE2E005').estadoTarifa === 'resuelta' && byId('recE2E005').montoCalculado === 500 && byId('recE2E008').estadoTarifa === 'sin_tarifa', 'reclasificar({ nit }) re-resuelve SOLO la cola de ese NIT: e005 → resuelta Q500 sin "Traer ahora"; el cliente B no se toca');
+    ok((await TDB.editarTarifa(rutina.id, { monto: 0 }, ACTOR, 'revertir')).ok && (await DB.reclasificar({ nit: NIT_A })) === 1 && (await DB.listarExpedientesLocal()).find(e => e.idExterno === 'recE2E005')!.estadoTarifa === 'sin_tarifa', 'volver a Q0 → e005 regresa a "sin tarifa" (reversible)');
+    await sb.from('facturacion_expediente').delete().eq('id_externo', 'recE2E900');   // la empresa D (sembrada a mano) no entra a la sección de volumen
+    const rrPrecios = await DB.reresolverPrecios();
+    ok(rrPrecios.ok && rrPrecios.reclasificados === 0, `"Re-resolver precios" (toda la cola, local): nada pendiente → 0 cambios (${rrPrecios.ok ? rrPrecios.reclasificados : rrPrecios.error})`);
+
     // Sin llave / HIT
     process.env.EMPRESA_SLUG = 'hit';
     const sinKey = await DB.sincronizarAgenda({ actor: ACTOR });   // sin api inyectada: usa la config → HIT no tiene llave real pero sí la de prueba… la quitamos:
@@ -663,8 +726,8 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
         sb.from('facturas_clientes').select('id', { count: 'exact', head: true }).in('no_factura', FACTS),
         sb.from('factura_detalle_expediente').select('id', { count: 'exact', head: true }).in('no_factura', FACTS),
         sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }).like('id_externo', 'recE2E%'),
-        sb.from('cliente_externo').select('id', { count: 'exact', head: true }).in('empresa_id_externo', [EMP_A, EMP_B, EMP_C]),
-        sb.from('clientes').select('id', { count: 'exact', head: true }).in('nit', [NIT_A, NIT_B]),
+        sb.from('cliente_externo').select('id', { count: 'exact', head: true }).in('empresa_id_externo', [EMP_A, EMP_B, EMP_C, EMP_D]),
+        sb.from('clientes').select('id', { count: 'exact', head: true }).in('nit', [NIT_A, NIT_B, NIT_C]),
       ]);
       ok(a === 0 && b === 0 && c === 0 && d === 0 && f === 0 && v === 0 && dd === 0, 'limpieza verificada: 0 facturas / detalle (cascade) / expedientes / mapeos / clientes de prueba / filas de volumen / detalles de facturación');
     }

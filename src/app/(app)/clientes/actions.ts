@@ -2,7 +2,7 @@
 
 import { autorizar, exigir } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
-import { crearCliente, verificarNitCliente, type CrearClienteInput, type CrearClienteResult, type NitDuplicado } from '@/lib/db/clientes';
+import { actualizarNombresCliente, crearCliente, verificarNitCliente, type CrearClienteInput, type CrearClienteResult, type NitDuplicado, type NombresClienteInput, type NombresClienteResult } from '@/lib/db/clientes';
 
 export async function crearClienteAction(input: CrearClienteInput): Promise<CrearClienteResult> {
   const permiso = await autorizar('emitir_factura');
@@ -11,7 +11,21 @@ export async function crearClienteAction(input: CrearClienteInput): Promise<Crea
   if (result.ok) {
     revalidatePath('/clientes', 'layout');       // lista + /clientes/[id]
     revalidatePath('/facturacion/nueva');        // el picker debe verlo de inmediato
+    revalidatePath('/por-facturar', 'layout');   // el buscador del mapeo lo ve de inmediato
     revalidatePath('/dashboard');
+  }
+  return result;
+}
+
+/** 020: nombre comercial + otros nombres / marcas de un cliente existente (mismo permiso que el alta). */
+export async function editarNombresClienteAction(clienteId: string, input: NombresClienteInput): Promise<NombresClienteResult> {
+  const permiso = await autorizar('emitir_factura');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const result = await actualizarNombresCliente(clienteId, input);
+  if (result.ok) {
+    revalidatePath('/clientes', 'layout');
+    revalidatePath('/por-facturar', 'layout');
+    revalidatePath('/facturacion/nueva');
   }
   return result;
 }

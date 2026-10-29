@@ -135,6 +135,9 @@ export async function sbClientesRecords(): Promise<PseudoRecord[]> {
       'Contexto_Comercial':   s(r.contexto_comercial),
       // AVISO-NIT: un cliente inactivo no cuenta para el aviso de NIT repetido.
       'Activo':               typeof r.activo === 'boolean' ? r.activo : undefined,
+      // 020: nombre comercial + otros nombres / marcas (no existen en Airtable; ausentes si la 020 no está aplicada).
+      'Nombre comercial':     s(r.nombre_comercial),
+      'Aliases':              Array.isArray(r.aliases) && r.aliases.length ? (r.aliases as unknown[]).map(a => String(a ?? '').trim()).filter(Boolean) : undefined,
     }),
   }));
   return out.sort(porId);

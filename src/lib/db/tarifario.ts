@@ -150,10 +150,10 @@ export async function getTarifa(id: string): Promise<Tarifa | null> {
   return data ? rowToTarifa(data as Row) : null;
 }
 
-/** Alias (nombre y razón social de cada cliente activo) para identificar el NIT desde la Agenda. */
+/** Alias (nombre, razón social, nombre comercial y marcas —020— de cada cliente activo) para identificar el NIT desde la Agenda. */
 export async function aliasClientes(): Promise<AliasCliente[]> {
   const clientes = await getClientes().catch(() => []);
-  return clientes.filter(c => c.activo !== false).flatMap(c => [{ nombre: c.name, nit: c.nit }, { nombre: c.short, nit: c.nit }]);
+  return clientes.filter(c => c.activo !== false).flatMap(c => [c.name, c.short, c.razonSocial, c.nombreComercial, ...(c.aliases ?? [])].filter((n): n is string => !!n && n.trim() !== '').map(nombre => ({ nombre, nit: c.nit })));
 }
 
 export interface TarifaInput {

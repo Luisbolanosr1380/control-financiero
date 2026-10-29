@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { crearClienteAction, getDatosAltaClienteAction, verificarNitClienteAction, type DatosAltaCliente } from '@/app/(app)/clientes/actions';
 import { AVISO_NIT, nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
+import { ChipsInput } from '@/components/clientes/chips-input';
 import { detectarIntercompany, CUENTA_CXC_DEFAULT, CUENTA_CXC_INTERCOMPANY } from '@/lib/clientes/intercompany';
 import type { Customer } from '@/lib/types';
 
@@ -17,12 +18,19 @@ interface Props {
   onCreado?: (cliente: Customer) => void;
   /** Pre-carga del nombre (ej. lo que el usuario venía buscando). */
   nombreInicial?: string;
+  /** El caller necesita el NIT (ej. mapear una empresa de la Agenda: el tarifario va por NIT). */
+  exigirNit?: boolean;
+  /** Texto junto al título (ej. para mapear "BANCO CUSCATLAN"). */
+  subtitulo?: string;
 }
 
-export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
+export function ModalClienteForm({ onClose, onCreado, nombreInicial, exigirNit = false, subtitulo }: Props) {
   const router = useRouter();
   const [nombreEmpresa, setNombreEmpresa]   = useState(nombreInicial ?? '');
   const [razonSocial, setRazonSocial]       = useState('');
+  // 020: marca / nombre comercial + otros nombres (solo para ubicarlo; la factura sigue con la razón social).
+  const [nombreComercial, setNombreComercial] = useState('');
+  const [aliases, setAliases]               = useState<string[]>([]);
   const [nit, setNit]                       = useState('');
   // F-CXC-SELECTOR: la cuenta sale de un selector (código · nombre) con
   // default Nacionales; si el nombre matchea una empresa hermana del
@@ -73,7 +81,8 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
     return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
   }, [onClose, loading]);
 
-  const valido = nombreEmpresa.trim().length > 0;
+  const nitListo = !nitEsPlaceholder(nitComparable(nit));
+  const valido = nombreEmpresa.trim().length > 0 && (!exigirNit || nitListo);
 
   const revisarNit = async () => {
     const n = nitComparable(nit);
@@ -89,6 +98,8 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
         confirmarNitDuplicado,
         nombreEmpresa: nombreEmpresa.trim(),
         razonSocial: razonSocial.trim() || undefined,
+        nombreComercial: nombreComercial.trim() || undefined,
+        aliases: aliases.length ? aliases : undefined,
         nit: nit.trim() || undefined,
         cuentaCxc: cuentaCxc.trim() || undefined,
         emailCobros: emailCobros.trim() || undefined,
@@ -117,6 +128,9 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
           avgPayDays: 0,
           onTimeRate: 0,
           contextoComercial: contexto.trim() || undefined,
+          razonSocial: razonSocial.trim() || undefined,
+          nombreComercial: nombreComercial.trim() || undefined,
+          aliases: aliases.length ? aliases : undefined,
         });
         onClose();
         router.refresh();
@@ -155,7 +169,7 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
       >
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <I.Users size={15} style={{ color: 'var(--ink-3)' }} />
-          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>Nuevo cliente</div>
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>Nuevo cliente{subtitulo ? <span className="cell-mute" style={{ fontSize: 12, fontWeight: 400, marginLeft: 8 }}>{subtitulo}</span> : null}</div>
           <button type="button" className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={onClose} disabled={loading}>
             <I.X size={15} />
           </button>
@@ -172,8 +186,18 @@ export function ModalClienteForm({ onClose, onCreado, nombreInicial }: Props) {
               <input type="text" className="input" placeholder="Si se deja vacío, usa el nombre de la empresa" value={razonSocial} onChange={(e) => setRazonSocial(e.target.value)} disabled={loading} />
             </div>
             <div className="field" style={{ margin: 0 }}>
-              <label className="label">NIT (o CF)</label>
-              <input type="text" className="input num" placeholder="1234567-8 o CF" value={nit} onChange={(e) => { setNit(e.target.value); setNitDuplicado(null); setConfirmarNit(null); }} onBlur={revisarNit} disabled={loading} />
+              <label className="label">Nombre comercial / marca (opcional)</label>
+              <input type="text" className="input" placeholder='ej. "Calzado Chicote"' value={nombreComercial} onChange={(e) => setNombreComercial(e.target.value)} disabled={loading} aria-label="Nombre comercial" />
+            </div>
+            <div className="field" style={{ margin: 0 }}>
+              <label className="label">Otros nombres / marcas (opcional)</label>
+              <ChipsInput valores={aliases} onChange={setAliases} disabled={loading} placeholder="Escribí y Enter (varios)…" excluir={[nombreEmpresa, razonSocial, nombreComercial]} aria-label="Otros nombres o marcas" />
+              <div style={{ marginTop: 3, fontSize: 11, color: 'var(--ink-4)' }}>Para ubicarlo al buscar o al mapear la Agenda. La factura sale con la razón social.</div>
+            </div>
+            <div className="field" style={{ margin: 0 }}>
+              <label className="label">NIT (o CF){exigirNit ? ' *' : ''}</label>
+              <input type="text" className="input num" placeholder="1234567-8 o CF" value={nit} onChange={(e) => { setNit(e.target.value); setNitDuplicado(null); setConfirmarNit(null); }} onBlur={revisarNit} disabled={loading} aria-label="NIT" />
+              {exigirNit && !nitListo && <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--ink-3)' }}>Hace falta el NIT para mapearlo: el tarifario cruza por NIT.</div>}
               {nitDuplicado && (
                 <div role="status" style={{ marginTop: 4, fontSize: 11.5, color: 'var(--burnt, #b5651d)', lineHeight: 1.4 }}>
                   ⚠ {AVISO_NIT(nitDuplicado.nombre)}. <a href={`/clientes/${nitDuplicado.clienteId}`} target="_blank" rel="noreferrer">Ver</a>
