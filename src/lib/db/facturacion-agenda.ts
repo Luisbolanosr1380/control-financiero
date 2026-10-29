@@ -444,12 +444,14 @@ interface DetalleRpc { estado: string; n: number; total: number | string }
 interface ResumenRpc { conteos: ConteoEstado[]; grupos: GrupoRpc[]; facturados: FacturadoRpc[]; total: number; excluidos: number; /** 018 */ excluidos_no_factura?: number; no_facturan?: NoFacturaRpc[]; /** 019 */ detalles?: DetalleRpc[] }
 
 const rpcNoExiste = (e: { code?: string; message: string }) => e.code === 'PGRST202' || /could not find the function|function .* does not exist/i.test(e.message);
-/** Filtro PostgREST de "en cola" (misma regla que enCola()). */
+/** Filtro PostgREST de "en cola" (misma regla que enCola() y que facturacion_agenda_cobro_pendiente(status, pago) en SQL). */
 const COBRO_PENDIENTE_OR = 'status_cobro_externo.is.null,status_cobro_externo.in.("PENDIENTE","SIN_STATUS","")';
+/** 021: el pago no es PAGADO (null y 'NO PAGADO' siguen en cola; ilike sin comodines = igualdad sin mayúsculas). */
+const PAGO_NO_PAGADO_OR = 'estatus_pago_externo.is.null,estatus_pago_externo.not.ilike.PAGADO';
 /** Lo mínimo que usamos de un builder de PostgREST (los métodos devuelven `this`); el tipo real es demasiado profundo para inferirlo acá. */
 interface Filtrable { eq(col: string, v: unknown): this; is(col: string, v: null): this; or(filtros: string): this; in(col: string, vals: unknown[]): this; not(col: string, op: string, v: unknown): this; order(col: string): this }
 type QCola = Filtrable & Consulta & PromiseLike<{ count: number | null; error: { message: string } | null }>;
-const enColaSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false).is('factura_id', null).or(COBRO_PENDIENTE_OR);
+const enColaSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false).is('factura_id', null).or(COBRO_PENDIENTE_OR).or(PAGO_NO_PAGADO_OR);
 const vigenteSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false);
 const ESTADOS: EstadoTarifa[] = ['resuelta', 'sin_tarifa', 'cliente_sin_mapear', 'excluido_psicometrica', 'excluido_no_factura'];
 
