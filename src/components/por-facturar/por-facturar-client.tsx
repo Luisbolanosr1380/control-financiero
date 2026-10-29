@@ -17,13 +17,14 @@ import { Q } from '@/lib/utils';
 import { formatearFechaConHora } from '@/lib/utils/fechas';
 import { sincronizarAgendaAction } from '@/app/(app)/por-facturar/actions';
 import { filtrarGrupos, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
-import type { SyncEstado } from '@/lib/facturacion-agenda/tipos';
+import type { EmpresaNoFactura, SyncEstado } from '@/lib/facturacion-agenda/tipos';
+import { quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
 import { SinMapearLista } from './sin-mapear-lista';
 
-interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; agregadoEnSql: boolean }
-type Pestana = 'facturables' | 'sin_mapear';
+interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; noFacturan: EmpresaNoFactura[]; agregadoEnSql: boolean }
+type Pestana = 'facturables' | 'sin_mapear' | 'no_facturan';
 
-export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, agregadoEnSql }: Props) {
+export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, noFacturan, agregadoEnSql }: Props) {
   const [pestana, setPestana] = useState<Pestana>('facturables');
   const router = useRouter();
   const puede = usePuede();
@@ -83,7 +84,7 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
         <div className="kpi" data-kpi="sin-tarifa"><div className="kpi-label">Sin tarifa</div><div className="kpi-value" style={{ color: kpis.sinTarifa ? 'var(--burnt, #b5651d)' : undefined }}>{kpis.sinTarifa}</div><div className="kpi-delta"><span className="vs">falta cargarla en el tarifario</span></div></div>
         <div className="kpi" data-kpi="sin-mapear" role="button" tabIndex={0} onClick={irASinMapear} onKeyDown={e => { if (e.key === 'Enter') irASinMapear(); }} style={{ cursor: 'pointer' }} title="Ver las empresas sin mapear"><div className="kpi-label">Cliente sin mapear</div><div className="kpi-value" style={{ color: kpis.sinMapear ? 'var(--wine)' : undefined }}>{kpis.sinMapear}</div><div className="kpi-delta"><span className="vs">{sinMapear.empresas} empresa{sinMapear.empresas === 1 ? '' : 's'} de la Agenda · mapear →</span></div></div>
         <div className="kpi" data-kpi="facturados"><div className="kpi-label">Facturados desde acá</div><div className="kpi-value">{kpis.facturados}</div><div className="kpi-delta"><span className="vs" style={{ color: kpis.writebackPendiente ? 'var(--wine)' : undefined }}>{kpis.writebackPendiente ? `${kpis.writebackPendiente} sin confirmar en Agenda` : 'todos confirmados en Agenda'}</span></div></div>
-        <div className="kpi" data-kpi="excluidos"><div className="kpi-label">Psicométricas (excluidas)</div><div className="kpi-value" style={{ color: 'var(--ink-3)' }}>{kpis.excluidos}</div><div className="kpi-delta"><span className="vs">no se facturan individual</span></div></div>
+        <div className="kpi" data-kpi="excluidos"><div className="kpi-label">Excluidos de la cola</div><div className="kpi-value" style={{ color: 'var(--ink-3)' }}>{kpis.excluidos + kpis.excluidosNoFactura}</div><div className="kpi-delta"><span className="vs">{kpis.excluidos} psicométricas · {kpis.excluidosNoFactura} de empresas que no se facturan</span></div></div>
       </div>
 
       <div className="card" style={{ marginBottom: 12 }}>
@@ -99,9 +100,10 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
       <div role="tablist" aria-label="Pestañas" style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
         <button role="tab" aria-selected={pestana === 'facturables'} className={'btn ' + (pestana === 'facturables' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setPestana('facturables')}>Facturables <span className="cell-mute">({grupos.length} cliente{grupos.length === 1 ? '' : 's'})</span></button>
         <button role="tab" aria-selected={pestana === 'sin_mapear'} className={'btn ' + (pestana === 'sin_mapear' ? 'btn-secondary' : 'btn-ghost')} onClick={irASinMapear} data-tab="sin-mapear">Sin mapear <span className="cell-mute">({sinMapear.empresas} empresa{sinMapear.empresas === 1 ? '' : 's'} · {sinMapear.expedientes} exp.)</span></button>
+        <button role="tab" aria-selected={pestana === 'no_facturan'} className={'btn ' + (pestana === 'no_facturan' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setPestana('no_facturan')} data-tab="no-facturan">No se facturan <span className="cell-mute">({noFacturan.length} empresa{noFacturan.length === 1 ? '' : 's'} · {kpis.excluidosNoFactura} exp.)</span></button>
       </div>
 
-      {pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} /> : <>
+      {pestana === 'no_facturan' ? <NoFacturanLista empresas={noFacturan} puede={puedeFacturar} /> : pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} /> : <>
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
           <input className="input" placeholder="Buscar cliente por nombre o NIT…" value={q} onChange={e => setQ(e.target.value)} style={{ minWidth: 300 }} aria-label="Buscar cliente" />
@@ -147,6 +149,39 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
         </table>
       </div>
       </>}
+    </div>
+  );
+}
+
+/** 018: empresas marcadas "no se factura" por este flujo, con motivo y botón para revertir (facturar_agenda). */
+function NoFacturanLista({ empresas, puede }: { empresas: EmpresaNoFactura[]; puede: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState<string | null>(null);
+  const quitar = async (e: EmpresaNoFactura) => {
+    setBusy(e.empresaIdExterno);
+    try {
+      const r = await quitarNoFacturaAction(e.empresaIdExterno);
+      if (r.ok) { toast.success(`"${e.empresaNombreExterno}" vuelve a la cola · ${r.reclasificados} expediente(s) re-resueltos`); router.refresh(); } else toast.error(r.error);
+    } finally { setBusy(null); }
+  };
+  return (
+    <div className="card">
+      <div className="card-head"><div className="card-title">Empresas que no se facturan por evaluaciones</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>internas / intercompany / reclutamiento (Fase A). Sus expedientes quedan fuera de la cola; es reversible.</span></div></div>
+      <table className="table" data-lista="no-facturan">
+        <thead><tr><th>Empresa en la Agenda</th><th>Motivo</th><th className="num">Expedientes</th><th>Marcada por</th><th style={{ width: 200 }}></th></tr></thead>
+        <tbody>
+          {empresas.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>Ninguna empresa marcada. Se marca desde el detalle de una empresa sin mapear: &quot;No se factura (interno / no aplica)&quot;.</td></tr>}
+          {empresas.map(e => (
+            <tr key={e.empresaIdExterno} data-empresa={e.empresaIdExterno}>
+              <td><Link href={`/por-facturar/${encodeURIComponent('e-' + e.empresaIdExterno)}`} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{e.empresaNombreExterno || '—'}</Link><div className="cell-mute" style={{ fontSize: 11 }}>{e.empresaIdExterno}</div></td>
+              <td style={{ fontSize: 12.5 }}>{e.motivo || <span className="cell-mute">—</span>}</td>
+              <td className="num">{e.expedientes}</td>
+              <td className="cell-mute" style={{ fontSize: 12 }}>{e.marcadoPor || '—'}</td>
+              <td>{puede && <button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => void quitar(e)} disabled={busy === e.empresaIdExterno} aria-label={`Quitar la marca de ${e.empresaNombreExterno}`}>{busy === e.empresaIdExterno ? 'Quitando…' : 'Volver a la cola'}</button>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }

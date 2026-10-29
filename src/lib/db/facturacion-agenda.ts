@@ -23,7 +23,7 @@ import { configAgenda } from '@/lib/facturacion-agenda/config';
 import { AgendaApiError, crearAgendaApi, idsDe, resumirCuerpo, type AgendaApi, type LogSaliente } from '@/lib/facturacion-agenda/agenda-api';
 import { armarFactura, centroPorServicio, clasificarExpediente, expedienteALocal, facturable, montoParaAgenda, type ContextoPrecio } from '@/lib/facturacion-agenda/mapeo';
 import { agruparPorCliente, kpisPorFacturar, parseClave, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
-import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
+import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type EmpresaNoFactura, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import { getTarifario } from './tarifario';
 import { getClientes } from './clientes';
 import { getCentrosCostoActivos, type CentroCosto } from './centros';
@@ -97,19 +97,21 @@ export async function facturacionAgendaDisponible(): Promise<boolean> {
 
 // ── Mapeo de clientes ───────────────────────────────────────────────────────
 
-interface MapeoRow { id: string; fuente: string; empresa_id_externo: string; empresa_nombre_externo: string | null; nit: string; cliente_id: string | null; activo: boolean; creado_por: string | null }
-const rowToMapeo = (r: MapeoRow): ClienteExterno => ({ id: r.id, fuente: r.fuente, empresaIdExterno: r.empresa_id_externo, empresaNombreExterno: r.empresa_nombre_externo ?? '', nit: r.nit, clienteId: r.cliente_id, activo: !!r.activo, creadoPor: r.creado_por ?? '' });
+interface MapeoRow { id: string; fuente: string; empresa_id_externo: string; empresa_nombre_externo: string | null; nit: string; cliente_id: string | null; activo: boolean; creado_por: string | null; no_factura?: boolean | null; motivo_no_factura?: string | null; updated_at?: string | null }
+const rowToMapeo = (r: MapeoRow): ClienteExterno => ({ id: r.id, fuente: r.fuente, empresaIdExterno: r.empresa_id_externo, empresaNombreExterno: r.empresa_nombre_externo ?? '', nit: r.nit, clienteId: r.cliente_id, activo: !!r.activo, creadoPor: r.creado_por ?? '', noFactura: !!r.no_factura, motivoNoFactura: r.motivo_no_factura ?? '' });
 
 export async function getMapeos(): Promise<ClienteExterno[]> {
   try { return (await fetchAll<MapeoRow>('cliente_externo', { eq: { fuente: FUENTE } })).map(rowToMapeo); } catch { return []; }
 }
 
-export const nitPorEmpresa = (mapeos: readonly ClienteExterno[]): Map<string, string> => new Map(mapeos.filter(m => m.activo && m.nit).map(m => [m.empresaIdExterno, m.nit]));
+export const nitPorEmpresa = (mapeos: readonly ClienteExterno[]): Map<string, string> => new Map(mapeos.filter(m => m.activo && m.nit && !m.noFactura).map(m => [m.empresaIdExterno, m.nit]));
+/** 018: empresas marcadas "no se factura" → motivo. */
+export const noFacturaPorEmpresa = (mapeos: readonly ClienteExterno[]): Map<string, string> => new Map(mapeos.filter(m => m.activo && m.noFactura).map(m => [m.empresaIdExterno, m.motivoNoFactura]));
 
 export interface Contexto extends ContextoPrecio { mapeos: ClienteExterno[]; clienteUuidPorEmpresa: Map<string, string> }
 export async function cargarContexto(): Promise<Contexto> {
   const [tarifas, mapeos] = await Promise.all([getTarifario(), getMapeos()]);
-  return { tarifas, mapeos, nitPorEmpresa: nitPorEmpresa(mapeos), clienteUuidPorEmpresa: new Map(mapeos.filter(m => m.activo && m.clienteId).map(m => [m.empresaIdExterno, m.clienteId!])) };
+  return { tarifas, mapeos, nitPorEmpresa: nitPorEmpresa(mapeos), noFacturaEmpresas: noFacturaPorEmpresa(mapeos), clienteUuidPorEmpresa: new Map(mapeos.filter(m => m.activo && m.clienteId && !m.noFactura).map(m => [m.empresaIdExterno, m.clienteId!])) };
 }
 
 export type MapeoResult = { ok: true; nit: string; clienteNombre: string; reclasificados: number } | { ok: false; error: string };
@@ -127,11 +129,46 @@ export async function guardarMapeo(input: { empresaIdExterno: string; empresaNom
   const clienteUuid = await uuidOpcional('clientes', input.clienteAppId);
   const { error } = await sb.from('cliente_externo').upsert({
     fuente: FUENTE, empresa_id_externo: empresaId, empresa_nombre_externo: (input.empresaNombreExterno ?? '').trim() || null,
-    nit, cliente_id: clienteUuid, activo: true, creado_por: actor, updated_at: new Date().toISOString(),
+    nit, cliente_id: clienteUuid, activo: true, creado_por: actor, no_factura: false, motivo_no_factura: null, updated_at: new Date().toISOString(),
   }, { onConflict: 'fuente,empresa_id_externo' });
   if (error) return { ok: false, error: `No se pudo guardar el mapeo: ${error.message}` };
   const reclasificados = await reclasificar({ empresaIdExterno: empresaId });
   return { ok: true, nit, clienteNombre: cliente.name, reclasificados };
+}
+
+export type NoFacturaResult = { ok: true; reclasificados: number; estado: 'marcada' | 'quitada' } | { ok: false; error: string };
+
+/**
+ * 018: marca una empresa de la Agenda como "no se factura" por este flujo (interna /
+ * intercompany / reclutamiento = Fase A). Todos sus expedientes, presentes y futuros, pasan
+ * a 'excluido_no_factura'. Si ya estaba mapeada a un NIT, el mapeo se conserva para
+ * cuando se quite la marca. Reversible con quitarNoFactura().
+ */
+export async function marcarNoFactura(input: { empresaIdExterno: string; empresaNombreExterno?: string; motivo?: string }, actor: string): Promise<NoFacturaResult> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+  const empresaId = String(input.empresaIdExterno ?? '').trim();
+  if (!empresaId) return { ok: false, error: 'Falta la empresa de la Agenda.' };
+  const motivo = String(input.motivo ?? '').trim().replace(/\s+/g, ' ').slice(0, 200);
+  const previo = (await getMapeos()).find(m => m.empresaIdExterno === empresaId);
+  const { error } = await sb.from('cliente_externo').upsert({
+    fuente: FUENTE, empresa_id_externo: empresaId, empresa_nombre_externo: (input.empresaNombreExterno ?? '').trim() || previo?.empresaNombreExterno || null,
+    nit: previo?.nit ?? '', cliente_id: previo?.clienteId ?? null, activo: true, creado_por: actor, no_factura: true, motivo_no_factura: motivo || null, updated_at: new Date().toISOString(),
+  }, { onConflict: 'fuente,empresa_id_externo' });
+  if (error) return { ok: false, error: /no_factura/.test(error.message) ? 'Falta aplicar la migración 018_agenda_no_factura en esta base.' : `No se pudo marcar la empresa: ${error.message}` };
+  const reclasificados = await reclasificar({ empresaIdExterno: empresaId });
+  return { ok: true, reclasificados, estado: 'marcada' };
+}
+
+/** 018: quita la marca "no se factura": la empresa vuelve a su mapeo (si lo tenía) o a "cliente sin mapear". */
+export async function quitarNoFactura(empresaIdExterno: string, actor: string): Promise<NoFacturaResult> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+  const empresaId = String(empresaIdExterno ?? '').trim();
+  const previo = (await getMapeos()).find(m => m.empresaIdExterno === empresaId);
+  if (!previo || !previo.noFactura) return { ok: false, error: 'La empresa no está marcada como "no se factura".' };
+  const { error } = await sb.from('cliente_externo').update({ no_factura: false, motivo_no_factura: null, activo: !!previo.nit, creado_por: actor, updated_at: new Date().toISOString() }).eq('fuente', FUENTE).eq('empresa_id_externo', empresaId);
+  if (error) return { ok: false, error: `No se pudo quitar la marca: ${error.message}` };
+  const reclasificados = await reclasificar({ empresaIdExterno: empresaId });
+  return { ok: true, reclasificados, estado: 'quitada' };
 }
 
 // ── Espejo de expedientes ───────────────────────────────────────────────────
@@ -293,6 +330,8 @@ export interface VistaPorFacturar {
   /** Filas en el espejo (todas, solo como referencia). */
   total: number;
   sinMapear: { expedientes: number; empresas: number };
+  /** 018: empresas marcadas "no se factura" con su motivo y cuántos expedientes tienen. */
+  noFacturan: EmpresaNoFactura[];
   /** true si los agregados vinieron de la RPC de la 017 (SQL); false = fallback con consultas livianas. */
   agregadoEnSql: boolean;
 }
@@ -300,7 +339,8 @@ export interface VistaPorFacturar {
 interface ConteoEstado { estado_tarifa: EstadoTarifa; total: number; en_cola: number; empresas_en_cola: number }
 interface GrupoRpc { nit_resuelto: string; empresa_id_externo: string | null; empresa_nombre_externo: string | null; listos: number; total_sin_iva: number | string; sin_tarifa: number; con_megapaca: number; fecha_mas_antigua: string | null }
 interface FacturadoRpc { nit_resuelto: string | null; facturados: number; writeback_pendiente: number; con_megapaca: number }
-interface ResumenRpc { conteos: ConteoEstado[]; grupos: GrupoRpc[]; facturados: FacturadoRpc[]; total: number; excluidos: number }
+interface NoFacturaRpc { empresa_id_externo: string; empresa_nombre_externo: string | null; motivo_no_factura: string | null; creado_por: string | null; updated_at: string | null; expedientes: number }
+interface ResumenRpc { conteos: ConteoEstado[]; grupos: GrupoRpc[]; facturados: FacturadoRpc[]; total: number; excluidos: number; /** 018 */ excluidos_no_factura?: number; no_facturan?: NoFacturaRpc[] }
 
 const rpcNoExiste = (e: { code?: string; message: string }) => e.code === 'PGRST202' || /could not find the function|function .* does not exist/i.test(e.message);
 /** Filtro PostgREST de "en cola" (misma regla que enCola()). */
@@ -310,7 +350,7 @@ interface Filtrable { eq(col: string, v: unknown): this; is(col: string, v: null
 type QCola = Filtrable & Consulta & PromiseLike<{ count: number | null; error: { message: string } | null }>;
 const enColaSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false).is('factura_id', null).or(COBRO_PENDIENTE_OR);
 const vigenteSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false);
-const ESTADOS: EstadoTarifa[] = ['resuelta', 'sin_tarifa', 'cliente_sin_mapear', 'excluido_psicometrica'];
+const ESTADOS: EstadoTarifa[] = ['resuelta', 'sin_tarifa', 'cliente_sin_mapear', 'excluido_psicometrica', 'excluido_no_factura'];
 
 /** Fallback sin la 017: los mismos agregados con consultas livianas (counts por HEAD + solo las filas de la cola facturable). */
 async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>): Promise<ResumenRpc> {
@@ -343,8 +383,13 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>): Prom
     f.facturados++; if (!r.writeback_estado || !['confirmado', 'omitido'].includes(r.writeback_estado)) f.writeback_pendiente++; if (Number(r.cobro_megapaca ?? 0) > 0) f.con_megapaca++;
     fact.set(k, f);
   }
-  const [total, excluidos] = await Promise.all([cuenta(q => q), cuenta(q => vigenteSql(q.eq('estado_tarifa', 'excluido_psicometrica')))]);
-  return { conteos, grupos: [...grupos.values()], facturados: [...fact.values()], total, excluidos };
+  const [total, excluidos, excluidosNoFactura] = await Promise.all([cuenta(q => q), cuenta(q => vigenteSql(q.eq('estado_tarifa', 'excluido_psicometrica'))), cuenta(q => vigenteSql(q.eq('estado_tarifa', 'excluido_no_factura')))]);
+  const noFacturan: NoFacturaRpc[] = [];
+  for (const m of (await getMapeos()).filter(m => m.activo && m.noFactura)) {
+    noFacturan.push({ empresa_id_externo: m.empresaIdExterno, empresa_nombre_externo: m.empresaNombreExterno, motivo_no_factura: m.motivoNoFactura, creado_por: m.creadoPor, updated_at: null, expedientes: await cuenta(q => vigenteSql(q.eq('estado_tarifa', 'excluido_no_factura').eq('empresa_id_externo', m.empresaIdExterno))) });
+  }
+  noFacturan.sort((a, b) => b.expedientes - a.expedientes || (a.empresa_nombre_externo ?? '').localeCompare(b.empresa_nombre_externo ?? '', 'es'));
+  return { conteos, grupos: [...grupos.values()], facturados: [...fact.values()], total, excluidos, excluidos_no_factura: excluidosNoFactura, no_facturan: noFacturan };
 }
 
 /**
@@ -354,7 +399,7 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>): Prom
  */
 export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise<VistaPorFacturar> {
   const sb = supabase();
-  const vacio: VistaPorFacturar = { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, agregadoEnSql: false };
+  const vacio: VistaPorFacturar = { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], agregadoEnSql: false };
   if (!sb) return vacio;
   const [clientes, sync] = await Promise.all([getClientes(), getSyncEstado()]);
   let r: ResumenRpc | null = null; let enSql = false;
@@ -393,12 +438,14 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
     sinTarifa: Number(c('sin_tarifa')?.en_cola ?? 0),
     sinMapear: Number(c('cliente_sin_mapear')?.en_cola ?? 0),
     excluidos: Number(r.excluidos ?? 0),
+    excluidosNoFactura: Number(r.excluidos_no_factura ?? 0),
     facturados: r.facturados.reduce((s, f) => s + Number(f.facturados), 0),
     writebackPendiente: r.facturados.reduce((s, f) => s + Number(f.writeback_pendiente), 0),
     clientes: grupos.length,
     clientesSinMapear: Number(c('cliente_sin_mapear')?.empresas_en_cola ?? 0),
   };
-  return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, agregadoEnSql: enSql };
+  const noFacturan: EmpresaNoFactura[] = (r.no_facturan ?? []).map(n => ({ empresaIdExterno: n.empresa_id_externo, empresaNombreExterno: n.empresa_nombre_externo ?? '', motivo: n.motivo_no_factura ?? '', expedientes: Number(n.expedientes ?? 0), marcadoPor: n.creado_por ?? '', marcadoEn: n.updated_at ?? null }));
+  return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, noFacturan, agregadoEnSql: enSql };
 }
 
 export interface EmpresaSinMapear { empresaIdExterno: string; empresaNombreExterno: string; expedientes: number; fechaMasAntigua: string | null; fechaMasReciente: string | null }
@@ -439,13 +486,16 @@ export interface ClienteSlim { id: string; name: string; nit: string }
 export interface GrupoDetalle {
   clave: string; nit: string | null; empresaIdExterno: string; nombre: string; nombreExterno: string;
   grupo: GrupoCliente | null; expedientes: ExpedienteLocal[]; cliente: ClienteSlim | null; sugerencias: ClienteSlim[]; clientes: ClienteSlim[]; centros: CentroCosto[];
+  /** 018: la empresa está marcada "no se factura" (motivo y quién). */
+  noFactura: { motivo: string; marcadoPor: string } | null;
 }
 
 export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
   const p = parseClave(clave); if (!p) return null;
   const exps = await listarExpedientesLocal(p.tipo === 'nit' ? { nit: p.nit } : { empresaIdExterno: p.empresaId });
   if (!exps.length) return null;
-  const [clientes, centros] = await Promise.all([getClientes(), getCentrosCostoActivos()]);
+  const [clientes, centros, mapeos] = await Promise.all([getClientes(), getCentrosCostoActivos(), getMapeos()]);
+  const marca = mapeos.find(m => m.activo && m.noFactura && m.empresaIdExterno === exps[0].empresaIdExterno);
   const slim = (c: Customer): ClienteSlim => ({ id: c.id, name: c.name, nit: c.nit });
   const activos = clientes.filter(c => c.activo !== false);
   const razon = razonPorNitDe(clientes);
@@ -472,6 +522,7 @@ export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
   return {
     clave, nit: p.tipo === 'nit' ? p.nit : null, empresaIdExterno: exps[0].empresaIdExterno, nombre: grupo?.nombre ?? cliente?.name ?? nombreExterno, nombreExterno,
     grupo, expedientes: exps, cliente, sugerencias, clientes: activos.map(slim), centros,
+    noFactura: marca ? { motivo: marca.motivoNoFactura, marcadoPor: marca.creadoPor } : null,
   };
 }
 

@@ -17,7 +17,7 @@
 import { canonCategoria, canonTipoPrueba, conIva, normalizarTexto, round2 } from '@/lib/tarifario/canon';
 import { resolverTarifa, type Tarifa } from '@/lib/tarifario/lookup';
 import { nitComparable } from '@/lib/clientes/nit';
-import { STATUS_COBRO_POR_FACTURAR, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal } from './tipos';
+import { ESTADOS_EXCLUIDOS, STATUS_COBRO_POR_FACTURAR, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal } from './tipos';
 
 const compacto = (s: string | null | undefined) => normalizarTexto(s).replace(/[^A-Z0-9]/g, '');
 
@@ -55,6 +55,8 @@ export interface ContextoPrecio {
   /** empresa.id de la Agenda → NIT comparable del cliente de financiero (solo mapeos activos). */
   nitPorEmpresa: ReadonlyMap<string, string>;
   tarifas: readonly Tarifa[];
+  /** 018: empresa.id → motivo de las empresas marcadas "no se factura" (gana sobre el mapeo; las psicométricas ganan primero). */
+  noFacturaEmpresas?: ReadonlyMap<string, string>;
 }
 
 export interface Clasificacion {
@@ -77,6 +79,7 @@ export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio)
   const base = { tipoCobrado: tipo, categoriaCanon: cat, territorio: ter, componentes: [] as ComponentePrecio[] };
   if (esPsicometrica(exp)) return { ...base, estado: 'excluido_psicometrica', nit: null, monto: null, detalle: 'PSICOMETRICAS no se factura individual: trato aparte.' };
   const empresaId = String(exp.empresa?.id ?? '').trim();
+  if (empresaId && ctx.noFacturaEmpresas?.has(empresaId)) return { ...base, estado: 'excluido_no_factura', nit: null, monto: null, detalle: `La empresa está marcada como "no se factura" por este flujo (${ctx.noFacturaEmpresas.get(empresaId) || 'interno / no aplica'}).` };
   const nit = empresaId ? (ctx.nitPorEmpresa.get(empresaId) ?? null) : null;
   if (!nit) return { ...base, estado: 'cliente_sin_mapear', nit: null, monto: null, detalle: empresaId ? `La empresa "${exp.empresa?.nombre ?? empresaId}" no está mapeada a un cliente de financiero.` : 'El expediente no trae empresa.' };
   if (!cat) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: 'El expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO): sin categoría no hay tarifa.' };
@@ -101,7 +104,7 @@ export function cobroPendiente(statusCobro: string | null | undefined): boolean 
 
 /** Listo para la cola "Por facturar": terminado, vigente, sin factura local y con cobro pendiente en la Agenda. */
 export function enCola(e: Pick<ExpedienteLocal, 'terminado' | 'cancelado' | 'eliminado' | 'estadoTarifa' | 'facturaId' | 'statusCobroExterno'>): boolean {
-  return e.terminado && !e.cancelado && !e.eliminado && e.estadoTarifa !== 'excluido_psicometrica' && !e.facturaId && cobroPendiente(e.statusCobroExterno);
+  return e.terminado && !e.cancelado && !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && !e.facturaId && cobroPendiente(e.statusCobroExterno);
 }
 
 /** Se puede incluir en una factura: en cola y con precio resuelto. */

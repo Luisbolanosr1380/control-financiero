@@ -3,8 +3,8 @@
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
 import {
-  emitirFacturaAgenda, empresasSinMapear, guardarMapeo, reintentarWriteback, sincronizarAgenda,
-  type EmitirInput, type PaginaSinMapear, type EmitirResult, type MapeoResult, type ResultadoSync, type WritebackResultado,
+  emitirFacturaAgenda, empresasSinMapear, guardarMapeo, marcarNoFactura, quitarNoFactura, reintentarWriteback, sincronizarAgenda,
+  type EmitirInput, type NoFacturaResult, type PaginaSinMapear, type EmitirResult, type MapeoResult, type ResultadoSync, type WritebackResultado,
 } from '@/lib/db/facturacion-agenda';
 
 function revalidar() {
@@ -55,4 +55,21 @@ export async function empresasSinMapearAction(q: string, pagina: number, limite 
   await exigir('ver');
   const lim = Math.min(Math.max(Number(limite) || 25, 1), 100);
   return empresasSinMapear({ q, limite: lim, desde: (Math.max(Number(pagina) || 1, 1) - 1) * lim });
+}
+
+/** 018: marcar una empresa de la Agenda como "no se factura" por este flujo (sale de la cola; reversible). */
+export async function marcarNoFacturaAction(input: { empresaIdExterno: string; empresaNombreExterno?: string; motivo?: string }): Promise<NoFacturaResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await marcarNoFactura(input, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+export async function quitarNoFacturaAction(empresaIdExterno: string): Promise<NoFacturaResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await quitarNoFactura(empresaIdExterno, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
 }
