@@ -127,14 +127,20 @@ function elegir(cands: Tarifa[], nit: string, territorio: string): { ok: Tarifa;
   return { ok: porTerritorio[0], avisos };
 }
 
-/** Forma 'unico': todas las tarifas activas del tipo valen (aunque alguna legacy traiga categoría/territorio); montos distintos → ambigua. */
+/**
+ * Forma 'unico': todas las tarifas activas del tipo valen (aunque alguna legacy traiga categoría/territorio).
+ * Las filas en Q0 son "sin tarifa definida", no un precio: si hay UNA con precio y el resto en Q0 (el patrón
+ * real de PDA / INSIGHT cargados como matriz de 6 celdas), se usa esa y se avisa que hay que normalizar.
+ * Dos o más precios distintos → ambigua. Todas en Q0 → la primera (el motor la reporta como sin tarifa).
+ */
 function elegirUnico(cands: Tarifa[], nit: string, tp: string): { ok: Tarifa; avisos: string[] } | { ambigua: Tarifa[]; mensaje: string } | null {
   if (cands.length === 0) return null;
-  const montos = new Set(cands.map(c => Number(c.monto)));
-  if (montos.size > 1) return { ambigua: cands, mensaje: `${tp} es de precio único por cliente y el NIT ${nit} tiene ${montos.size} montos distintos (${[...montos].map(m => `Q${m.toFixed(2)}`).join(' · ')}): dejá uno solo en el tarifario.` };
+  const conPrecio = cands.filter(c => !esSinTarifa(c.monto));
+  const montos = new Set(conPrecio.map(c => Number(c.monto)));
+  if (montos.size > 1) return { ambigua: conPrecio, mensaje: `${tp} es de precio único por cliente y el NIT ${nit} tiene ${montos.size} montos distintos (${[...montos].map(m => `Q${m.toFixed(2)}`).join(' · ')}): dejá uno solo en el tarifario.` };
   const avisos: string[] = [];
-  if (cands.length > 1) avisos.push(`${tp} tiene ${cands.length} filas para el mismo cliente (precio único): conviene normalizarlas a una.`);
-  return { ok: cands[0], avisos };
+  if (cands.length > 1) avisos.push(`${tp} tiene ${cands.length} filas para el mismo cliente (precio único${conPrecio.length === 1 ? `, ${cands.length - 1} en Q0` : ''}): conviene normalizarlas a una.`);
+  return { ok: conPrecio[0] ?? cands[0], avisos };
 }
 
 /** Resuelve el precio de un expediente contra el tarifario (solo tarifas activas). */

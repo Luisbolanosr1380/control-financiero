@@ -184,6 +184,15 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   ok(c.estado === 'sin_tarifa' && c.monto === null && /no trae el servicio/.test(c.detalle) && cNulo.estado === 'sin_tarifa' && /no trae el servicio/.test(cNulo.detalle), '"COMPLETO" suelto (o sin tipoPrueba) no es un servicio → "sin tarifa" con el motivo (dato a limpiar en la Agenda; antes cobraba Q800)');
   c = M.clasificarExpediente(E({ tipoPrueba: 'PDA', procesoSolicitado: 'COMPLETO' }), ctx);
   ok(c.estado === 'sin_tarifa' && /no tiene tarifa para PDA/.test(c.detalle), 'PDA/COMPLETO → se cotiza PDA (sin tarifa), no polígrafo + socio (antes cobraba Q800)');
+  // SERVICIOS DE PRECIO ÚNICO: PDA / entrevistas / INSIGHT / MIDOT resuelven sin categoría ni territorio.
+  const ctxU = { ...ctx, tarifas: [...tarifas, T('tp', '123', 'PDA', 'UNICA', 'UNICA', 3200), T('tg', '123', 'ENTREVISTA GERENCIAL', 'PRE EMPLEO', 'METROPOLITANA', 0), T('tm', '123', 'MIDOT', 'UNICA', 'UNICA', 950)] };
+  c = M.clasificarExpediente(E({ tipoPrueba: 'PDA', procesoSolicitado: 'COMPLETO', categoriaPrueba: null, categoria: null, deptoVisita: null }), ctxU);
+  const cPdaDep = M.clasificarExpediente(E({ tipoPrueba: 'PDA', procesoSolicitado: 'PDA', categoriaPrueba: 'AGENDADO', deptoVisita: 'QUETZALTENANGO' }), ctxU);
+  ok(c.estado === 'resuelta' && c.monto === 3200 && c.tipoCobrado === 'PDA' && c.componentes[0].categoria === 'UNICA' && cPdaDep.estado === 'resuelta' && cPdaDep.monto === 3200, 'FORMA único: PDA sin categoría ni territorio → Q3,200; con categoría basura y depto → el mismo Q3,200 (ni "sin categoría" ni territorio)');
+  c = M.clasificarExpediente(E({ tipoPrueba: 'ENTREVISTA GERENCIL', procesoSolicitado: 'COMPLETO', categoriaPrueba: null, categoria: null }), ctxU);
+  ok(c.estado === 'sin_tarifa' && c.tipoCobrado === 'ENTREVISTA GERENCIAL' && /Q0/.test(c.detalle), 'ENTREVISTA GERENCIAL (errata GERENCIL) con tarifa en Q0 → "sin tarifa" por Q0, no por categoría');
+  c = M.clasificarExpediente(E({ tipoPrueba: 'MIDOT', procesoSolicitado: 'MIDOT', categoriaPrueba: 'RUTINA', deptoVisita: 'COSTA RICA' }), ctxU);
+  ok(c.estado === 'resuelta' && c.monto === 950 && c.tipoCobrado === 'MIDOT', 'MIDOT único → Q950 aunque venga con categoría RUTINA y depto COSTA RICA');
   c = M.clasificarExpediente(E({ tipoPrueba: 'SOCIOECONOMICO', procesoSolicitado: 'SOLO POLIGRAFO' }), ctx);
   ok(c.estado === 'resuelta' && c.monto === 450 && c.tipoCobrado === 'SOCIOECONOMICO', 'si tipoPrueba y procesoSolicitado se contradicen, manda el tipoPrueba de la fila (SOCIO)');
   c = M.clasificarExpediente(E({ tipoPrueba: 'SOCIOECONOMICO', procesoSolicitado: 'SOLO SOCIOECONOMICO', categoriaPrueba: 'RUTINA' }), ctx);
@@ -696,7 +705,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     const idNuevo = nuevo.ok ? nuevo.clienteId : 'x';
     ok(buscarC(detD!.clientes, 'calzado chicote')[0]?.id === cliB!.airtable_id && buscarC(detD!.clientes, 'otra émpresa')[0]?.id === cliB!.airtable_id && buscarC(detD!.clientes, 'e2e agenda')[0]?.id === cliA!.airtable_id && buscarC(detD!.clientes, 'agénda sociedad anonima')[0]?.id === cliA!.airtable_id && buscarC(detD!.clientes, NIT_B)[0]?.id === cliB!.airtable_id && buscarC(detD!.clientes, 'marca nueva')[0]?.id === idNuevo, 'buscador del panel: por marca, nombre en la Agenda (con tilde), razón social, NIT y la marca del cliente recién creado');
     // Re-resolver por NIT: cargar precio a la SOCIO RUTINA Q0 del cliente A → e005 pasa a resuelta SIN sync; volver a Q0 → vuelve a "sin tarifa".
-    const rutina = (await TDB.getTarifario()).find(t => t.nit === NIT_A && t.tipoPrueba === 'SOCIOECONOMICO' && t.categoria === 'RUTINA' && t.activo)!;
+    const rutina = (await TDB.getTarifario()).find(t => t.nit === NIT_A && t.tipoPrueba === 'SOCIOECONOMICO' && t.categoria === 'RUTINA' && t.territorio === 'METROPOLITANA' && t.activo)!;   // e005 es GUATEMALA → METROPOLITANA (la generada en DEPARTAMENTAL no es la suya)
     ok((await TDB.editarTarifa(rutina.id, { monto: 500 }, ACTOR, 'precio pactado')).ok, 'se carga Q500 a SOCIO RUTINA (estaba en Q0)');
     const firma = (e: import('../src/lib/facturacion-agenda/tipos').ExpedienteLocal) => JSON.stringify([e.estadoTarifa, e.montoCalculado, e.detalleTarifa, e.tipoCobrado, e.nitResuelto]);
     const antesNit = new Map((await DB.listarExpedientesLocal()).map(e => [e.idExterno, firma(e)]));
@@ -708,6 +717,28 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     await sb.from('facturacion_expediente').delete().eq('id_externo', 'recE2E900');   // la empresa D (sembrada a mano) no entra a la sección de volumen
     const rrPrecios = await DB.reresolverPrecios();
     ok(rrPrecios.ok && rrPrecios.reclasificados === 0, `"Re-resolver precios" (toda la cola, local): nada pendiente → 0 cambios (${rrPrecios.ok ? rrPrecios.reclasificados : rrPrecios.error})`);
+
+    // ── SERVICIOS DE PRECIO ÚNICO · E2E en HIT: PDA Q3,200 único → los expedientes PDA del cliente resuelven sin importar categoría/territorio ──
+    console.log('\n   precio único · PDA Q3,200 → expedientes PDA resuelven sin categoría/territorio');
+    const filaPda = (id: string, cat: string | null, depto: string | null) => ({ fuente: 'agenda', id_externo: id, empresa_id_externo: EMP_A, empresa_nombre_externo: 'E2E AGENDA', nit_resuelto: NIT_A, tipo_cobrado: 'PDA', estado_tarifa: 'sin_tarifa', detalle_tarifa: 'sembrado', terminado: true, cancelado: false, eliminado: false, status_cobro_externo: 'PENDIENTE', fecha_ingreso: '2026-10-11', tipo_prueba: 'PDA', proceso_solicitado: 'COMPLETO', categoria_prueba: cat, depto_visita: depto, persona: `PERSONA ${id.slice(-3)}`, raw: { id, empresa: { id: EMP_A, nombre: 'E2E AGENDA' }, tipoPrueba: 'PDA', procesoSolicitado: 'COMPLETO', categoriaPrueba: cat, deptoVisita: depto, terminado: true, cancelado: false, eliminado: false, fechaIngreso: '2026-10-11', cobro: { statusCobro: 'PENDIENTE' }, actualizadoEn: '2026-10-20T10:00:00.000Z', nombre: `PERSONA ${id.slice(-3)}` } });
+    const { error: ePda } = await sb.from('facturacion_expediente').insert([filaPda('recE2E910', null, null), filaPda('recE2E911', 'AGENDADO', 'QUETZALTENANGO'), filaPda('recE2E912', 'PRE EMPLEO', 'GUATEMALA')]);
+    const plPda = await TDB.planGenerarTarifas(NIT_A);
+    ok(!ePda && !('error' in plPda) && plPda.tiposAgenda.includes('PDA') && plPda.porTipo.PDA === 1 && plPda.filas.find(f => f.tipoPrueba === 'PDA')?.categoria === 'UNICA' && plPda.filas.find(f => f.tipoPrueba === 'PDA')?.territorio === 'UNICA', `el plan de "Generar tarifas" lee de la Agenda que el cliente pide PDA → 1 fila UNICA/UNICA (${'error' in plPda ? plPda.error : plPda.resumen})`);
+    const gPda = await TDB.generarTarifasCliente({ nit: NIT_A }, ACTOR);
+    const tPda = (await TDB.getTarifario()).find(t => t.nit === NIT_A && t.tipoPrueba === 'PDA' && t.activo);
+    ok(gPda.ok && gPda.creadas === 1 && !!tPda && tPda.categoria === 'UNICA' && tPda.territorio === 'UNICA' && tPda.monto === 0 && (await TDB.generarTarifasCliente({ nit: NIT_A }, ACTOR) as { creadas?: number }).creadas === 0, 'generar crea la PDA en Q0 (UNICA/UNICA) y una segunda corrida crea 0 (no duplica)');
+    ok((await TDB.editarTarifa(tPda!.id, { monto: 3200 }, ACTOR, 'precio pactado PDA')).ok && (await DB.reclasificar({ nit: NIT_A })) === 3, 'se carga Q3,200 → reclasificar({ nit }) re-resuelve los 3 PDA');
+    locales = await DB.listarExpedientesLocal();
+    ok(['recE2E910', 'recE2E911', 'recE2E912'].every(id => byId(id).estadoTarifa === 'resuelta' && byId(id).montoCalculado === 3200 && byId(id).tipoCobrado === 'PDA' && byId(id).componentes[0]?.categoria === 'UNICA'), 'los 3 PDA (sin categoría/depto, con categoría basura + Quetzaltenango, con PRE EMPLEO + Guatemala) → resuelta Q3,200 cada uno');
+    // Patrón legacy: una PDA Q3,200 "matriz" + celdas en Q0 → sigue resolviendo Q3,200 (Q0 no es un precio) con el aviso de normalizar.
+    const rPdaSinConf = await TDB.crearTarifa({ nit: NIT_A, tipoPrueba: 'PDA', categoria: 'RUTINA', territorio: 'DEPARTAMENTAL', monto: 0 }, ACTOR);
+    const rPdaLegacy = await TDB.crearTarifa({ nit: NIT_A, tipoPrueba: 'PDA', categoria: 'RUTINA', territorio: 'DEPARTAMENTAL', monto: 0, confirmarDuplicado: true }, ACTOR);
+    const lk = await TDB.resolverTarifaExpediente({ nit: NIT_A, tipoPrueba: 'PDA', categoria: '', territorio: '' });
+    ok(!rPdaSinConf.ok && !!rPdaSinConf.duplicado && !rPdaLegacy.ok && /candado de la base/.test(rPdaLegacy.error), `crear una "segunda PDA" con categoría/territorio de matriz: la llave efectiva es UNICA/UNICA → aviso de repetida y, confirmando, el candado de la base la rechaza (no quedan dos filas) (${rPdaLegacy.ok ? 'creó' : rPdaLegacy.error})`);
+    ok(lk.estado === 'ok' && lk.monto === 3200, 'lookup PDA del cliente (sin categoría ni territorio) → Q3,200');
+    await sb.from('facturacion_expediente').delete().in('id_externo', ['recE2E910', 'recE2E911', 'recE2E912']);   // fuera antes de la sección de volumen
+    await TDB.activarTarifa(tPda!.id, false, ACTOR);
+    ok((await DB.reclasificar({ nit: NIT_A })) === 0, 'sin los PDA sembrados y con la tarifa desactivada, la cola de A queda igual (0 cambios)');
 
     // Sin llave / HIT
     process.env.EMPRESA_SLUG = 'hit';

@@ -16,21 +16,30 @@ export function normalizarTexto(s: string | null | undefined): string {
 /** Solo letras y dígitos (para comparar variantes de grafía). */
 const compacto = (s: string | null | undefined) => normalizarTexto(s).replace(/[^A-Z0-9]/g, '');
 
-export const TIPOS_PRUEBA = ['POLIGRAFO', 'SOCIOECONOMICO', 'COMPLETO', 'POLIGRAFO BASIC', 'INFORNET', 'VISITA DOMICILIAR', 'ENTREVISTA FORENSE', 'SOCIOECONOMICO EMPRESARIAL'] as const;
+export const TIPOS_PRUEBA = ['POLIGRAFO', 'SOCIOECONOMICO', 'COMPLETO', 'POLIGRAFO BASIC', 'INFORNET', 'VISITA DOMICILIAR', 'ENTREVISTA FORENSE', 'SOCIOECONOMICO EMPRESARIAL', 'PDA', 'ENTREVISTA GERENCIAL', 'ENTREVISTA ESPECIALISTA', 'INSIGHT', 'MIDOT'] as const;
 export const CATEGORIAS   = ['PRE EMPLEO', 'RUTINA', 'ESPECIFICO'] as const;
 
 /**
  * FORMAS DE PRECIO (confirmadas con el CFO): no todos los servicios se cobran con la misma llave.
  *  - matriz:     NIT × tipo × categoría × territorio (POLIGRAFO, SOCIOECONOMICO, BASIC, FORENSE, VISITA; default).
  *  - territorio: NIT × tipo × territorio, sin categoría (SOCIOECONOMICO EMPRESARIAL).
- *  - unico:      NIT × tipo, sin categoría ni territorio (INFORNET).
+ *  - unico:      NIT × tipo, sin categoría ni territorio (INFORNET, PDA, ENTREVISTA GERENCIAL / ESPECIALISTA,
+ *                INSIGHT, MIDOT — confirmados con el CFO; INSIGHT y MIDOT por el mismo patrón de datos, a ratificar).
  * Las dimensiones que no aplican se guardan con el centinela 'UNICA' (las columnas siguen NOT NULL y la
  * clave única nit × tipo × categoría × territorio sigue sirviendo; sin migración).
  */
 export type FormaPrecio = 'matriz' | 'territorio' | 'unico';
 export const UNICA = 'UNICA';
-const FORMA_POR_TIPO: Record<string, FormaPrecio> = { 'SOCIOECONOMICO EMPRESARIAL': 'territorio', INFORNET: 'unico' };
-/** Forma de precio de un tipo de prueba (canónico o no). Lo no declarado (BACKGROUND CHECK, MIDOT…) es matriz hasta que el CFO decida. */
+const FORMA_POR_TIPO: Record<string, FormaPrecio> = {
+  'SOCIOECONOMICO EMPRESARIAL': 'territorio',
+  INFORNET: 'unico',
+  PDA: 'unico',
+  'ENTREVISTA GERENCIAL': 'unico',
+  'ENTREVISTA ESPECIALISTA': 'unico',
+  INSIGHT: 'unico',   // confirmar con el CFO
+  MIDOT: 'unico',     // confirmar con el CFO
+};
+/** Forma de precio de un tipo de prueba (canónico o no). Lo no declarado (BACKGROUND CHECK…) es matriz hasta que el CFO decida. */
 export const formaPrecio = (tipoPrueba: string | null | undefined): FormaPrecio => FORMA_POR_TIPO[canonTipoPrueba(tipoPrueba)] ?? 'matriz';
 export const usaCategoria  = (forma: FormaPrecio): boolean => forma === 'matriz';
 export const usaTerritorio = (forma: FormaPrecio): boolean => forma !== 'unico';
@@ -63,6 +72,12 @@ export function canonTipoPrueba(s: string | null | undefined): string {
   if (c.includes('INFORNET')) return 'INFORNET';
   if (c.includes('VISITA'))   return 'VISITA DOMICILIAR';
   if (c.includes('FORENSE'))  return 'ENTREVISTA FORENSE';
+  // Servicios de precio único (brief "servicios de precio único"): la llave tiene que coincidir con FORMA_POR_TIPO.
+  if (c.includes('GERENCI'))  return 'ENTREVISTA GERENCIAL';     // incluye la errata "GERENCIL" de la Agenda
+  if (c.includes('ESPECIALISTA')) return 'ENTREVISTA ESPECIALISTA';
+  if (c.includes('INSIGHT'))  return 'INSIGHT';
+  if (c.includes('MIDOT'))    return 'MIDOT';
+  if (/\bPDA\b/.test(normalizarTexto(s))) return 'PDA';
   return normalizarTexto(s);
 }
 
