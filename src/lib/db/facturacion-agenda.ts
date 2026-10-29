@@ -21,7 +21,7 @@ import { indiceAlias, nombreBase, resolverNit } from '@/lib/tarifario/lookup';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { configAgenda } from '@/lib/facturacion-agenda/config';
 import { AgendaApiError, crearAgendaApi, idsDe, resumirCuerpo, type AgendaApi, type LogSaliente } from '@/lib/facturacion-agenda/agenda-api';
-import { armarFactura, centroPorServicio, clasificarExpediente, expedienteALocal, facturable, montoParaAgenda, type ContextoPrecio } from '@/lib/facturacion-agenda/mapeo';
+import { armarFactura, centroPorServicio, clasificarExpediente, conPrecio, expedienteALocal, montoParaAgenda, type ContextoPrecio } from '@/lib/facturacion-agenda/mapeo';
 import { agruparPorCliente, kpisPorFacturar, parseClave, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
 import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type EmpresaNoFactura, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import { getTarifario } from './tarifario';
@@ -43,6 +43,7 @@ interface ExpRow {
   creado_en_externo: string | null; actualizado_en_externo: string | null;
   factura_id: string | null; factura_app_id: string | null; no_factura: string | null; facturado_en: string | null; facturado_por: string | null;
   writeback_estado: WritebackEstado | null; writeback_detalle: string | null; writeback_en: string | null; cobro_writeback_estado: string | null; cobro_writeback_detalle: string | null;
+  detalle_id?: string | null;
   raw: unknown; updated_at: string | null;
 }
 const num = (v: number | string | null | undefined): number | null => (v === null || v === undefined ? null : Number(v));
@@ -61,6 +62,7 @@ export const rowToLocal = (r: ExpRow): ExpedienteLocal => ({
   creadoEnExterno: r.creado_en_externo, actualizadoEnExterno: r.actualizado_en_externo, actualizadoEnExternoCrudo: crudoDe(r.raw) ?? r.actualizado_en_externo,
   facturaId: r.factura_id, facturaAppId: r.factura_app_id, noFactura: r.no_factura, facturadoEn: r.facturado_en, facturadoPor: r.facturado_por,
   writebackEstado: r.writeback_estado, writebackDetalle: r.writeback_detalle, writebackEn: r.writeback_en, cobroWritebackEstado: r.cobro_writeback_estado, cobroWritebackDetalle: r.cobro_writeback_detalle,
+  detalleId: r.detalle_id ?? null,
   updatedAt: r.updated_at,
 });
 
@@ -86,6 +88,12 @@ async function paginar<T>(hacer: () => Consulta, contexto: string): Promise<T[]>
     if (rows.length < PAGE) break;
   }
   return out;
+}
+
+/** Como paginar(), pero si la columna detalle_id no existe (sin 019) reintenta sin ella. */
+async function paginarTolerante<T>(hacer: () => Consulta, contexto: string): Promise<T[]> {
+  try { return await paginar<T>(hacer, contexto); }
+  catch (e) { if (/detalle_id/.test(e instanceof Error ? e.message : String(e))) return []; throw e; }
 }
 
 /** true si la 016 está aplicada en esta base. */
@@ -270,7 +278,7 @@ export async function reclasificar(filtro: { empresaIdExterno?: string; empresas
   return cambiados.length ? procesarExpedientes(cambiados, ctx) : 0;
 }
 
-export interface FiltroExpedientes { nit?: string; empresaIdExterno?: string; noFactura?: string; idsExternos?: string[] }
+export interface FiltroExpedientes { nit?: string; empresaIdExterno?: string; noFactura?: string; idsExternos?: string[]; detalleId?: string }
 
 export async function listarExpedientesLocal(f: FiltroExpedientes = {}): Promise<ExpedienteLocal[]> {
   const sb = supabase(); if (!sb) return [];
@@ -281,6 +289,7 @@ export async function listarExpedientesLocal(f: FiltroExpedientes = {}): Promise
       if (f.empresaIdExterno) q = q.eq('empresa_id_externo', f.empresaIdExterno);
       if (f.noFactura) q = q.eq('no_factura', f.noFactura);
       if (f.idsExternos) q = q.in('id_externo', f.idsExternos);
+      if (f.detalleId) q = q.eq('detalle_id', f.detalleId);
       return q;
     }, 'facturacion_expediente');
     return rows.map(rowToLocal);
@@ -373,6 +382,7 @@ const razonPorNitDe = (clientes: readonly Customer[]): Map<string, string> => {
 };
 
 export interface ClienteSlim { id: string; name: string; nit: string }
+const DETALLES_VACIOS = (): VistaPorFacturar['detalles'] => ({ borrador: { n: 0, total: 0 }, enviada: { n: 0, total: 0 }, aprobada: { n: 0, total: 0 }, facturada: { n: 0, total: 0 }, anulada: { n: 0, total: 0 } });
 
 export interface VistaPorFacturar {
   /** Solo clientes con expedientes en cola resueltos o sin tarifa (nunca el universo). */
@@ -386,15 +396,18 @@ export interface VistaPorFacturar {
   noFacturan: EmpresaNoFactura[];
   /** Clientes activos de financiero (id de app, nombre, NIT) para el selector de "Mapear todas a un cliente". */
   clientes: ClienteSlim[];
+  /** 019: detalles de facturación por estado (tablero "pendientes de aprobación"). */
+  detalles: Record<'borrador' | 'enviada' | 'aprobada' | 'facturada' | 'anulada', { n: number; total: number }>;
   /** true si los agregados vinieron de la RPC de la 017 (SQL); false = fallback con consultas livianas. */
   agregadoEnSql: boolean;
 }
 
 interface ConteoEstado { estado_tarifa: EstadoTarifa; total: number; en_cola: number; empresas_en_cola: number }
-interface GrupoRpc { nit_resuelto: string; empresa_id_externo: string | null; empresa_nombre_externo: string | null; listos: number; total_sin_iva: number | string; sin_tarifa: number; con_megapaca: number; fecha_mas_antigua: string | null }
+interface GrupoRpc { nit_resuelto: string; empresa_id_externo: string | null; empresa_nombre_externo: string | null; listos: number; total_sin_iva: number | string; sin_tarifa: number; con_megapaca: number; en_detalle?: number; fecha_mas_antigua: string | null }
 interface FacturadoRpc { nit_resuelto: string | null; facturados: number; writeback_pendiente: number; con_megapaca: number }
 interface NoFacturaRpc { empresa_id_externo: string; empresa_nombre_externo: string | null; motivo_no_factura: string | null; creado_por: string | null; updated_at: string | null; expedientes: number }
-interface ResumenRpc { conteos: ConteoEstado[]; grupos: GrupoRpc[]; facturados: FacturadoRpc[]; total: number; excluidos: number; /** 018 */ excluidos_no_factura?: number; no_facturan?: NoFacturaRpc[] }
+interface DetalleRpc { estado: string; n: number; total: number | string }
+interface ResumenRpc { conteos: ConteoEstado[]; grupos: GrupoRpc[]; facturados: FacturadoRpc[]; total: number; excluidos: number; /** 018 */ excluidos_no_factura?: number; no_facturan?: NoFacturaRpc[]; /** 019 */ detalles?: DetalleRpc[] }
 
 const rpcNoExiste = (e: { code?: string; message: string }) => e.code === 'PGRST202' || /could not find the function|function .* does not exist/i.test(e.message);
 /** Filtro PostgREST de "en cola" (misma regla que enCola()). */
@@ -417,12 +430,13 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>): Prom
   }
   const sinMapear = await paginar<{ empresa_id_externo: string | null }>(() => enColaSql(sel('empresa_id_externo').eq('estado_tarifa', 'cliente_sin_mapear')).order('id_externo'), 'sin mapear');
   const c = conteos.find(x => x.estado_tarifa === 'cliente_sin_mapear'); if (c) c.empresas_en_cola = new Set(sinMapear.map(r => r.empresa_id_externo ?? '')).size;
-  const colaRows = await paginar<{ nit_resuelto: string | null; empresa_id_externo: string | null; empresa_nombre_externo: string | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; cobro_megapaca: number | string | null; fecha_ingreso: string | null }>(() =>
-    enColaSql(sel('nit_resuelto, empresa_id_externo, empresa_nombre_externo, estado_tarifa, monto_calculado, cobro_megapaca, fecha_ingreso').in('estado_tarifa', ['resuelta', 'sin_tarifa'])).order('id_externo'), 'cola');
+  const colaRows = await paginarTolerante<{ nit_resuelto: string | null; empresa_id_externo: string | null; empresa_nombre_externo: string | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; cobro_megapaca: number | string | null; fecha_ingreso: string | null; detalle_id?: string | null }>(() =>
+    enColaSql(sel('nit_resuelto, empresa_id_externo, empresa_nombre_externo, estado_tarifa, monto_calculado, cobro_megapaca, fecha_ingreso, detalle_id').in('estado_tarifa', ['resuelta', 'sin_tarifa'])).order('id_externo'), 'cola');
   const grupos = new Map<string, GrupoRpc>();
   for (const r of colaRows) {
     if (!r.nit_resuelto) continue;
-    const g = grupos.get(r.nit_resuelto) ?? { nit_resuelto: r.nit_resuelto, empresa_id_externo: r.empresa_id_externo, empresa_nombre_externo: r.empresa_nombre_externo, listos: 0, total_sin_iva: 0, sin_tarifa: 0, con_megapaca: 0, fecha_mas_antigua: null };
+    const g = grupos.get(r.nit_resuelto) ?? { nit_resuelto: r.nit_resuelto, empresa_id_externo: r.empresa_id_externo, empresa_nombre_externo: r.empresa_nombre_externo, listos: 0, total_sin_iva: 0, sin_tarifa: 0, con_megapaca: 0, en_detalle: 0, fecha_mas_antigua: null };
+    if (r.detalle_id) g.en_detalle = (g.en_detalle ?? 0) + 1;
     if (r.estado_tarifa === 'resuelta' && Number(r.monto_calculado ?? 0) > 0) { g.listos++; g.total_sin_iva = Math.round((Number(g.total_sin_iva) + Number(r.monto_calculado)) * 100) / 100; }
     if (r.estado_tarifa === 'sin_tarifa') g.sin_tarifa++;
     if (Number(r.cobro_megapaca ?? 0) > 0) g.con_megapaca++;
@@ -443,7 +457,12 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>): Prom
     noFacturan.push({ empresa_id_externo: m.empresaIdExterno, empresa_nombre_externo: m.empresaNombreExterno, motivo_no_factura: m.motivoNoFactura, creado_por: m.creadoPor, updated_at: null, expedientes: await cuenta(q => vigenteSql(q.eq('estado_tarifa', 'excluido_no_factura').eq('empresa_id_externo', m.empresaIdExterno))) });
   }
   noFacturan.sort((a, b) => b.expedientes - a.expedientes || (a.empresa_nombre_externo ?? '').localeCompare(b.empresa_nombre_externo ?? '', 'es'));
-  return { conteos, grupos: [...grupos.values()], facturados: [...fact.values()], total, excluidos, excluidos_no_factura: excluidosNoFactura, no_facturan: noFacturan };
+  const detalles: DetalleRpc[] = [];
+  try {
+    const { data } = await sb.from('detalle_facturacion').select('estado, total').eq('fuente', FUENTE).limit(5000);
+    for (const d of (data ?? []) as { estado: string; total: number | string }[]) { const x = detalles.find(y => y.estado === d.estado) ?? (detalles.push({ estado: d.estado, n: 0, total: 0 }), detalles[detalles.length - 1]); x.n++; x.total = Math.round((Number(x.total) + Number(d.total)) * 100) / 100; }
+  } catch { /* sin la 019 */ }
+  return { conteos, grupos: [...grupos.values()], facturados: [...fact.values()], total, excluidos, excluidos_no_factura: excluidosNoFactura, no_facturan: noFacturan, detalles };
 }
 
 /**
@@ -453,7 +472,7 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>): Prom
  */
 export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise<VistaPorFacturar> {
   const sb = supabase();
-  const vacio: VistaPorFacturar = { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], clientes: [], agregadoEnSql: false };
+  const vacio: VistaPorFacturar = { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], clientes: [], detalles: DETALLES_VACIOS(), agregadoEnSql: false };
   if (!sb) return vacio;
   const [clientes, sync] = await Promise.all([getClientes(), getSyncEstado()]);
   let r: ResumenRpc | null = null; let enSql = false;
@@ -467,11 +486,11 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
   const porNit = new Map<string, GrupoCliente>();
   const base = (nit: string | null, emp: string | null, nombreExt: string | null): GrupoCliente => ({
     clave: nit ? `n-${nit}` : `e-${emp ?? ''}`, nit, empresaIdExterno: emp ?? '', nombre: (nit && razon.get(nit)) || nombreExt || emp || '—', nombreExterno: nombreExt ?? '',
-    expedientes: 0, listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, facturados: 0, writebackPendiente: 0, conMegapaca: 0, fechaIngresoMasAntigua: null,
+    expedientes: 0, listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, facturados: 0, writebackPendiente: 0, conMegapaca: 0, enDetalle: 0, fechaIngresoMasAntigua: null,
   });
   for (const g of r.grupos) {
     const x = porNit.get(g.nit_resuelto) ?? base(g.nit_resuelto, g.empresa_id_externo, g.empresa_nombre_externo);
-    x.listos += Number(g.listos); x.totalSinIva = Math.round((x.totalSinIva + Number(g.total_sin_iva)) * 100) / 100; x.sinTarifa += Number(g.sin_tarifa); x.conMegapaca += Number(g.con_megapaca);
+    x.listos += Number(g.listos); x.totalSinIva = Math.round((x.totalSinIva + Number(g.total_sin_iva)) * 100) / 100; x.sinTarifa += Number(g.sin_tarifa); x.conMegapaca += Number(g.con_megapaca); x.enDetalle += Number(g.en_detalle ?? 0);
     x.expedientes += Number(g.listos) + Number(g.sin_tarifa);
     if (g.fecha_mas_antigua && (!x.fechaIngresoMasAntigua || g.fecha_mas_antigua < x.fechaIngresoMasAntigua)) x.fechaIngresoMasAntigua = g.fecha_mas_antigua;
     porNit.set(g.nit_resuelto, x);
@@ -500,7 +519,9 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
   };
   const noFacturan: EmpresaNoFactura[] = (r.no_facturan ?? []).map(n => ({ empresaIdExterno: n.empresa_id_externo, empresaNombreExterno: n.empresa_nombre_externo ?? '', motivo: n.motivo_no_factura ?? '', expedientes: Number(n.expedientes ?? 0), marcadoPor: n.creado_por ?? '', marcadoEn: n.updated_at ?? null }));
   const clientesSlim: ClienteSlim[] = clientes.filter(c => c.activo !== false).map(c => ({ id: c.id, name: c.name, nit: c.nit }));
-  return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, noFacturan, clientes: clientesSlim, agregadoEnSql: enSql };
+  const detalles = DETALLES_VACIOS();
+  for (const d of r.detalles ?? []) { const k = d.estado as keyof typeof detalles; if (detalles[k]) detalles[k] = { n: Number(d.n), total: Number(d.total) }; }
+  return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, noFacturan, clientes: clientesSlim, detalles, agregadoEnSql: enSql };
 }
 
 export interface EmpresaSinMapear { empresaIdExterno: string; empresaNombreExterno: string; expedientes: number; fechaMasAntigua: string | null; fechaMasReciente: string | null }
@@ -582,13 +603,14 @@ export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
 
 // ── Emitir la factura ───────────────────────────────────────────────────────
 
-export interface EmitirInput { idsExternos: string[]; noFactura: string; fechaEmision: string; /** tipo de prueba canónico → centro de costo (id de app) elegido en el diálogo */ centroPorTipo?: Record<string, string> }
+export interface EmitirInput { idsExternos: string[]; noFactura: string; fechaEmision: string; /** tipo de prueba canónico → centro de costo (id de app) elegido en el diálogo */ centroPorTipo?: Record<string, string>; /** 019: detalle APROBADO por el cliente del que salen exactamente estos expedientes (obligatorio). */ detalleId?: string }
 export interface WritebackResultado { estado: WritebackEstado; detalle: string }
 export type EmitirResult =
   | { ok: true; noFactura: string; facturaAppId: string; expedientes: number; lineas: number; subtotal: number; iva: number; total: number; writeback: WritebackResultado }
   | { ok: false; error: string };
 
 export async function emitirFacturaAgenda(input: EmitirInput, actor: string, opts: { api?: AgendaApi } = {}): Promise<EmitirResult> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
   const nf = String(input.noFactura ?? '').trim();
   if (!nf) return { ok: false, error: 'El número de factura (SAT/FEL) es requerido.' };
   if (nf.length > 60) return { ok: false, error: 'El número de factura no puede pasar de 60 caracteres.' };
@@ -601,8 +623,17 @@ export async function emitirFacturaAgenda(input: EmitirInput, actor: string, opt
 
   const exps = await listarExpedientesLocal({ idsExternos: ids });
   if (exps.length !== ids.length) return { ok: false, error: 'Algún expediente ya no está en la cola: recargá la pantalla.' };
+  // 019: todo lo de la Agenda se factura desde un DETALLE aprobado por el cliente, y con exactamente sus expedientes.
+  if (!input.detalleId) return { ok: false, error: 'Los expedientes de la Agenda se facturan desde un detalle de facturación aprobado por el cliente.' };
+  const { data: det, error: errDet } = await sb!.from('detalle_facturacion').select('id, estado, correlativo').eq('id', input.detalleId).maybeSingle();
+  const detalle = det as { id: string; estado: string; correlativo: string } | null;
+  if (errDet || !detalle) return { ok: false, error: 'El detalle de facturación no existe.' };
+  if (detalle.estado !== 'aprobada') return { ok: false, error: `El detalle ${detalle.correlativo} está en "${detalle.estado}": solo se factura un detalle aprobado por el cliente.` };
+  const enDetalle = await listarExpedientesLocal({ detalleId: detalle.id });
+  const setDet = new Set(enDetalle.map(e => e.idExterno));
+  if (enDetalle.length !== ids.length || !ids.every(id => setDet.has(id))) return { ok: false, error: `La factura debe cubrir exactamente los ${enDetalle.length} expedientes del detalle ${detalle.correlativo}.` };
   for (const e of exps) {
-    if (!facturable(e)) return { ok: false, error: `${e.persona || e.idExterno}: ${e.facturaId ? `ya está en la factura ${e.noFactura}` : ETIQUETA_ESTADO_TARIFA[e.estadoTarifa] + (e.estadoTarifa === 'resuelta' ? ' (sin monto o con cobro ya resuelto en la Agenda)' : '')}. Solo se facturan expedientes resueltos y en cola.` };
+    if (!conPrecio(e)) return { ok: false, error: `${e.persona || e.idExterno}: ${e.facturaId ? `ya está en la factura ${e.noFactura}` : ETIQUETA_ESTADO_TARIFA[e.estadoTarifa] + (e.estadoTarifa === 'resuelta' ? ' (sin monto o con cobro ya resuelto en la Agenda)' : '')}. Solo se facturan expedientes resueltos y en cola.` };
   }
   const nits = new Set(exps.map(e => e.nitResuelto));
   if (nits.size !== 1 || !exps[0].nitResuelto) return { ok: false, error: 'Una factura es de UN cliente: los expedientes elegidos pertenecen a clientes distintos.' };
@@ -802,7 +833,7 @@ export async function notificarCobroAgenda(noFactura: string, actor: string, opt
 
 interface DetRow { id: string; no_factura: string; id_externo: string; tipo_prueba: string | null; categoria: string | null; territorio: string | null; monto: number | string; centro_costo_id: string | null; persona: string | null }
 
-export interface ProcesosDeFactura { detalle: DetalleFacturaExpediente[]; expedientes: ExpedienteLocal[]; subtotal: number; writeback: { confirmados: number; pendientes: number; conflictos: number; errores: number; omitidos: number } }
+export interface ProcesosDeFactura { detalle: DetalleFacturaExpediente[]; expedientes: ExpedienteLocal[]; subtotal: number; writeback: { confirmados: number; pendientes: number; conflictos: number; errores: number; omitidos: number }; /** 019: el detalle de facturación (pre-liquidación) del que salió, para "Imprimir detalle". */ detalleFacturacion: { id: string; correlativo: string; aprobadoPor: string; aprobadaEn: string | null } | null }
 
 /** Qué procesos de la Agenda cubre una factura de financiero (vacío si no viene de la Agenda o falta la 016). */
 export async function procesosDeFactura(noFactura: string): Promise<ProcesosDeFactura | null> {
@@ -817,7 +848,9 @@ export async function procesosDeFactura(noFactura: string): Promise<ProcesosDeFa
     const detalle = rows.map(r => ({ id: r.id, noFactura: r.no_factura, idExterno: r.id_externo, tipoPrueba: r.tipo_prueba ?? '', categoria: r.categoria ?? '', territorio: r.territorio ?? '', monto: Number(r.monto), centroCostoId: r.centro_costo_id, centroNombre: (r.centro_costo_id && nombreCC.get(r.centro_costo_id)) || '', persona: r.persona ?? '' }));
     const wb = { confirmados: 0, pendientes: 0, conflictos: 0, errores: 0, omitidos: 0 };
     for (const e of exps) { if (e.writebackEstado === 'confirmado') wb.confirmados++; else if (e.writebackEstado === 'conflicto') wb.conflictos++; else if (e.writebackEstado === 'error') wb.errores++; else if (e.writebackEstado === 'omitido') wb.omitidos++; else wb.pendientes++; }
-    return { detalle, expedientes: exps, subtotal: Math.round(detalle.reduce((s, d) => s + d.monto, 0) * 100) / 100, writeback: wb };
+    let detalleFacturacion: ProcesosDeFactura['detalleFacturacion'] = null;
+    try { const { data } = await supabase()!.from('detalle_facturacion').select('id, correlativo, aprobado_por, aprobada_en').eq('no_factura', nf).maybeSingle(); const d = data as { id: string; correlativo: string; aprobado_por: string | null; aprobada_en: string | null } | null; if (d) detalleFacturacion = { id: d.id, correlativo: d.correlativo, aprobadoPor: d.aprobado_por ?? '', aprobadaEn: d.aprobada_en }; } catch { /* sin la 019 */ }
+    return { detalle, expedientes: exps, subtotal: Math.round(detalle.reduce((s, d) => s + d.monto, 0) * 100) / 100, writeback: wb, detalleFacturacion };
   } catch { return null; }
 }
 

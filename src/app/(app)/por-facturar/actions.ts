@@ -2,9 +2,11 @@
 
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
+import { anularDetalle, crearDetalle, facturarDetalle, marcarAprobada, marcarEnviada, type DetalleResult, type FacturarDetalleResult } from '@/lib/db/detalle-facturacion';
+import type { CanalAprobacion } from '@/lib/facturacion-agenda/detalle';
 import {
-  emitirFacturaAgenda, empresasSinMapear, guardarMapeo, guardarMapeoLote, marcarNoFactura, marcarNoFacturaLote, quitarNoFactura, reintentarWriteback, sincronizarAgenda,
-  type EmitirInput, type EmpresaRef, type LoteResult, type NoFacturaResult, type PaginaSinMapear, type EmitirResult, type MapeoResult, type ResultadoSync, type WritebackResultado,
+  empresasSinMapear, guardarMapeo, guardarMapeoLote, marcarNoFactura, marcarNoFacturaLote, quitarNoFactura, reintentarWriteback, sincronizarAgenda,
+  type EmpresaRef, type LoteResult, type NoFacturaResult, type PaginaSinMapear, type EmitirResult, type MapeoResult, type ResultadoSync, type WritebackResultado,
 } from '@/lib/db/facturacion-agenda';
 
 function revalidar() {
@@ -31,11 +33,47 @@ export async function mapearClienteAction(input: { empresaIdExterno: string; emp
   return r;
 }
 
-/** Emite la factura (número y fecha reales de SAT/FEL) y escribe el cobro de vuelta a la Agenda. */
-export async function emitirFacturaAgendaAction(input: EmitirInput): Promise<EmitirResult> {
+/** 019: generar el DETALLE (pre-liquidación) en borrador con los expedientes seleccionados; los reserva. */
+export async function crearDetalleAction(input: { idsExternos: string[]; notas?: string }): Promise<DetalleResult> {
   const permiso = await autorizar('facturar_agenda');
   if (!permiso.ok) return { ok: false, error: permiso.error };
-  const r = await emitirFacturaAgenda(input, permiso.email);
+  const r = await crearDetalle(input, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** borrador → enviada (se mandó al cliente). */
+export async function marcarEnviadaAction(id: string): Promise<DetalleResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await marcarEnviada(id, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** enviada → aprobada: quién aprobó del lado del cliente y por qué canal. */
+export async function marcarAprobadaAction(id: string, input: { aprobadoPor: string; canal?: CanalAprobacion }): Promise<DetalleResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await marcarAprobada(id, input, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** Anula el detalle y libera sus expedientes (vuelven a la cola). */
+export async function anularDetalleAction(id: string, motivo: string): Promise<DetalleResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await anularDetalle(id, motivo, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** aprobada → facturada: emite la factura (número y fecha reales de SAT/FEL) y escribe el cobro de vuelta a la Agenda. */
+export async function facturarDetalleAction(id: string, input: { noFactura: string; fechaEmision: string; centroPorTipo?: Record<string, string> }): Promise<FacturarDetalleResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await facturarDetalle(id, input, permiso.email);
   if (r.ok) revalidar();
   return r;
 }

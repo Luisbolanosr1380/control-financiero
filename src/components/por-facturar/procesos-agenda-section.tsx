@@ -23,6 +23,7 @@ export function ProcesosAgendaSection({ noFactura, procesos, nombresCC = {} }: {
           {wb.pendientes > 0 && <span className="badge badge-warn" style={{ fontSize: 10 }} title={ETIQUETA_WRITEBACK.pendiente}>{wb.pendientes} falta confirmar</span>}
           {wb.conflictos > 0 && <span className="badge badge-wine" style={{ fontSize: 10 }} title={ETIQUETA_WRITEBACK.conflicto}>{wb.conflictos} conflicto{wb.conflictos === 1 ? '' : 's'}</span>}
           {wb.errores > 0 && <span className="badge badge-wine" style={{ fontSize: 10 }} title={ETIQUETA_WRITEBACK.error}>{wb.errores} error{wb.errores === 1 ? '' : 'es'}</span>}
+          {procesos.detalleFacturacion && <a className="btn btn-secondary" style={{ fontSize: 11, padding: '2px 8px' }} href={`/imprimir/detalle/${procesos.detalleFacturacion.id}`} target="_blank" rel="noopener" title={`Pre-liquidación ${procesos.detalleFacturacion.correlativo}${procesos.detalleFacturacion.aprobadoPor ? ` · aprobada por ${procesos.detalleFacturacion.aprobadoPor}` : ''}`} data-accion="imprimir-detalle">Imprimir detalle</a>}
           {pendientes > 0 && <ReintentarWritebackButton noFactura={noFactura} compacto />}
           {nit && <Link href={`/por-facturar/${encodeURIComponent('n-' + nit)}`} style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Ver cliente en Por facturar →</Link>}
         </div>

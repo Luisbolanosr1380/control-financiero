@@ -20,12 +20,14 @@ import { filtrarGrupos, type GrupoCliente, type KpisPorFacturar } from '@/lib/fa
 import type { EmpresaNoFactura, SyncEstado } from '@/lib/facturacion-agenda/tipos';
 import { quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
 import { SinMapearLista } from './sin-mapear-lista';
-import type { ClienteSlim } from '@/lib/db/facturacion-agenda';
+import type { ClienteSlim, VistaPorFacturar } from '@/lib/db/facturacion-agenda';
+import { BADGE_ESTADO_DETALLE, ETIQUETA_ESTADO_DETALLE, type DetalleFacturacion, type EstadoDetalle } from '@/lib/facturacion-agenda/detalle';
+import { formatearFechaCorta } from '@/lib/utils/fechas';
 
-interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; noFacturan: EmpresaNoFactura[]; clientes: ClienteSlim[]; agregadoEnSql: boolean }
-type Pestana = 'facturables' | 'sin_mapear' | 'no_facturan';
+interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; noFacturan: EmpresaNoFactura[]; clientes: ClienteSlim[]; detalles: VistaPorFacturar['detalles']; detallesLista: DetalleFacturacion[]; agregadoEnSql: boolean }
+type Pestana = 'facturables' | 'sin_mapear' | 'no_facturan' | 'detalles';
 
-export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, noFacturan, clientes, agregadoEnSql }: Props) {
+export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, noFacturan, clientes, detalles, detallesLista, agregadoEnSql }: Props) {
   const [pestana, setPestana] = useState<Pestana>('facturables');
   const router = useRouter();
   const puede = usePuede();
@@ -79,11 +81,12 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
         </div>
       )}
 
-      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)', marginBottom: 14 }}>
+      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 14 }}>
         <div className="kpi" data-kpi="listos"><div className="kpi-label">Listos para facturar</div><div className="kpi-value">{kpis.listos}</div><div className="kpi-delta"><span className="vs">{kpis.clientes} cliente{kpis.clientes === 1 ? '' : 's'} · {total} expedientes en total</span></div></div>
         <div className="kpi" data-kpi="total"><div className="kpi-label">Total sin IVA</div><div className="kpi-value">{Q(kpis.totalSinIva)}</div><div className="kpi-delta"><span className="vs">con IVA {Q(kpis.totalConIva)}</span></div></div>
         <div className="kpi" data-kpi="sin-tarifa"><div className="kpi-label">Sin tarifa</div><div className="kpi-value" style={{ color: kpis.sinTarifa ? 'var(--burnt, #b5651d)' : undefined }}>{kpis.sinTarifa}</div><div className="kpi-delta"><span className="vs">falta cargarla en el tarifario</span></div></div>
         <div className="kpi" data-kpi="sin-mapear" role="button" tabIndex={0} onClick={irASinMapear} onKeyDown={e => { if (e.key === 'Enter') irASinMapear(); }} style={{ cursor: 'pointer' }} title="Ver las empresas sin mapear"><div className="kpi-label">Cliente sin mapear</div><div className="kpi-value" style={{ color: kpis.sinMapear ? 'var(--wine)' : undefined }}>{kpis.sinMapear}</div><div className="kpi-delta"><span className="vs">{sinMapear.empresas} empresa{sinMapear.empresas === 1 ? '' : 's'} de la Agenda · mapear →</span></div></div>
+        <div className="kpi" data-kpi="detalles" role="button" tabIndex={0} onClick={() => setPestana('detalles')} onKeyDown={e => { if (e.key === 'Enter') setPestana('detalles'); }} style={{ cursor: 'pointer' }} title="Detalles de facturación pendientes de aprobación del cliente"><div className="kpi-label">Detalles por aprobar</div><div className="kpi-value" style={{ color: detalles.enviada.n ? 'var(--burnt, #b5651d)' : undefined }}>{detalles.borrador.n + detalles.enviada.n}</div><div className="kpi-delta"><span className="vs">{detalles.aprobada.n} aprobado{detalles.aprobada.n === 1 ? '' : 's'} listo{detalles.aprobada.n === 1 ? '' : 's'} para facturar →</span></div></div>
         <div className="kpi" data-kpi="facturados"><div className="kpi-label">Facturados desde acá</div><div className="kpi-value">{kpis.facturados}</div><div className="kpi-delta"><span className="vs" style={{ color: kpis.writebackPendiente ? 'var(--wine)' : undefined }}>{kpis.writebackPendiente ? `${kpis.writebackPendiente} sin confirmar en Agenda` : 'todos confirmados en Agenda'}</span></div></div>
         <div className="kpi" data-kpi="excluidos"><div className="kpi-label">Excluidos de la cola</div><div className="kpi-value" style={{ color: 'var(--ink-3)' }}>{kpis.excluidos + kpis.excluidosNoFactura}</div><div className="kpi-delta"><span className="vs">{kpis.excluidos} psicométricas · {kpis.excluidosNoFactura} de empresas que no se facturan</span></div></div>
       </div>
@@ -101,10 +104,11 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
       <div role="tablist" aria-label="Pestañas" style={{ display: 'flex', gap: 6, marginBottom: 12 }}>
         <button role="tab" aria-selected={pestana === 'facturables'} className={'btn ' + (pestana === 'facturables' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setPestana('facturables')}>Facturables <span className="cell-mute">({grupos.length} cliente{grupos.length === 1 ? '' : 's'})</span></button>
         <button role="tab" aria-selected={pestana === 'sin_mapear'} className={'btn ' + (pestana === 'sin_mapear' ? 'btn-secondary' : 'btn-ghost')} onClick={irASinMapear} data-tab="sin-mapear">Sin mapear <span className="cell-mute">({sinMapear.empresas} empresa{sinMapear.empresas === 1 ? '' : 's'} · {sinMapear.expedientes} exp.)</span></button>
+        <button role="tab" aria-selected={pestana === 'detalles'} className={'btn ' + (pestana === 'detalles' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setPestana('detalles')} data-tab="detalles">Detalles <span className="cell-mute">({detalles.borrador.n + detalles.enviada.n} por aprobar · {detalles.aprobada.n} aprobado{detalles.aprobada.n === 1 ? '' : 's'})</span></button>
         <button role="tab" aria-selected={pestana === 'no_facturan'} className={'btn ' + (pestana === 'no_facturan' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setPestana('no_facturan')} data-tab="no-facturan">No se facturan <span className="cell-mute">({noFacturan.length} empresa{noFacturan.length === 1 ? '' : 's'} · {kpis.excluidosNoFactura} exp.)</span></button>
       </div>
 
-      {pestana === 'no_facturan' ? <NoFacturanLista empresas={noFacturan} puede={puedeFacturar} /> : pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} clientes={clientes} puede={puedeFacturar} /> : <>
+      {pestana === 'detalles' ? <DetallesLista detalles={detallesLista} /> : pestana === 'no_facturan' ? <NoFacturanLista empresas={noFacturan} puede={puedeFacturar} /> : pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} clientes={clientes} puede={puedeFacturar} /> : <>
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
           <input className="input" placeholder="Buscar cliente por nombre o NIT…" value={q} onChange={e => setQ(e.target.value)} style={{ minWidth: 300 }} aria-label="Buscar cliente" />
@@ -184,5 +188,45 @@ function NoFacturanLista({ empresas, puede }: { empresas: EmpresaNoFactura[]; pu
         </tbody>
       </table>
     </div>
+  );
+}
+
+/** 019: tablero de detalles de facturación (pre-liquidaciones) por estado: qué espera aprobación del cliente y qué ya se puede facturar. */
+function DetallesLista({ detalles }: { detalles: DetalleFacturacion[] }) {
+  const router = useRouter();
+  const [estado, setEstado] = useState<EstadoDetalle | 'vivos' | 'todos'>('vivos');
+  const filas = detalles.filter(d => estado === 'todos' ? true : estado === 'vivos' ? !['facturada', 'anulada'].includes(d.estado) : d.estado === estado);
+  const n = (e: EstadoDetalle) => detalles.filter(d => d.estado === e).length;
+  return (
+    <>
+      <div className="card" style={{ marginBottom: 12 }}>
+        <div className="card-pad" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
+          {([['vivos', `En curso (${n('borrador') + n('enviada') + n('aprobada')})`], ['borrador', `Borrador (${n('borrador')})`], ['enviada', `Enviada al cliente (${n('enviada')})`], ['aprobada', `Aprobada · lista para facturar (${n('aprobada')})`], ['facturada', `Facturada (${n('facturada')})`], ['anulada', `Anulada (${n('anulada')})`], ['todos', `Todos (${detalles.length})`]] as const).map(([k, label]) => (
+            <button key={k} className={'btn ' + (estado === k ? 'btn-secondary' : 'btn-ghost')} style={{ fontSize: 12 }} onClick={() => setEstado(k)} data-filtro-detalle={k}>{label}</button>
+          ))}
+          <span className="cell-mute" style={{ marginLeft: 'auto' }}>Flujo: generar → enviar al cliente → aprobado → facturar</span>
+        </div>
+      </div>
+      <div className="card">
+        <table className="table" data-lista="detalles">
+          <thead><tr><th>Detalle</th><th>Cliente</th><th>Estado</th><th className="num">Procesos</th><th className="num">Total con IVA</th><th>Enviado</th><th>Aprobado</th><th>Factura</th></tr></thead>
+          <tbody>
+            {filas.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>{detalles.length === 0 ? 'Todavía no hay detalles: se generan desde el cliente, seleccionando sus expedientes.' : 'Ningún detalle con ese filtro.'}</td></tr>}
+            {filas.map(d => (
+              <tr key={d.id} className="clickable" style={{ cursor: 'pointer' }} onClick={() => router.push(`/por-facturar/detalle/${d.id}`)} data-detalle={d.correlativo}>
+                <td><Link href={`/por-facturar/detalle/${d.id}`} onClick={ev => ev.stopPropagation()} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{d.correlativo}</Link><div className="cell-mute" style={{ fontSize: 11 }}>{formatearFechaCorta(d.createdAt)} · {d.creadoPor || '—'}</div></td>
+                <td className="num" style={{ fontSize: 12 }}>NIT {d.nit}</td>
+                <td><span className={'badge ' + BADGE_ESTADO_DETALLE[d.estado]} style={{ fontSize: 10 }}>{ETIQUETA_ESTADO_DETALLE[d.estado]}</span></td>
+                <td className="num">{d.expedientes}</td>
+                <td className="num cell-strong">{Q(d.total)}</td>
+                <td className="cell-mute" style={{ fontSize: 12 }}>{d.enviadaEn ? formatearFechaCorta(d.enviadaEn) : '—'}</td>
+                <td className="cell-mute" style={{ fontSize: 12 }}>{d.aprobadaEn ? `${formatearFechaCorta(d.aprobadaEn)} · ${d.aprobadoPor}` : '—'}</td>
+                <td style={{ fontSize: 12 }}>{d.noFactura ? <Link href={`/facturacion/${d.facturaAppId ?? ''}`} onClick={ev => ev.stopPropagation()} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{d.noFactura}</Link> : <span className="cell-mute">—</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   );
 }

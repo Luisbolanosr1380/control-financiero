@@ -8,16 +8,14 @@
  * "Mapear" cuando la empresa de la Agenda no apunta a un cliente de financiero.
  * Confirmaciones en línea / modal propio: sin diálogos del navegador.
  */
-import { useMemo, useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
-import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
-import { emitirFacturaAgendaAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
+import { crearDetalleAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
 import { armarFactura, centroPorServicio, enCola, facturable } from '@/lib/facturacion-agenda/mapeo';
 import { filtrarExpedientes, mesesDisponibles, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
 import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
@@ -38,9 +36,8 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
   const [cobro, setCobro] = useState<FiltroCobro>('por_facturar');
   const [soloListos, setSoloListos] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [dialogo, setDialogo] = useState(false);
+  const [creando, setCreando] = useState(false);
   const [generando, setGenerando] = useState(false);
-  const [ultima, setUltima] = useState<{ noFactura: string; facturaAppId: string; total: number; writeback: { estado: WritebackEstado; detalle: string } } | null>(null);
 
   const exps = datos.expedientes;
   const meses = useMemo(() => mesesDisponibles(exps), [exps]);
@@ -55,6 +52,17 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
   const facturablesVisibles = filas.filter(facturable);
   const todosSel = facturablesVisibles.length > 0 && facturablesVisibles.every(e => sel.has(e.idExterno));
 
+  const generarDetalle = async () => {
+    if (!seleccion.length) return;
+    setCreando(true);
+    try {
+      const r = await crearDetalleAction({ idsExternos: seleccion.map(e => e.idExterno) });
+      if (!r.ok) { toast.error(r.error); return; }
+      toast.success(`Detalle ${r.detalle.correlativo} generado en borrador · ${r.detalle.expedientes} expediente(s) · ${Q(r.detalle.total)} con IVA`);
+      setSel(new Set());
+      router.push(`/por-facturar/detalle/${r.detalle.id}`);
+    } finally { setCreando(false); }
+  };
   const toggle = (id: string) => setSel(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   const toggleTodos = () => setSel(s => { const n = new Set(s); if (todosSel) facturablesVisibles.forEach(e => n.delete(e.idExterno)); else facturablesVisibles.forEach(e => n.add(e.idExterno)); return n; });
 
@@ -79,20 +87,6 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
       {datos.noFactura && <NoFacturaBanner datos={datos} puede={puedeFacturar} />}
       {!datos.nit && !datos.noFactura && puedeFacturar && <MapearCliente datos={datos} />}
       {!datos.nit && !datos.noFactura && !puedeFacturar && <div className="card" role="status" style={{ borderColor: 'var(--wine)', marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Esta empresa de la Agenda todavía no está mapeada a un cliente: un admin o contador tiene que mapearla antes de facturar.</div></div>}
-
-      {ultima && (
-        <div className="card" role="status" data-resultado="factura" style={{ borderColor: ultima.writeback.estado === 'confirmado' || ultima.writeback.estado === 'omitido' ? 'var(--olive)' : 'var(--wine)', marginBottom: 14 }}>
-          <div className="card-pad" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
-            <div style={{ flex: 1, minWidth: 260, lineHeight: 1.45 }}>
-              <strong>Factura {ultima.noFactura}</strong> registrada en financiero por {Q(ultima.total)} con IVA. <span className={'badge ' + WB_BADGE[ultima.writeback.estado]} style={{ fontSize: 10, marginLeft: 4 }}>{WB_TEXTO[ultima.writeback.estado]}</span>
-              <div style={{ fontSize: 12, color: 'var(--ink-3)', marginTop: 2 }}>{ultima.writeback.detalle}</div>
-            </div>
-            <Link href={`/facturacion/${ultima.facturaAppId}`} className="btn btn-secondary"><I.Receipt size={13} /> Ver factura</Link>
-            {['pendiente', 'conflicto', 'error'].includes(ultima.writeback.estado) && <ReintentarWritebackButton noFactura={ultima.noFactura} />}
-            <button className="btn btn-ghost" onClick={() => setUltima(null)} aria-label="Cerrar aviso"><I.X size={13} /></button>
-          </div>
-        </div>
-      )}
 
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: 14 }}>
         <div className="kpi" data-kpi="listos"><div className="kpi-label">Listos para facturar</div><div className="kpi-value">{listos.length}</div><div className="kpi-delta"><span className="vs">de {exps.filter(enCola).length} en cola</span></div></div>
@@ -125,23 +119,16 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
       </div>
 
       {sel.size > 0 && puedeFacturar && (
-        <div role="region" aria-label="Selección para facturar" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50, background: 'var(--paper)', borderTop: '1px solid var(--line-2)', boxShadow: '0 -8px 24px rgba(0,0,0,0.08)' }}>
+        <div role="region" aria-label="Selección para el detalle" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50, background: 'var(--paper)', borderTop: '1px solid var(--line-2)', boxShadow: '0 -8px 24px rgba(0,0,0,0.08)' }}>
           <div style={{ maxWidth: 1400, margin: '0 auto', padding: '10px 24px', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
             <div><strong>{seleccion.length}</strong> expediente{seleccion.length === 1 ? '' : 's'} seleccionado{seleccion.length === 1 ? '' : 's'}</div>
             <div className="num">Subtotal <strong>{Q(preview.subtotal)}</strong> · IVA {Q(preview.iva)} · Total <strong>{Q(preview.total)}</strong></div>
             <button className="btn btn-ghost" onClick={() => setSel(new Set())}>Limpiar</button>
-            <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => setDialogo(true)} disabled={seleccion.length === 0}><I.Receipt size={13} /> Facturar seleccionados</button>
+            <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => void generarDetalle()} disabled={seleccion.length === 0 || creando} data-accion="generar-detalle"><I.Receipt size={13} /> {creando ? 'Generando…' : 'Generar detalle'}</button>
           </div>
         </div>
       )}
 
-      {dialogo && (
-        <FacturarDialogo
-          seleccion={seleccion} centros={datos.centros} cliente={datos.nombre} writeback={writeback} configurada={configurada} montoModo={montoModo}
-          onClose={() => setDialogo(false)}
-          onHecho={r => { setUltima(r); setSel(new Set()); setDialogo(false); router.refresh(); }}
-        />
-      )}
     </div>
   );
 }
@@ -175,6 +162,7 @@ function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede
               {e.writebackEstado && ['pendiente', 'conflicto', 'error'].includes(e.writebackEstado) && <div style={{ marginTop: 4 }}><ReintentarWritebackButton noFactura={e.noFactura} compacto /></div>}
               {e.cobroWritebackEstado && <div className="cell-mute" style={{ fontSize: 10 }} title={e.cobroWritebackDetalle || undefined}>cobro → Agenda: {e.cobroWritebackEstado}</div>}
             </>
+          : e.detalleId ? <Link href={`/por-facturar/detalle/${e.detalleId}`} className="badge badge-warn" style={{ fontSize: 10, textDecoration: 'none' }} title="Reservado en un detalle de facturación (pre-liquidación)">En detalle →</Link>
           : e.numeroFacturaExterno ? <span className="cell-mute" title="Facturado fuera de la app (número que tiene la Agenda)">{e.numeroFacturaExterno}</span> : <span className="cell-mute">—</span>}
       </td>
     </tr>
@@ -266,104 +254,5 @@ function MapearCliente({ datos }: { datos: GrupoDetalle }) {
         </div>
       </div>
     </div>
-  );
-}
-
-interface DialogoProps {
-  seleccion: ExpedienteLocal[]; centros: GrupoDetalle['centros']; cliente: string; writeback: boolean; configurada: boolean; montoModo: 'con_iva' | 'sin_iva';
-  onClose: () => void; onHecho: (r: { noFactura: string; facturaAppId: string; total: number; writeback: { estado: WritebackEstado; detalle: string } }) => void;
-}
-
-function FacturarDialogo({ seleccion, centros, cliente, writeback, configurada, montoModo, onClose, onHecho }: DialogoProps) {
-  const [noFactura, setNoFactura] = useState('');
-  const [fecha, setFecha] = useState(obtenerFechaHoyGuatemala());
-  const [loading, setLoading] = useState(false);
-  const tipos = useMemo(() => [...new Set(seleccion.flatMap(e => (e.componentes.length ? e.componentes.map(c => c.tipoPrueba) : [e.tipoCobrado])))], [seleccion]);
-  const [centroPorTipo, setCentroPorTipo] = useState<Record<string, string>>(() => Object.fromEntries(tipos.map(t => [t, centroPorServicio(t, centros) ?? ''])));
-  const f = useMemo(() => armarFactura(seleccion, t => centroPorTipo[t] || null), [seleccion, centroPorTipo]);
-  const nombreCC = (id: string) => centros.find(c => c.id === id)?.nombre ?? '—';
-  const valido = noFactura.trim().length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(fecha) && f.sinCentro.length === 0 && seleccion.length > 0;
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && !loading) onClose(); };
-    window.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow; document.body.style.overflow = 'hidden';
-    return () => { window.removeEventListener('keydown', onKey); document.body.style.overflow = prev; };
-  }, [onClose, loading]);
-
-  const confirmar = async () => {
-    if (!valido) return;
-    setLoading(true);
-    try {
-      const r = await emitirFacturaAgendaAction({ idsExternos: seleccion.map(e => e.idExterno), noFactura: noFactura.trim(), fechaEmision: fecha, centroPorTipo });
-      if (!r.ok) { toast.error(r.error); return; }
-      if (r.writeback.estado === 'confirmado' || r.writeback.estado === 'omitido') toast.success(`Factura ${r.noFactura} registrada · ${r.expedientes} expediente(s) · ${Q(r.total)} con IVA`);
-      else toast.warning(`Factura ${r.noFactura} registrada, pero la Agenda no confirmó: ${r.writeback.detalle}`);
-      onHecho({ noFactura: r.noFactura, facturaAppId: r.facturaAppId, total: r.total, writeback: r.writeback });
-    } catch (e) { toast.error(e instanceof Error ? e.message : 'Error de red'); }
-    finally { setLoading(false); }
-  };
-
-  if (typeof document === 'undefined') return null;
-  return createPortal(
-    <div onClick={() => { if (!loading) onClose(); }} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(20, 18, 16, 0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4vh 4vw' }}>
-      <div onClick={e => e.stopPropagation()} role="dialog" aria-label="Facturar expedientes" style={{ width: 'min(760px, 96vw)', maxHeight: '92vh', background: 'var(--paper)', borderRadius: 'var(--r-3)', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}>
-        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <I.Receipt size={15} style={{ color: 'var(--ink-3)' }} />
-          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>Facturar {seleccion.length} expediente{seleccion.length === 1 ? '' : 's'} de {cliente}</div>
-          <button type="button" className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={onClose} disabled={loading} title="Cerrar (Esc)"><I.X size={15} /></button>
-        </div>
-        <div style={{ padding: '18px 22px', overflowY: 'auto', fontSize: 13 }}>
-          <div style={{ fontSize: 12.5, color: 'var(--ink-3)', marginBottom: 12, lineHeight: 1.45 }}>La factura la emite el auxiliar en <strong>SAT/FEL</strong>; acá se registra con su número y fecha reales, entra al ER y a cobros como cualquier factura, y {writeback && configurada ? <>se marca <strong>FACTURADO</strong> en la Agenda con el monto {montoModo === 'con_iva' ? 'con IVA' : 'sin IVA'} por expediente.</> : <><strong>no</strong> se escribe a la Agenda ({configurada ? 'FACTURAR_WRITEBACK apagado' : 'este deploy no tiene llave'}).</>}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
-            <div className="field" style={{ margin: 0 }}>
-              <label className="label" htmlFor="pf-nf">Número de factura (SAT/FEL) *</label>
-              <input id="pf-nf" className="input" value={noFactura} onChange={e => setNoFactura(e.target.value)} placeholder="Ej. A-12345" maxLength={60} disabled={loading} autoFocus />
-            </div>
-            <div className="field" style={{ margin: 0 }}>
-              <label className="label" htmlFor="pf-fecha">Fecha de la factura *</label>
-              <input id="pf-fecha" type="date" className="input num" value={fecha} max={obtenerFechaHoyGuatemala()} onChange={e => setFecha(e.target.value)} disabled={loading} />
-            </div>
-          </div>
-
-          <div className="card" style={{ marginBottom: 12 }}>
-            <div className="card-head"><div className="card-title">Líneas por centro de costo</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>el ingreso cae en la línea de su servicio</span></div></div>
-            <table className="table">
-              <thead><tr><th>Servicio</th><th>Centro de costo</th><th className="num">Subtotal</th></tr></thead>
-              <tbody>
-                {tipos.map(t => {
-                  const sub = f.detalle.filter(d => d.tipoPrueba === t).reduce((s, d) => s + d.monto, 0);
-                  return (
-                    <tr key={t}>
-                      <td>{t} <span className="cell-mute" style={{ fontSize: 11 }}>({f.detalle.filter(d => d.tipoPrueba === t).length})</span></td>
-                      <td><select className="input" value={centroPorTipo[t] ?? ''} onChange={e => setCentroPorTipo(m => ({ ...m, [t]: e.target.value }))} aria-label={`Centro de costo para ${t}`} disabled={loading} style={{ minWidth: 220 }}><option value="">Elegí el centro…</option>{centros.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}</select></td>
-                      <td className="num">{Q(Math.round(sub * 100) / 100)}</td>
-                    </tr>
-                  );
-                })}
-                {f.lineas.map(l => <tr key={l.centroCostoId} style={{ background: 'var(--bg-2)' }}><td className="cell-mute" style={{ fontSize: 12 }}>línea</td><td>{nombreCC(l.centroCostoId)}</td><td className="num">{Q(l.subtotal)} <span className="cell-mute">+ IVA {Q(l.iva)} = {Q(l.total)}</span></td></tr>)}
-                <tr style={{ background: 'var(--bg-2)' }}><td colSpan={2} className="num" style={{ textAlign: 'right', color: 'var(--ink-3)' }}>Subtotal · IVA (12 %) · <strong>Total</strong></td><td className="num" data-total={f.total}>{Q(f.subtotal)} · {Q(f.iva)} · <strong>{Q(f.total)}</strong></td></tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div className="card">
-            <div className="card-head"><div className="card-title">Expedientes</div></div>
-            <table className="table">
-              <thead><tr><th>Persona</th><th>Servicio</th><th>Categoría · territorio</th><th className="num">Sin IVA</th></tr></thead>
-              <tbody>
-                {seleccion.map(e => <tr key={e.idExterno}><td>{e.persona || e.idExterno}</td><td>{e.tipoCobrado}{e.componentes.length > 1 ? <span className="cell-mute" style={{ fontSize: 11 }}> ({e.componentes.map(c => `${c.tipoPrueba} ${Q(c.monto)}`).join(' + ')})</span> : null}</td><td className="cell-mute" style={{ fontSize: 12 }}>{e.categoriaCanon} · {e.territorioResuelto || 'no indicado'}</td><td className="num">{Q(e.montoCalculado ?? 0)}</td></tr>)}
-              </tbody>
-            </table>
-          </div>
-          {f.sinCentro.length > 0 && <div role="status" style={{ marginTop: 10, fontSize: 12, color: 'var(--wine)' }}>Elegí el centro de costo para: {f.sinCentro.join(', ')}.</div>}
-        </div>
-        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--line-2)', display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <button type="button" className="btn btn-ghost" onClick={onClose} disabled={loading}>Cancelar</button>
-          <button type="button" className="btn btn-primary" onClick={() => void confirmar()} disabled={loading || !valido}>{loading ? <><I.Refresh size={13} /> Facturando…</> : <><I.Check size={13} /> Confirmar factura {noFactura.trim() ? noFactura.trim() : ''}</>}</button>
-        </div>
-      </div>
-    </div>,
-    document.body,
   );
 }

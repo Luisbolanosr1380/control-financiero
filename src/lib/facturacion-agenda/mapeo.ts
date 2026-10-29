@@ -108,11 +108,13 @@ export function enCola(e: Pick<ExpedienteLocal, 'terminado' | 'cancelado' | 'eli
   return e.terminado && !e.cancelado && !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && !e.facturaId && cobroPendiente(e.statusCobroExterno);
 }
 
-/** Se puede incluir en una factura: en cola y con precio resuelto. */
-export const facturable = (e: ExpedienteLocal): boolean => enCola(e) && e.estadoTarifa === 'resuelta' && (e.montoCalculado ?? 0) > 0;
+/** Con precio y en cola (entra al flujo de facturación). */
+export const conPrecio = (e: ExpedienteLocal): boolean => enCola(e) && e.estadoTarifa === 'resuelta' && (e.montoCalculado ?? 0) > 0;
+/** Se puede meter en un detalle nuevo: con precio, en cola y NO reservado por otro detalle (019). */
+export const facturable = (e: ExpedienteLocal): boolean => conPrecio(e) && !e.detalleId;
 
 /** Un expediente de la Agenda → la fila que se guarda (sin id ni timestamps). */
-export function expedienteALocal(exp: ExpedienteAgenda, c: Clasificacion): Omit<ExpedienteLocal, 'id' | 'facturaId' | 'facturaAppId' | 'noFactura' | 'facturadoEn' | 'facturadoPor' | 'writebackEstado' | 'writebackDetalle' | 'writebackEn' | 'cobroWritebackEstado' | 'cobroWritebackDetalle' | 'updatedAt'> {
+export function expedienteALocal(exp: ExpedienteAgenda, c: Clasificacion): Omit<ExpedienteLocal, 'id' | 'facturaId' | 'facturaAppId' | 'noFactura' | 'facturadoEn' | 'facturadoPor' | 'writebackEstado' | 'writebackDetalle' | 'writebackEn' | 'cobroWritebackEstado' | 'cobroWritebackDetalle' | 'detalleId' | 'updatedAt'> {
   const cobro = exp.cobro ?? {};
   const num = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
   const txt = (v: unknown): string => String(v ?? '').trim();
