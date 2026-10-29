@@ -5,7 +5,7 @@
  */
 import { conIva, normalizarTexto, round2 } from '@/lib/tarifario/canon';
 import { enCola, facturable } from './mapeo';
-import type { ExpedienteLocal } from './tipos';
+import { ESTADOS_EXCLUIDOS, type ExpedienteLocal } from './tipos';
 
 export interface GrupoCliente {
   /** `n-<nit>` (mapeado) o `e-<empresa.id>` (sin mapear). */
@@ -38,7 +38,7 @@ export function parseClave(clave: string): { tipo: 'nit'; nit: string } | { tipo
 }
 
 /** Vigente para la pantalla: terminado, no cancelado, no eliminado, no psicométrica. */
-export const vigente = (e: ExpedienteLocal): boolean => e.terminado && !e.cancelado && !e.eliminado && e.estadoTarifa !== 'excluido_psicometrica';
+export const vigente = (e: ExpedienteLocal): boolean => e.terminado && !e.cancelado && !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa);
 
 export function agruparPorCliente(expedientes: readonly ExpedienteLocal[], razonPorNit: ReadonlyMap<string, string> = new Map()): GrupoCliente[] {
   const grupos = new Map<string, GrupoCliente>();
@@ -66,13 +66,14 @@ export function agruparPorCliente(expedientes: readonly ExpedienteLocal[], razon
   return out.sort((a, b) => peso(a) - peso(b) || b.totalSinIva - a.totalSinIva || a.nombre.localeCompare(b.nombre, 'es'));
 }
 
-export interface KpisPorFacturar { listos: number; totalSinIva: number; totalConIva: number; sinTarifa: number; sinMapear: number; excluidos: number; facturados: number; writebackPendiente: number; clientes: number; clientesSinMapear: number }
+export interface KpisPorFacturar { listos: number; totalSinIva: number; totalConIva: number; sinTarifa: number; sinMapear: number; /** psicométricas vigentes */ excluidos: number; /** 018: expedientes de empresas marcadas "no se factura" */ excluidosNoFactura: number; facturados: number; writebackPendiente: number; clientes: number; clientesSinMapear: number }
 
 export function kpisPorFacturar(expedientes: readonly ExpedienteLocal[]): KpisPorFacturar {
-  const k: KpisPorFacturar = { listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, excluidos: 0, facturados: 0, writebackPendiente: 0, clientes: 0, clientesSinMapear: 0 };
+  const k: KpisPorFacturar = { listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, excluidos: 0, excluidosNoFactura: 0, facturados: 0, writebackPendiente: 0, clientes: 0, clientesSinMapear: 0 };
   const clientes = new Set<string>(); const sinMapear = new Set<string>();
   for (const e of expedientes) {
     if (e.estadoTarifa === 'excluido_psicometrica' && e.terminado && !e.cancelado && !e.eliminado) { k.excluidos++; continue; }
+    if (e.estadoTarifa === 'excluido_no_factura' && e.terminado && !e.cancelado && !e.eliminado) { k.excluidosNoFactura++; continue; }
     if (!vigente(e)) continue;
     clientes.add(claveGrupo(e));
     if (e.facturaId) { k.facturados++; if (e.writebackEstado && !['confirmado', 'omitido'].includes(e.writebackEstado)) k.writebackPendiente++; }

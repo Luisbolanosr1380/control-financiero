@@ -46,7 +46,9 @@ export interface ExpedienteAgenda {
   actualizadoEn?: string | null;
 }
 
-export type EstadoTarifa = 'resuelta' | 'sin_tarifa' | 'cliente_sin_mapear' | 'excluido_psicometrica';
+export type EstadoTarifa = 'resuelta' | 'sin_tarifa' | 'cliente_sin_mapear' | 'excluido_psicometrica' | 'excluido_no_factura';
+/** Estados que nunca entran a la cola ni se cotizan: solo se cuentan. */
+export const ESTADOS_EXCLUIDOS: readonly EstadoTarifa[] = ['excluido_psicometrica', 'excluido_no_factura'];
 export type WritebackEstado = 'omitido' | 'pendiente' | 'confirmado' | 'conflicto' | 'error';
 
 export const ETIQUETA_ESTADO_TARIFA: Record<EstadoTarifa, string> = {
@@ -54,6 +56,7 @@ export const ETIQUETA_ESTADO_TARIFA: Record<EstadoTarifa, string> = {
   sin_tarifa: 'Sin tarifa',
   cliente_sin_mapear: 'Cliente sin mapear',
   excluido_psicometrica: 'Psicométricas (trato aparte)',
+  excluido_no_factura: 'No se factura (interno / no aplica)',
 };
 
 export const ETIQUETA_WRITEBACK: Record<WritebackEstado, string> = {
@@ -140,7 +143,13 @@ export interface ClienteExterno {
   clienteId: string | null;
   activo: boolean;
   creadoPor: string;
+  /** 018: la empresa NO se factura por este flujo (interna / intercompany / reclutamiento = Fase A). Sus expedientes quedan 'excluido_no_factura'. */
+  noFactura: boolean;
+  motivoNoFactura: string;
 }
+
+/** Empresa marcada como "no se factura" (pestaña "No se facturan"). */
+export interface EmpresaNoFactura { empresaIdExterno: string; empresaNombreExterno: string; motivo: string; expedientes: number; marcadoPor: string; marcadoEn: string | null }
 
 export interface SyncEstado {
   fuente: string;

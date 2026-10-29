@@ -17,7 +17,7 @@ import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
-import { emitirFacturaAgendaAction, mapearClienteAction } from '@/app/(app)/por-facturar/actions';
+import { emitirFacturaAgendaAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
 import { armarFactura, centroPorServicio, enCola, facturable } from '@/lib/facturacion-agenda/mapeo';
 import { filtrarExpedientes, mesesDisponibles, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
 import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
@@ -63,7 +63,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
           <div style={{ fontSize: 12, marginBottom: 4 }}><Link href="/por-facturar" style={{ color: 'var(--ink-3)', textDecoration: 'none' }}>← Por facturar</Link></div>
           <h1 className="page-title">{datos.nombre || datos.nombreExterno || 'Cliente'}</h1>
           <div className="page-subtitle">
-            {datos.nit ? <><span className="num">NIT {datos.nit}</span>{datos.nombreExterno && datos.nombreExterno !== datos.nombre ? <> · en la Agenda: <strong>{datos.nombreExterno}</strong></> : null}</> : <>Empresa de la Agenda <strong>{datos.nombreExterno || datos.empresaIdExterno}</strong> · <span style={{ color: 'var(--wine)' }}>sin mapear a un cliente de financiero</span></>}
+            {datos.nit ? <><span className="num">NIT {datos.nit}</span>{datos.nombreExterno && datos.nombreExterno !== datos.nombre ? <> · en la Agenda: <strong>{datos.nombreExterno}</strong></> : null}</> : <>Empresa de la Agenda <strong>{datos.nombreExterno || datos.empresaIdExterno}</strong> · {datos.noFactura ? <span style={{ color: 'var(--ink-3)' }}>marcada como <strong>no se factura</strong> por este flujo</span> : <span style={{ color: 'var(--wine)' }}>sin mapear a un cliente de financiero</span>}</>}
             {' '}· precios <strong>sin IVA</strong> del tarifario.
           </div>
         </div>
@@ -72,8 +72,9 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo }: P
         </div>
       </div>
 
-      {!datos.nit && puedeFacturar && <MapearCliente datos={datos} />}
-      {!datos.nit && !puedeFacturar && <div className="card" role="status" style={{ borderColor: 'var(--wine)', marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Esta empresa de la Agenda todavía no está mapeada a un cliente: un admin o contador tiene que mapearla antes de facturar.</div></div>}
+      {datos.noFactura && <NoFacturaBanner datos={datos} puede={puedeFacturar} />}
+      {!datos.nit && !datos.noFactura && puedeFacturar && <MapearCliente datos={datos} />}
+      {!datos.nit && !datos.noFactura && !puedeFacturar && <div className="card" role="status" style={{ borderColor: 'var(--wine)', marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Esta empresa de la Agenda todavía no está mapeada a un cliente: un admin o contador tiene que mapearla antes de facturar.</div></div>}
 
       {ultima && (
         <div className="card" role="status" data-resultado="factura" style={{ borderColor: ultima.writeback.estado === 'confirmado' || ultima.writeback.estado === 'omitido' ? 'var(--olive)' : 'var(--wine)', marginBottom: 14 }}>
@@ -155,7 +156,7 @@ function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede
       <td className="num">
         {e.estadoTarifa === 'resuelta' && e.montoCalculado !== null
           ? <span className="cell-strong" title={e.componentes.length > 1 ? e.componentes.map(c => `${c.tipoPrueba} ${Q(c.monto)}`).join(' + ') : e.detalleTarifa || undefined}>{Q(e.montoCalculado)}{e.componentes.some(c => !c.aprobada) && <span className="badge badge-warn" style={{ fontSize: 9, marginLeft: 4 }} title="La tarifa no está aprobada en el tarifario">no aprobada</span>}</span>
-          : <span className={'badge ' + (e.estadoTarifa === 'cliente_sin_mapear' ? 'badge-wine' : e.estadoTarifa === 'excluido_psicometrica' ? 'badge-mute' : 'badge-warn')} style={{ fontSize: 10 }} title={e.detalleTarifa || undefined}>{ETIQUETA_ESTADO_TARIFA[e.estadoTarifa]}</span>}
+          : <span className={'badge ' + (e.estadoTarifa === 'cliente_sin_mapear' ? 'badge-wine' : e.estadoTarifa === 'excluido_psicometrica' || e.estadoTarifa === 'excluido_no_factura' ? 'badge-mute' : 'badge-warn')} style={{ fontSize: 10 }} title={e.detalleTarifa || undefined}>{ETIQUETA_ESTADO_TARIFA[e.estadoTarifa]}</span>}
       </td>
       <td style={{ fontSize: 12 }}>
         <div>{estadoCobro}</div>
@@ -176,9 +177,36 @@ function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede
   );
 }
 
+function NoFacturaBanner({ datos, puede }: { datos: GrupoDetalle; puede: boolean }) {
+  const router = useRouter();
+  const [busy, setBusy] = useState(false);
+  const quitar = async () => {
+    setBusy(true);
+    try {
+      const r = await quitarNoFacturaAction(datos.empresaIdExterno);
+      if (r.ok) { toast.success(`"${datos.nombreExterno}" vuelve a la cola · ${r.reclasificados} expediente(s) re-resueltos`); router.refresh(); } else toast.error(r.error);
+    } finally { setBusy(false); }
+  };
+  return (
+    <div className="card" role="status" data-no-factura style={{ borderColor: 'var(--line-2)', marginBottom: 14 }}>
+      <div className="card-pad" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+        <div style={{ flex: 1, minWidth: 280, lineHeight: 1.45 }}>
+          <strong>No se factura por evaluaciones.</strong> Sus expedientes están fuera de la cola y no se cotizan.
+          {datos.noFactura?.motivo ? <> Motivo: <em>{datos.noFactura.motivo}</em>.</> : null}
+          {datos.noFactura?.marcadoPor ? <span className="cell-mute"> · marcado por {datos.noFactura.marcadoPor}</span> : null}
+          <div className="cell-mute" style={{ fontSize: 12, marginTop: 2 }}>No significa que nunca se facture: el reclutamiento va por la Fase A; esto solo la saca de la cola de evaluaciones.</div>
+        </div>
+        {puede && <button className="btn btn-secondary" onClick={() => void quitar()} disabled={busy}>{busy ? <><I.Refresh size={13} /> Quitando…</> : 'Quitar la marca (volver a la cola)'}</button>}
+      </div>
+    </div>
+  );
+}
+
 function MapearCliente({ datos }: { datos: GrupoDetalle }) {
   const router = useRouter();
   const [filtro, setFiltro] = useState('');
+  const [motivo, setMotivo] = useState('');
+  const [modoNoFactura, setModoNoFactura] = useState(false);
   const [clienteId, setClienteId] = useState(datos.sugerencias[0]?.id ?? '');
   const [busy, setBusy] = useState(false);
   const opciones = useMemo(() => {
@@ -194,6 +222,13 @@ function MapearCliente({ datos }: { datos: GrupoDetalle }) {
       const r = await mapearClienteAction({ empresaIdExterno: datos.empresaIdExterno, empresaNombreExterno: datos.nombreExterno, clienteAppId: clienteId });
       if (r.ok) { toast.success(`"${datos.nombreExterno}" → ${r.clienteNombre} (NIT ${r.nit}) · ${r.reclasificados} expediente(s) re-resueltos`); router.push(`/por-facturar/${encodeURIComponent('n-' + r.nit)}`); }
       else toast.error(r.error);
+    } finally { setBusy(false); }
+  };
+  const marcarNoFactura = async () => {
+    setBusy(true);
+    try {
+      const r = await marcarNoFacturaAction({ empresaIdExterno: datos.empresaIdExterno, empresaNombreExterno: datos.nombreExterno, motivo });
+      if (r.ok) { toast.success(`"${datos.nombreExterno}" marcada como no se factura · ${r.reclasificados} expediente(s) fuera de la cola`); router.refresh(); } else toast.error(r.error);
     } finally { setBusy(false); }
   };
   return (
@@ -214,6 +249,16 @@ function MapearCliente({ datos }: { datos: GrupoDetalle }) {
             {opciones.map(c => <option key={c.id} value={c.id}>{c.name}{c.nit ? ` · NIT ${c.nit}` : ' · sin NIT'}</option>)}
           </select>
           <button className="btn btn-primary" onClick={() => void mapear()} disabled={busy || !clienteId}>{busy ? <><I.Refresh size={13} /> Mapeando…</> : <><I.Check size={13} /> Mapear{elegido ? ` a ${elegido.name}` : ''}</>}</button>
+        </div>
+        <div style={{ borderTop: '1px solid var(--line-2)', paddingTop: 10, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span className="cell-mute" style={{ fontSize: 12 }}>O, si no se factura por este flujo (interna / intercompany / reclutamiento = Fase A):</span>
+          {!modoNoFactura
+            ? <button type="button" className="btn btn-ghost" onClick={() => setModoNoFactura(true)} disabled={busy} data-accion="no-factura">No se factura (interno / no aplica)</button>
+            : <>
+                <input className="input" placeholder="Motivo (opcional): intercompany, reclutamiento — Fase A…" value={motivo} onChange={e => setMotivo(e.target.value)} maxLength={200} aria-label="Motivo de no facturar" style={{ minWidth: 320 }} disabled={busy} />
+                <button type="button" className="btn btn-ghost" onClick={() => setModoNoFactura(false)} disabled={busy}>Volver</button>
+                <button type="button" className="btn btn-secondary" onClick={() => void marcarNoFactura()} disabled={busy} data-accion="confirmar-no-factura">{busy ? <><I.Refresh size={13} /> Marcando…</> : <><I.Check size={13} /> Confirmar: no se factura</>}</button>
+              </>}
         </div>
       </div>
     </div>
