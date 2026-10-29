@@ -130,15 +130,22 @@ export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio)
   };
 }
 
-/** true si el cobro del lado de la Agenda sigue pendiente (o sin estado). */
-export function cobroPendiente(statusCobro: string | null | undefined): boolean {
+/**
+ * true si el cobro del lado de la Agenda sigue pendiente: status de cobro null / '' / PENDIENTE /
+ * SIN_STATUS **y** estatus de pago distinto de PAGADO (021). Génesis paga por provisión: el
+ * statusCobro queda PENDIENTE pero estatusPago = PAGADO → ya no cuenta como por facturar.
+ * null y 'NO PAGADO' SÍ siguen en cola (igualdad exacta con PAGADO, sin tildes/mayúsculas).
+ * Misma semántica que facturacion_agenda_cobro_pendiente(s_status, s_pago) en SQL.
+ */
+export function cobroPendiente(statusCobro: string | null | undefined, estatusPago?: string | null): boolean {
   const s = normalizarTexto(statusCobro).replace(/ /g, '_');
-  return (STATUS_COBRO_POR_FACTURAR as readonly string[]).includes(s) || s === 'SIN_STATUS';
+  const statusPendiente = (STATUS_COBRO_POR_FACTURAR as readonly string[]).includes(s) || s === 'SIN_STATUS';
+  return statusPendiente && normalizarTexto(estatusPago) !== 'PAGADO';
 }
 
-/** Listo para la cola "Por facturar": terminado, vigente, sin factura local y con cobro pendiente en la Agenda. */
-export function enCola(e: Pick<ExpedienteLocal, 'terminado' | 'cancelado' | 'eliminado' | 'estadoTarifa' | 'facturaId' | 'statusCobroExterno'>): boolean {
-  return e.terminado && !e.cancelado && !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && !e.facturaId && cobroPendiente(e.statusCobroExterno);
+/** Listo para la cola "Por facturar": terminado, vigente, sin factura local y con cobro pendiente (y no pagado) en la Agenda. */
+export function enCola(e: Pick<ExpedienteLocal, 'terminado' | 'cancelado' | 'eliminado' | 'estadoTarifa' | 'facturaId' | 'statusCobroExterno' | 'estatusPagoExterno'>): boolean {
+  return e.terminado && !e.cancelado && !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && !e.facturaId && cobroPendiente(e.statusCobroExterno, e.estatusPagoExterno);
 }
 
 /** Con precio y en cola (entra al flujo de facturación). */
