@@ -80,6 +80,14 @@ const NIT = '99990031K';
     const { data: enBase } = await sb.from('tarifario').select('tipo_prueba, categoria, territorio, monto').eq('nit', NIT);
     ok((enBase ?? []).length === 1 && enBase![0].tipo_prueba === 'INFORNET' && enBase![0].categoria === 'UNICA' && enBase![0].territorio === 'UNICA' && Number(enBase![0].monto) === 44.64, 'en la base: una sola fila INFORNET · UNICA · UNICA');
 
+    // 2ª tanda: BACKGROUND CHECK es único → el form oculta categoría y territorio (solo se verifica el form; no se guarda)
+    await page.getByRole('button', { name: 'Nueva tarifa' }).click();
+    await dlg.locator('#tf-nit').fill(NIT);
+    await dlg.locator('#tf-tipo').selectOption('BACKGROUND CHECK');
+    await page.waitForSelector('[role=dialog] [data-forma="unico"]');
+    ok(await dlg.locator('#tf-cat').count() === 0 && await dlg.getByLabel('METROPOLITANA', { exact: true }).count() === 0 && /Precio único por cliente/.test(await dlg.innerText()), 'BACKGROUND CHECK (único, 2ª tanda): está en el selector, se ocultan categoría y territorio');
+    await dlg.getByRole('button', { name: 'Cancelar' }).click().catch(() => page.keyboard.press('Escape'));
+    await dlg.waitFor({ state: 'detached' }).catch(() => null);
     await page.getByRole('button', { name: 'Nueva tarifa' }).click();
     await dlg.locator('#tf-nit').fill(NIT);
     await dlg.locator('#tf-tipo').selectOption('SOCIOECONOMICO EMPRESARIAL');
