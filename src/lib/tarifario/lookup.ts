@@ -148,6 +148,12 @@ function elegirSinTerritorio(cands: Tarifa[], nit: string, etiqueta: string, for
 }
 
 /** Resuelve el precio de un expediente contra el tarifario (solo tarifas activas). */
+/** Etiqueta de una fila según la FORMA de su tipo: solo las dimensiones que la forma usa (una celda legacy de matriz de un servicio único se nombra solo por el tipo). */
+function etiquetaFila(t: Tarifa): string {
+  const tp = canonTipoPrueba(t.tipoPrueba), forma = formaPrecio(tp);
+  return [tp, usaCategoria(forma) ? canonCategoria(t.categoria) : '', usaTerritorio(forma) ? canonTerritorio(t.territorio) : ''].filter(x => x && x !== UNICA).join(' ');
+}
+
 export function resolverTarifa(tarifas: readonly Tarifa[], exp: Expediente, clientes: readonly AliasCliente[] = []): ResultadoLookup {
   const nit = resolverNit(exp, indiceAlias(tarifas, clientes));
   if (!nit) return { estado: 'cliente_no_identificado', mensaje: exp.empresa ? `No se pudo identificar el NIT de "${exp.empresa}": vinculá la empresa a un cliente con NIT.` : 'El expediente no trae NIT ni empresa.' };
@@ -179,7 +185,7 @@ export function resolverTarifa(tarifas: readonly Tarifa[], exp: Expediente, clie
     partes.push(r.ok); avisos.push(...r.avisos);
   }
   const sinTarifa = partes.find(p => esSinTarifa(p.monto));
-  if (sinTarifa) return { estado: 'sin_tarifa', nit, tarifa: sinTarifa, componentes: partes.length > 1 ? partes : undefined, mensaje: `${[canonTipoPrueba(sinTarifa.tipoPrueba), canonCategoria(sinTarifa.categoria), canonTerritorio(sinTarifa.territorio)].filter(x => x && x !== UNICA).join(' ')} está en Q0: sin tarifa definida (no es gratis). Hay que pactarla y cargarla.` };
+  if (sinTarifa) return { estado: 'sin_tarifa', nit, tarifa: sinTarifa, componentes: partes.length > 1 ? partes : undefined, mensaje: `${etiquetaFila(sinTarifa)} está en Q0: sin tarifa definida (no es gratis). Hay que pactarla y cargarla.` };
   const monto = partes.reduce((s, p) => s + Number(p.monto), 0);
   const { iva, total } = conIva(monto);
   const aprobada = partes.every(p => !!p.aprobadoEn);
