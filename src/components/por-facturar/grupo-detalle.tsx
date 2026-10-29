@@ -90,6 +90,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
       {generando && generarInicial && datos.nit && <div className="card" role="status" data-recien-mapeado style={{ borderColor: 'var(--olive)', marginBottom: 10 }}><div className="card-pad" style={{ fontSize: 13 }}><strong>{datos.nombre}</strong> quedó creado y mapeado a <strong>{datos.nombreExterno || 'la empresa de la Agenda'}</strong>. Si todavía no tiene tarifario, generalo acá abajo: las filas nacen en Q0 y al cargar el precio los expedientes se resuelven solos.</div></div>}
       {generando && datos.nit && <GenerarTarifas nit={datos.nit} razonSocial={datos.nombre} modo="tarjeta" />}
       {datos.noFactura && <NoFacturaBanner datos={datos} puede={puedeFacturar} />}
+      {datos.arranque && <div className="card" role="status" data-arranque style={{ marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Este cliente se factura por este flujo <strong>desde el {datos.arranque.facturarDesde}</strong>: <strong>{datos.arranque.fuera}</strong> expediente{datos.arranque.fuera === 1 ? '' : 's'} con ingreso anterior quedan <strong>fuera de la cola</strong> (histórico ya cubierto, p. ej. por provisión). Siguen en la lista, atenuados y marcados &quot;antes del arranque&quot;, para conciliar.</div></div>}
       {!datos.nit && !datos.noFactura && puedeFacturar && <MapearCliente datos={datos} />}
       {!datos.nit && !datos.noFactura && !puedeFacturar && <div className="card" role="status" style={{ borderColor: 'var(--wine)', marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Esta empresa de la Agenda todavía no está mapeada a un cliente: un admin o contador tiene que mapearla antes de facturar.</div></div>}
 
@@ -178,6 +179,7 @@ function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede
       </td>
       <td style={{ fontSize: 12 }}>
         <div>{estadoCobro}</div>
+        {e.arranqueExcluido && <span className="badge badge-mute" data-antes-arranque style={{ fontSize: 10 }} title="Ingreso anterior al arranque de la facturación de este cliente: fuera de la cola, sigue en la data para conciliar">antes del arranque</span>}
         {e.montoExterno !== null && <div className="cell-mute num" style={{ fontSize: 11 }} title="Monto registrado en la Agenda">Agenda: {Q(e.montoExterno)}</div>}
         {(e.cobroMegapaca ?? 0) > 0 && <span className="badge badge-outline" style={{ fontSize: 10 }} title="Cobro aparte de Megapaca: no se mezcla con el monto normal">Megapaca {Q(e.cobroMegapaca)}</span>}
       </td>

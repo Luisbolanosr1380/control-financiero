@@ -22,7 +22,7 @@ import { indiceAlias, nombreBase, resolverNit } from '@/lib/tarifario/lookup';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { configAgenda } from '@/lib/facturacion-agenda/config';
 import { AgendaApiError, crearAgendaApi, idsDe, resumirCuerpo, type AgendaApi, type LogSaliente } from '@/lib/facturacion-agenda/agenda-api';
-import { armarFactura, centroPorServicio, clasificarExpediente, conPrecio, expedienteALocal, montoParaAgenda, type ContextoPrecio } from '@/lib/facturacion-agenda/mapeo';
+import { antesDelArranque, armarFactura, centroPorServicio, clasificarExpediente, conPrecio, expedienteALocal, montoParaAgenda, type ContextoPrecio } from '@/lib/facturacion-agenda/mapeo';
 import { agruparPorCliente, kpisPorFacturar, parseClave, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
 import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type EmpresaNoFactura, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import { getTarifario } from './tarifario';
@@ -106,14 +106,22 @@ export async function facturacionAgendaDisponible(): Promise<boolean> {
 
 // ── Mapeo de clientes ───────────────────────────────────────────────────────
 
-interface MapeoRow { id: string; fuente: string; empresa_id_externo: string; empresa_nombre_externo: string | null; nit: string; cliente_id: string | null; activo: boolean; creado_por: string | null; no_factura?: boolean | null; motivo_no_factura?: string | null; updated_at?: string | null }
-const rowToMapeo = (r: MapeoRow): ClienteExterno => ({ id: r.id, fuente: r.fuente, empresaIdExterno: r.empresa_id_externo, empresaNombreExterno: r.empresa_nombre_externo ?? '', nit: r.nit, clienteId: r.cliente_id, activo: !!r.activo, creadoPor: r.creado_por ?? '', noFactura: !!r.no_factura, motivoNoFactura: r.motivo_no_factura ?? '' });
+interface MapeoRow { id: string; fuente: string; empresa_id_externo: string; empresa_nombre_externo: string | null; nit: string; cliente_id: string | null; activo: boolean; creado_por: string | null; no_factura?: boolean | null; motivo_no_factura?: string | null; updated_at?: string | null; /** 022 */ facturar_desde?: string | null }
+const rowToMapeo = (r: MapeoRow): ClienteExterno => ({ id: r.id, fuente: r.fuente, empresaIdExterno: r.empresa_id_externo, empresaNombreExterno: r.empresa_nombre_externo ?? '', nit: r.nit, clienteId: r.cliente_id, activo: !!r.activo, creadoPor: r.creado_por ?? '', noFactura: !!r.no_factura, motivoNoFactura: r.motivo_no_factura ?? '' , facturarDesde: r.facturar_desde ? String(r.facturar_desde).slice(0, 10) : null });
 
 export async function getMapeos(): Promise<ClienteExterno[]> {
   try { return (await fetchAll<MapeoRow>('cliente_externo', { eq: { fuente: FUENTE } })).map(rowToMapeo); } catch { return []; }
 }
 
 export const nitPorEmpresa = (mapeos: readonly ClienteExterno[]): Map<string, string> => new Map(mapeos.filter(m => m.activo && m.nit && !m.noFactura).map(m => [m.empresaIdExterno, m.nit]));
+/** 022: empresa.id → fecha de arranque ('YYYY-MM-DD'). Vale aunque el mapeo esté inactivo o sin NIT (una empresa sin mapear también puede tener corte). */
+export const arranquePorEmpresa = (mapeos: readonly ClienteExterno[]): Map<string, string> => new Map(mapeos.filter(m => m.facturarDesde).map(m => [m.empresaIdExterno, m.facturarDesde!]));
+/** 022: anota `arranqueExcluido` en cada expediente según el corte de su empresa (no se guarda: se calcula al leer). */
+export const anotarArranque = <T extends Pick<ExpedienteLocal, 'empresaIdExterno' | 'fechaIngreso' | 'arranqueExcluido'>>(exps: T[], arranque: ReadonlyMap<string, string>): T[] => {
+  if (!arranque.size) return exps;
+  for (const e of exps) { const d = arranque.get(e.empresaIdExterno); if (d && antesDelArranque(e.fechaIngreso, d)) e.arranqueExcluido = true; }
+  return exps;
+};
 /** 018: empresas marcadas "no se factura" → motivo. */
 export const noFacturaPorEmpresa = (mapeos: readonly ClienteExterno[]): Map<string, string> => new Map(mapeos.filter(m => m.activo && m.noFactura).map(m => [m.empresaIdExterno, m.motivoNoFactura]));
 
@@ -285,7 +293,7 @@ export interface FiltroExpedientes { nit?: string; empresaIdExterno?: string; no
 export async function listarExpedientesLocal(f: FiltroExpedientes = {}): Promise<ExpedienteLocal[]> {
   const sb = supabase(); if (!sb) return [];
   try {
-    const rows = await paginar<ExpRow>(() => {
+    const [rows, mapeos] = await Promise.all([paginar<ExpRow>(() => {
       let q = sb.from('facturacion_expediente').select('*').eq('fuente', FUENTE).order('fecha_ingreso', { ascending: false, nullsFirst: false }).order('id_externo');
       if (f.nit) q = q.eq('nit_resuelto', f.nit);
       if (f.empresaIdExterno) q = q.eq('empresa_id_externo', f.empresaIdExterno);
@@ -293,8 +301,9 @@ export async function listarExpedientesLocal(f: FiltroExpedientes = {}): Promise
       if (f.idsExternos) q = q.in('id_externo', f.idsExternos);
       if (f.detalleId) q = q.eq('detalle_id', f.detalleId);
       return q;
-    }, 'facturacion_expediente');
-    return rows.map(rowToLocal);
+    }, 'facturacion_expediente'), getMapeos()]);
+    // 022: el corte de arranque del cliente se anota al leer (misma regla que facturacion_agenda_en_arranque en SQL).
+    return anotarArranque(rows.map(rowToLocal), arranquePorEmpresa(mapeos));
   } catch (e) { console.error('listarExpedientesLocal:', e); return []; }
 }
 
@@ -451,23 +460,28 @@ const PAGO_NO_PAGADO_OR = 'estatus_pago_externo.is.null,estatus_pago_externo.not
 /** Lo mínimo que usamos de un builder de PostgREST (los métodos devuelven `this`); el tipo real es demasiado profundo para inferirlo acá. */
 interface Filtrable { eq(col: string, v: unknown): this; is(col: string, v: null): this; or(filtros: string): this; in(col: string, vals: unknown[]): this; not(col: string, op: string, v: unknown): this; order(col: string): this }
 type QCola = Filtrable & Consulta & PromiseLike<{ count: number | null; error: { message: string } | null }>;
-const enColaSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false).is('factura_id', null).or(COBRO_PENDIENTE_OR).or(PAGO_NO_PAGADO_OR);
+/** 022: por cada empresa con corte, fuera lo anterior a su arranque (cada .or() se AND-ea con los demás; sin fecha de ingreso sigue en cola). */
+const arranqueSql = <T extends Filtrable>(q: T, arranque: ReadonlyMap<string, string>): T => {
+  for (const [empresa, desde] of arranque) q = q.or(`empresa_id_externo.neq.${empresa},fecha_ingreso.gte.${desde},fecha_ingreso.is.null`);
+  return q;
+};
+const enColaSql = <T extends Filtrable>(q: T, arranque: ReadonlyMap<string, string> = new Map()): T => arranqueSql(q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false).is('factura_id', null).or(COBRO_PENDIENTE_OR).or(PAGO_NO_PAGADO_OR), arranque);
 const vigenteSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false);
 const ESTADOS: EstadoTarifa[] = ['resuelta', 'sin_tarifa', 'cliente_sin_mapear', 'excluido_psicometrica', 'excluido_no_factura'];
 
 /** Fallback sin la 017: los mismos agregados con consultas livianas (counts por HEAD + solo las filas de la cola facturable). */
-async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>): Promise<ResumenRpc> {
+async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>, arranque: ReadonlyMap<string, string> = new Map()): Promise<ResumenRpc> {
   const sel = (cols: string, head = false): QCola => (head ? sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }) : sb.from('facturacion_expediente').select(cols)).eq('fuente', FUENTE) as unknown as QCola;
   const cuenta = async (arma: (q: QCola) => QCola): Promise<number> => { const { count, error } = await arma(sel('id', true)); if (error) throw new Error(error.message); return count ?? 0; };
   const conteos: ConteoEstado[] = [];
   for (const estado of ESTADOS) {
-    const [total, en_cola] = await Promise.all([cuenta(q => q.eq('estado_tarifa', estado)), cuenta(q => enColaSql(q.eq('estado_tarifa', estado)))]);
+    const [total, en_cola] = await Promise.all([cuenta(q => q.eq('estado_tarifa', estado)), cuenta(q => enColaSql(q.eq('estado_tarifa', estado), arranque))]);
     conteos.push({ estado_tarifa: estado, total, en_cola, empresas_en_cola: 0 });
   }
-  const sinMapear = await paginar<{ empresa_id_externo: string | null }>(() => enColaSql(sel('empresa_id_externo').eq('estado_tarifa', 'cliente_sin_mapear')).order('id_externo'), 'sin mapear');
+  const sinMapear = await paginar<{ empresa_id_externo: string | null }>(() => enColaSql(sel('empresa_id_externo').eq('estado_tarifa', 'cliente_sin_mapear'), arranque).order('id_externo'), 'sin mapear');
   const c = conteos.find(x => x.estado_tarifa === 'cliente_sin_mapear'); if (c) c.empresas_en_cola = new Set(sinMapear.map(r => r.empresa_id_externo ?? '')).size;
   const colaRows = await paginarTolerante<{ nit_resuelto: string | null; empresa_id_externo: string | null; empresa_nombre_externo: string | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; cobro_megapaca: number | string | null; fecha_ingreso: string | null; detalle_id?: string | null }>(() =>
-    enColaSql(sel('nit_resuelto, empresa_id_externo, empresa_nombre_externo, estado_tarifa, monto_calculado, cobro_megapaca, fecha_ingreso, detalle_id').in('estado_tarifa', ['resuelta', 'sin_tarifa'])).order('id_externo'), 'cola');
+    enColaSql(sel('nit_resuelto, empresa_id_externo, empresa_nombre_externo, estado_tarifa, monto_calculado, cobro_megapaca, fecha_ingreso, detalle_id').in('estado_tarifa', ['resuelta', 'sin_tarifa']), arranque).order('id_externo'), 'cola');
   const grupos = new Map<string, GrupoRpc>();
   for (const r of colaRows) {
     if (!r.nit_resuelto) continue;
@@ -517,7 +531,7 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
     if (!error && data) { r = data as ResumenRpc; enSql = true; }
     else if (error && !rpcNoExiste(error)) console.error('facturacion_agenda_resumen:', error.message);
   }
-  if (!r) r = await resumenSinRpc(sb);
+  if (!r) r = await resumenSinRpc(sb, arranquePorEmpresa(mapeos));
   const razon = razonPorNitDe(clientes);
   const porNit = new Map<string, GrupoCliente>();
   const base = (nit: string | null, emp: string | null, nombreExt: string | null): GrupoCliente => ({
@@ -579,9 +593,10 @@ export async function empresasSinMapear(opts: { q?: string; limite?: number; des
     }
     if (error && !rpcNoExiste(error)) console.error('facturacion_agenda_sin_mapear:', error.message);
   }
-  // Fallback sin la 017: solo 3 columnas de las filas sin mapear en cola, agregadas en memoria.
+  // Fallback sin la 017: solo 3 columnas de las filas sin mapear en cola, agregadas en memoria (022: respeta el corte de arranque).
+  const arranque = arranquePorEmpresa(await getMapeos());
   const rows = await paginar<{ empresa_id_externo: string | null; empresa_nombre_externo: string | null; fecha_ingreso: string | null }>(() =>
-    enColaSql((sb.from('facturacion_expediente').select('empresa_id_externo, empresa_nombre_externo, fecha_ingreso').eq('fuente', FUENTE) as unknown as QCola).eq('estado_tarifa', 'cliente_sin_mapear')).order('id_externo'), 'sin mapear');
+    enColaSql((sb.from('facturacion_expediente').select('empresa_id_externo, empresa_nombre_externo, fecha_ingreso').eq('fuente', FUENTE) as unknown as QCola).eq('estado_tarifa', 'cliente_sin_mapear'), arranque).order('id_externo'), 'sin mapear');
   const emp = new Map<string, EmpresaSinMapear>();
   for (const r of rows) {
     const k = r.empresa_id_externo ?? '';
@@ -600,6 +615,8 @@ export interface GrupoDetalle {
   grupo: GrupoCliente | null; expedientes: ExpedienteLocal[]; cliente: ClienteSlim | null; sugerencias: ClienteSlim[]; clientes: ClienteSlim[]; centros: CentroCosto[];
   /** 018: la empresa está marcada "no se factura" (motivo y quién). */
   noFactura: { motivo: string; marcadoPor: string } | null;
+  /** 022: corte de arranque del cliente (la fecha más temprana si sus empresas tienen varias) y cuántos expedientes de la lista quedan fuera por eso. */
+  arranque: { facturarDesde: string; fuera: number } | null;
 }
 
 export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
@@ -641,6 +658,11 @@ export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
     clave, nit: p.tipo === 'nit' ? p.nit : null, empresaIdExterno: exps[0].empresaIdExterno, nombre: grupo?.nombre ?? cliente?.name ?? nombreExterno, nombreExterno,
     grupo, expedientes: exps, cliente, sugerencias, clientes: activos.map(slim), centros,
     noFactura: marca ? { motivo: marca.motivoNoFactura, marcadoPor: marca.creadoPor } : null,
+    arranque: (() => {
+      const empresas = new Set(exps.map(e => e.empresaIdExterno));
+      const fechas = mapeos.filter(m => empresas.has(m.empresaIdExterno) && m.facturarDesde).map(m => m.facturarDesde!).sort();
+      return fechas.length ? { facturarDesde: fechas[0], fuera: exps.filter(e => e.arranqueExcluido).length } : null;
+    })(),
   };
 }
 

@@ -42,7 +42,7 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
 const r2 = (n: number) => Math.round(n * 100) / 100;
 
 const NIT_A = '99990011K', NIT_B = '99990012K', NIT_C = '99990013K';
-const EMP_A = 'recE2EempA', EMP_B = 'recE2EempB', EMP_C = 'recE2EempC', EMP_D = 'recE2EempD';
+const EMP_A = 'recE2EempA', EMP_B = 'recE2EempB', EMP_C = 'recE2EempC', EMP_D = 'recE2EempD', EMP_E = 'recE2EempE', EMP_F = 'recE2EempF';
 const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP'];
 
 (async () => {
@@ -77,7 +77,14 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   ok(/create or replace function facturacion_agenda_cobro_pendiente\(s_status text, s_pago text\)/.test(m21) && /upper\(btrim\(coalesce\(s_pago, ''\)\)\) <> 'PAGADO'/.test(m21) && /create or replace function facturacion_agenda_cobro_pendiente\(s text\)/.test(m21) && /select facturacion_agenda_cobro_pendiente\(s, null\)/.test(m21), '021: cobro_pendiente(status, pago) = status pendiente Y pago <> PAGADO (igualdad exacta, sin mayúsculas/espacios); la de un argumento queda como wrapper');
   ok((m21.match(/facturacion_agenda_cobro_pendiente\((e\.)?status_cobro_externo, (e\.)?estatus_pago_externo\)/g) ?? []).length === 4 && !/facturacion_agenda_cobro_pendiente\((e\.)?status_cobro_externo\)/.test(m21) && /create or replace function facturacion_agenda_resumen/.test(m21) && /create or replace function facturacion_agenda_sin_mapear/.test(m21) && /'detalles',/.test(m21) && /en_detalle/.test(m21) && /'no_facturan'/.test(m21), '021: resumen() (cola + 2 filters de conteos) y sin_mapear() pasan AMBOS campos; resumen conserva lo de 018/019 (no_facturan, en_detalle, detalles)');
   ok(!/\b(drop|truncate)\b/i.test(sin21) && !/\bdelete\s+from\b/i.test(sin21) && !/^\s*(begin|commit)\s*;/im.test(sin21) && !/\b(alter|create) table\b/i.test(sin21) && !/\b(update|insert)\b/i.test(sin21), '021: solo funciones; sin tabla, sin drop/delete/commit, no toca datos');
-  ok(fs.readdirSync('supabase/migrations').filter(f => /^02[2-9]_|^0[3-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 021');
+  const m22 = rd('supabase/migrations/022_facturar_desde_por_cliente.sql');
+  const sin22 = m22.replace(/--.*$/gm, '');
+  ok(/alter table cliente_externo add column if not exists facturar_desde date;/.test(m22) && /create or replace function facturacion_agenda_en_arranque\(p_fuente text, p_empresa text, p_fecha date\)/.test(m22) && /p_fecha is not null and p_fecha < m\.facturar_desde/.test(m22) && (m22.match(/facturacion_agenda_en_arranque\((e\.)?fuente, (e\.)?empresa_id_externo, (e\.)?fecha_ingreso\)/g) ?? []).length === 4 && (m22.match(/facturacion_agenda_cobro_pendiente\((e\.)?status_cobro_externo, (e\.)?estatus_pago_externo\)/g) ?? []).length === 4 && /'detalles',/.test(m22) && /en_detalle/.test(m22), '022: cliente_externo.facturar_desde (date, null = sin corte) + en_arranque(fuente, empresa, fecha) (sin fecha → no excluye); resumen (cola + 2 conteos) y sin_mapear la aplican además de la 021; conservan 018/019');
+  ok(!/\b(drop|truncate)\b/i.test(sin22) && !/\bdelete\s+from\b/i.test(sin22) && !/^\s*(begin|commit)\s*;/im.test(sin22) && !/\b(update|insert)\b/i.test(sin22) && !/11854243|GENESIS/i.test(sin22), '022: no clava NIT ni fecha de GENESIS en el SQL (el corte es un dato por cliente); sin drop/delete/commit, no toca datos');
+  ok(fs.readdirSync('supabase/migrations').filter(f => /^02[3-9]_|^0[3-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 022');
+  const db22 = rd('src/lib/db/facturacion-agenda.ts'), mapeo22 = rd('src/lib/facturacion-agenda/mapeo.ts');
+  ok(/export function antesDelArranque\(/.test(mapeo22) && /&& !e\.arranqueExcluido;/.test(mapeo22) && /export const arranquePorEmpresa/.test(db22) && /export const anotarArranque/.test(db22) && /return anotarArranque\(rows\.map\(rowToLocal\), arranquePorEmpresa\(mapeos\)\);/.test(db22) && /empresa_id_externo\.neq\.\$\{empresa\},fecha_ingreso\.gte\.\$\{desde\},fecha_ingreso\.is\.null/.test(db22) && /resumenSinRpc\(sb, arranquePorEmpresa\(mapeos\)\)/.test(db22) && !/facturar_desde/.test(db22.slice(db22.indexOf('export async function guardarMapeo('), db22.indexOf('export async function reclasificar('))), 'app: enCola() respeta arranqueExcluido (anotado al leer desde facturar_desde); el fallback PostgREST filtra por empresa con corte; los upserts del mapeo / no-factura NO tocan facturar_desde (sync-safe)');
+  ok(/data-arranque/.test(rd('src/components/por-facturar/grupo-detalle.tsx')) && /data-antes-arranque/.test(rd('src/components/por-facturar/grupo-detalle.tsx')), 'detalle del cliente: aviso del corte y badge "antes del arranque" por fila (siguen en la lista para conciliar)');
   ok(/export function cobroPendiente\(statusCobro: string \| null \| undefined, estatusPago\?: string \| null\)/.test(rd('src/lib/facturacion-agenda/mapeo.ts')) && /normalizarTexto\(estatusPago\) !== 'PAGADO'/.test(rd('src/lib/facturacion-agenda/mapeo.ts')) && /cobroPendiente\(e\.statusCobroExterno, e\.estatusPagoExterno\)/.test(rd('src/lib/facturacion-agenda/mapeo.ts')) && /PAGO_NO_PAGADO_OR = 'estatus_pago_externo\.is\.null,estatus_pago_externo\.not\.ilike\.PAGADO'/.test(rd('src/lib/db/facturacion-agenda.ts')) && /\.or\(COBRO_PENDIENTE_OR\)\.or\(PAGO_NO_PAGADO_OR\)/.test(rd('src/lib/db/facturacion-agenda.ts')), 'filtro gemelo en la app: enCola() y el PostgREST de resumenSinRpc / sin mapear exigen pago <> PAGADO (null y NO PAGADO siguen en cola)');
   const dbSrc19 = rd('src/lib/db/facturacion-agenda.ts');
   // ── PULIDO: buscador por todos los nombres, crear cliente inline, re-resolver, nombre comercial / marcas ──
@@ -235,6 +242,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   ok(M.armarFactura([l1], () => null).sinCentro.join() === 'POLIGRAFO', 'armarFactura: sin centro para un servicio → se reporta (no se factura a ciegas)');
   ok(M.cobroPendiente('PENDIENTE', 'PAGADO') === false && M.cobroPendiente('PENDIENTE', ' pagado ') === false && M.cobroPendiente('PENDIENTE', 'NO PAGADO') === true && M.cobroPendiente('PENDIENTE', null) === true && M.cobroPendiente(null, null) === true && M.cobroPendiente('SIN_STATUS', undefined) === true && M.cobroPendiente('FACTURADO', null) === false && M.cobroPendiente('FACTURADO', 'PAGADO') === false && M.cobroPendiente('PENDIENTE') === true, '021 cobroPendiente(status, pago): PENDIENTE + PAGADO (aun "pagado ") → fuera; NO PAGADO / null / sin estatus → en cola; FACTURADO siempre fuera');
   ok(!M.enCola(L({ statusCobroExterno: 'PENDIENTE', estatusPagoExterno: 'PAGADO' })) && !M.facturable(L({ statusCobroExterno: 'PENDIENTE', estatusPagoExterno: 'PAGADO' })) && M.enCola(L({ statusCobroExterno: 'PENDIENTE', estatusPagoExterno: 'NO PAGADO' })) && M.enCola(L({ statusCobroExterno: null, estatusPagoExterno: null })) && R.kpisPorFacturar([l1, L({ idExterno: 'rP', statusCobroExterno: 'PENDIENTE', estatusPagoExterno: 'PAGADO' })]).listos === 1 && R.kpisPorFacturar([l1, L({ idExterno: 'rP', statusCobroExterno: 'PENDIENTE', estatusPagoExterno: 'PAGADO' })]).totalSinIva === 350, '021 enCola/facturable/KPIs: una fila PENDIENTE + PAGADO (provisión Génesis) no está en cola ni suma al total; NO PAGADO y null sí');
+  ok(M.antesDelArranque('2026-07-31', '2026-08-01') && !M.antesDelArranque('2026-08-01', '2026-08-01') && !M.antesDelArranque('2026-08-10', '2026-08-01') && !M.antesDelArranque(null, '2026-08-01') && !M.antesDelArranque('2026-01-01', null) && !M.enCola(L({ arranqueExcluido: true })) && !M.facturable(L({ arranqueExcluido: true })) && M.enCola(L({ arranqueExcluido: false })) && R.kpisPorFacturar([l1, L({ idExterno: 'rV', arranqueExcluido: true })]).listos === 1, '022 corte de arranque: 31-jul < 1-ago fuera, 1-ago y después dentro, sin fecha o sin corte dentro; un expediente anterior al arranque no está en cola ni es facturable ni suma');
   ok(M.enCola(l1) && M.facturable(l1) && !M.enCola(L({ statusCobroExterno: 'FACTURADO' })) && M.enCola(L({ statusCobroExterno: null })) && M.enCola(L({ statusCobroExterno: 'SIN_STATUS' })) && !M.enCola(L({ cancelado: true })) && !M.enCola(L({ eliminado: true })) && !M.enCola(L({ terminado: false })) && !M.enCola(L({ facturaId: 'f' })) && !M.facturable(L({ estadoTarifa: 'sin_tarifa', montoCalculado: null })), 'cola = terminado, no cancelado, no eliminado, sin factura local y cobro PENDIENTE / sin estado; facturable = en cola + resuelta');
   ok(!M.enCola(L({ estadoTarifa: 'excluido_no_factura', montoCalculado: null })) && R.kpisPorFacturar([l1, L({ idExterno: 'rN', estadoTarifa: 'excluido_no_factura', montoCalculado: null })]).excluidosNoFactura === 1 && R.agruparPorCliente([L({ idExterno: 'rN', estadoTarifa: 'excluido_no_factura', nitResuelto: null, empresaIdExterno: 'recN' })]).length === 0, 'excluido_no_factura: fuera de la cola, no forma grupo, se cuenta aparte (KPI excluidosNoFactura)');
   const grupos = R.agruparPorCliente([l1, l3, L({ idExterno: 'r5', estadoTarifa: 'sin_tarifa', montoCalculado: null }), L({ idExterno: 'r8', nitResuelto: null, empresaIdExterno: 'recZ', empresaNombreExterno: 'DESCONOCIDA', estadoTarifa: 'cliente_sin_mapear', montoCalculado: null }), L({ idExterno: 'r4', estadoTarifa: 'excluido_psicometrica', montoCalculado: null }), L({ idExterno: 'r9', facturaId: 'f', noFactura: 'A-1', writebackEstado: 'pendiente' })], new Map([['123', 'CLIENTE 123 S.A.']]));
@@ -309,10 +317,10 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
       ['facturacion_expediente', () => sb.from('facturacion_expediente').delete().like('id_externo', 'recE2E%')],
       ['detalle_facturacion', () => sb.from('detalle_facturacion').delete().in('nit', [NIT_A, NIT_B])],
       ['facturas_clientes', () => sb.from('facturas_clientes').delete().in('no_factura', FACTS)],
-      ['cliente_externo', () => sb.from('cliente_externo').delete().in('empresa_id_externo', [EMP_A, EMP_B, EMP_C, EMP_D])],
+      ['cliente_externo', () => sb.from('cliente_externo').delete().in('empresa_id_externo', [EMP_A, EMP_B, EMP_C, EMP_D, EMP_E, EMP_F])],
       ['facturacion_webhook_evento', () => sb.from('facturacion_webhook_evento').delete().like('id', 'fact_evt_e2e%')],
       ['facturacion_log', () => sb.from('facturacion_log').delete().eq('actor', ACTOR)],
-      ['tarifario', () => sb.from('tarifario').delete().in('nit', [NIT_A, NIT_B])],
+      ['tarifario', () => sb.from('tarifario').delete().in('nit', [NIT_A, NIT_B, NIT_C])],
       ['clientes', () => sb.from('clientes').delete().in('nit', [NIT_A, NIT_B, NIT_C])],
     ];
     for (const [nombre, fn] of pasos) { const { error } = await fn(); if (error) console.log(`     ✗ limpieza ${nombre}: ${error.message}`); }
@@ -756,6 +764,41 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     await TDB.activarTarifa(tPda!.id, false, ACTOR);
     ok((await DB.reclasificar({ nit: NIT_A })) === 0, 'sin los PDA sembrados y con la tarifa desactivada, la cola de A queda igual (0 cambios)');
 
+    // ── 022 · CORTE DE ARRANQUE (facturar_desde por cliente): lo anterior sale de la cola y de "sin mapear"; sigue en la data ──
+    console.log('\n   022 · corte de arranque: facturar_desde por cliente');
+    const mE = await DB.guardarMapeo({ empresaIdExterno: EMP_E, empresaNombreExterno: 'E2E GENESIS', clienteAppId: idNuevo }, ACTOR);
+    // El cliente nuevo necesita tarifa: el sync re-clasifica TODA la cola desde el raw (también lo anterior al arranque) y sin tarifa los dejaría "sin tarifa".
+    const tC = await TDB.crearTarifa({ nit: NIT_C, razonSocial: 'E2E CHICOTE NUEVO, S.A.', tipoPrueba: 'POLIGRAFO', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA', monto: 300, anio: '2026' }, ACTOR);
+    const { error: eFd } = await sb.from('cliente_externo').update({ facturar_desde: '2026-08-01' }).eq('fuente', 'agenda').eq('empresa_id_externo', EMP_E);
+    const { error: eFdF } = await sb.from('cliente_externo').insert({ fuente: 'agenda', empresa_id_externo: EMP_F, empresa_nombre_externo: 'E2E GENESIS SUCURSAL', nit: '', activo: false, creado_por: ACTOR, facturar_desde: '2026-08-01' });
+    const filaG = (id: string, emp: string, nombre: string, fecha: string, estado: string, nit: string | null) => ({ fuente: 'agenda', id_externo: id, empresa_id_externo: emp, empresa_nombre_externo: nombre, nit_resuelto: nit, tipo_cobrado: 'POLIGRAFO', estado_tarifa: estado, monto_calculado: estado === 'resuelta' ? 300 : null, detalle_tarifa: 'sembrado', terminado: true, cancelado: false, eliminado: false, status_cobro_externo: 'PENDIENTE', fecha_ingreso: fecha, tipo_prueba: 'POLIGRAFO', proceso_solicitado: 'SOLO POLIGRAFO', categoria_prueba: 'PRE EMPLEO', depto_visita: 'GUATEMALA', persona: `PERSONA ${id.slice(-3)}`, componentes: estado === 'resuelta' ? [{ tipoPrueba: 'POLIGRAFO', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA', monto: 300, aprobada: true }] : [], raw: { id, empresa: { id: emp, nombre }, tipoPrueba: 'POLIGRAFO', procesoSolicitado: 'SOLO POLIGRAFO', categoriaPrueba: 'PRE EMPLEO', deptoVisita: 'GUATEMALA', terminado: true, cancelado: false, eliminado: false, fechaIngreso: fecha, cobro: { statusCobro: 'PENDIENTE' }, actualizadoEn: '2026-10-20T10:00:00.000Z', nombre: `PERSONA ${id.slice(-3)}` } });
+    const smAntes = await DB.empresasSinMapear({});
+    const { error: eG } = await sb.from('facturacion_expediente').insert([
+      filaG('recE2E930', EMP_E, 'E2E GENESIS', '2026-07-15', 'resuelta', NIT_C), filaG('recE2E931', EMP_E, 'E2E GENESIS', '2026-08-05', 'resuelta', NIT_C), filaG('recE2E932', EMP_E, 'E2E GENESIS', '2026-07-31', 'sin_tarifa', NIT_C),
+      filaG('recE2E933', EMP_F, 'E2E GENESIS SUCURSAL', '2026-07-10', 'cliente_sin_mapear', null), filaG('recE2E934', EMP_F, 'E2E GENESIS SUCURSAL', '2026-08-10', 'cliente_sin_mapear', null),
+    ]);
+    ok(mE.ok && tC.ok && !eFd && !eFdF && !eG, `semilla 022: E2E GENESIS mapeada al cliente nuevo con facturar_desde 2026-08-01 (3 exp.: 15-jul resuelta, 5-ago resuelta, 31-jul sin tarifa) + sucursal SIN mapear con corte (10-jul y 10-ago)${[eFd, eFdF, eG].filter(Boolean).map(x => ' · ' + x!.message).join('')}`);
+    const v22 = await DB.vistaPorFacturar(), v22f = await DB.vistaPorFacturar({ sinRpc: true });
+    const gC = v22.grupos.find(g => g.nit === NIT_C);
+    ok(!!gC && gC.listos === 1 && gC.totalSinIva === 300 && gC.sinTarifa === 0 && gC.expedientes === 1 && gC.fechaIngresoMasAntigua === '2026-08-05', `resumen (SQL): el cliente con corte solo cuenta agosto (1 listo, Q300, 0 sin tarifa); el 15-jul y el 31-jul quedan fuera (${JSON.stringify(gC)})`);
+    const smDespues = await DB.empresasSinMapear({}), smF2 = await DB.empresasSinMapear({ sinRpc: true });
+    ok(smDespues.totalEmpresas === smAntes.totalEmpresas + 1 && smDespues.totalExpedientes === smAntes.totalExpedientes + 1 && smDespues.filas.find(f => f.empresaIdExterno === EMP_F)?.expedientes === 1 && smDespues.filas.find(f => f.empresaIdExterno === EMP_F)?.fechaMasAntigua === '2026-08-10' && JSON.stringify(smF2.filas) === JSON.stringify(smDespues.filas) && smF2.totalExpedientes === smDespues.totalExpedientes, '"sin mapear" (SQL y fallback): la sucursal sin mapear con corte muestra 1 expediente (10-ago); el de julio no entra');
+    ok(JSON.stringify(v22f.grupos) === JSON.stringify(v22.grupos) && JSON.stringify(v22f.kpis) === JSON.stringify(v22.kpis), 'paridad: fallback PostgREST (filtro por empresa con corte) = resumen SQL');
+    const locC = await DB.listarExpedientesLocal({ nit: NIT_C });
+    const lc = (id: string) => locC.find(e => e.idExterno === id)!;
+    ok(locC.length === 3 && lc('recE2E930').arranqueExcluido === true && !enColaM(lc('recE2E930')) && lc('recE2E932').arranqueExcluido === true && !enColaM(lc('recE2E932')) && !lc('recE2E931').arranqueExcluido && enColaM(lc('recE2E931')) && facturableM(lc('recE2E931')) && !facturableM(lc('recE2E930')), 'app: los 3 siguen en la data; 15-jul y 31-jul marcados "antes del arranque" (ni en cola ni facturables); 5-ago en cola y facturable');
+    const gDet = await DB.getGrupo(`n-${NIT_C}`);
+    ok(!!gDet && gDet.arranque?.facturarDesde === '2026-08-01' && gDet.arranque?.fuera === 2 && gDet.grupo?.listos === 1 && gDet.expedientes.length === 3, 'detalle del cliente: aviso "desde 2026-08-01 · 2 fuera"; el grupo cuenta 1 listo; la lista trae los 3');
+    const mE2 = await DB.guardarMapeo({ empresaIdExterno: EMP_E, empresaNombreExterno: 'E2E GENESIS', clienteAppId: idNuevo }, ACTOR);
+    const sE = await DB.sincronizarAgenda({ actor: ACTOR, api: apiRapida() });
+    const fdE = (await DB.getMapeos()).find(m => m.empresaIdExterno === EMP_E)?.facturarDesde;
+    const v22b = await DB.vistaPorFacturar();
+    const locC2 = await DB.listarExpedientesLocal({ nit: NIT_C });
+    ok(mE2.ok && sE.ok && fdE === '2026-08-01' && v22b.grupos.find(g => g.nit === NIT_C)?.listos === 1 && locC2.length === 3 && locC2.filter(e => e.arranqueExcluido).length === 2 && locC2.every(e => e.estadoTarifa === 'resuelta' && e.montoCalculado === 300), `durable y a prueba de sync: volver a mapear la empresa y correr el sync (que re-clasifica toda la cola) no pisan facturar_desde; el corte sigue aplicando y las 3 filas siguen en la data con precio (${JSON.stringify({ mapeo: mE2.ok, sync: sE.ok, facturarDesde: fdE, listos: v22b.grupos.find(g => g.nit === NIT_C)?.listos, estados: locC2.map(e => `${e.idExterno}:${e.estadoTarifa}:${e.montoCalculado}:${e.arranqueExcluido ? 'fuera' : 'cola'}`) })})`);
+    ok((await DB.getMapeos()).find(m => m.empresaIdExterno === EMP_A)?.facturarDesde === null && v22.grupos.find(g => g.nit === NIT_A)?.listos === v21.grupos.find(g => g.nit === NIT_A)?.listos, 'un cliente sin facturar_desde (A) se comporta exactamente como antes');
+    await sb.from('facturacion_expediente').delete().in('id_externo', ['recE2E930', 'recE2E931', 'recE2E932', 'recE2E933', 'recE2E934']);
+    await sb.from('cliente_externo').delete().in('empresa_id_externo', [EMP_E, EMP_F]);
+
     // Sin llave / HIT
     process.env.EMPRESA_SLUG = 'hit';
     const sinKey = await DB.sincronizarAgenda({ actor: ACTOR });   // sin api inyectada: usa la config → HIT no tiene llave real pero sí la de prueba… la quitamos:
@@ -798,7 +841,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
         sb.from('facturas_clientes').select('id', { count: 'exact', head: true }).in('no_factura', FACTS),
         sb.from('factura_detalle_expediente').select('id', { count: 'exact', head: true }).in('no_factura', FACTS),
         sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }).like('id_externo', 'recE2E%'),
-        sb.from('cliente_externo').select('id', { count: 'exact', head: true }).in('empresa_id_externo', [EMP_A, EMP_B, EMP_C, EMP_D]),
+        sb.from('cliente_externo').select('id', { count: 'exact', head: true }).in('empresa_id_externo', [EMP_A, EMP_B, EMP_C, EMP_D, EMP_E, EMP_F]),
         sb.from('clientes').select('id', { count: 'exact', head: true }).in('nit', [NIT_A, NIT_B, NIT_C]),
       ]);
       ok(a === 0 && b === 0 && c === 0 && d === 0 && f === 0 && v === 0 && dd === 0, 'limpieza verificada: 0 facturas / detalle (cascade) / expedientes / mapeos / clientes de prueba / filas de volumen / detalles de facturación');
