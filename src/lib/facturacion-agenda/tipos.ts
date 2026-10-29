@@ -129,6 +129,8 @@ export interface ExpedienteLocal {
   writebackEn: string | null;
   cobroWritebackEstado: string | null;
   cobroWritebackDetalle: string | null;
+  /** 019: detalle de facturación (pre-liquidación) que lo reserva. */
+  detalleId: string | null;
   updatedAt: string | null;
 }
 

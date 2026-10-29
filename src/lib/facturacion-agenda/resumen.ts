@@ -4,7 +4,7 @@
  * empresa de la Agenda no está mapeada, por su empresa.id.
  */
 import { conIva, normalizarTexto, round2 } from '@/lib/tarifario/canon';
-import { enCola, facturable } from './mapeo';
+import { conPrecio, enCola, facturable } from './mapeo';
 import { ESTADOS_EXCLUIDOS, type ExpedienteLocal } from './tipos';
 
 export interface GrupoCliente {
@@ -26,6 +26,8 @@ export interface GrupoCliente {
   facturados: number;
   writebackPendiente: number;
   conMegapaca: number;
+  /** 019: en cola pero ya reservados en un detalle de facturación. */
+  enDetalle: number;
   fechaIngresoMasAntigua: string | null;
 }
 
@@ -47,7 +49,7 @@ export function agruparPorCliente(expedientes: readonly ExpedienteLocal[], razon
     const clave = claveGrupo(e);
     let g = grupos.get(clave);
     if (!g) {
-      g = { clave, nit: e.nitResuelto, empresaIdExterno: e.empresaIdExterno, nombre: (e.nitResuelto && razonPorNit.get(e.nitResuelto)) || e.empresaNombreExterno || e.empresaIdExterno || '—', nombreExterno: e.empresaNombreExterno, expedientes: 0, listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, facturados: 0, writebackPendiente: 0, conMegapaca: 0, fechaIngresoMasAntigua: null };
+      g = { clave, nit: e.nitResuelto, empresaIdExterno: e.empresaIdExterno, nombre: (e.nitResuelto && razonPorNit.get(e.nitResuelto)) || e.empresaNombreExterno || e.empresaIdExterno || '—', nombreExterno: e.empresaNombreExterno, expedientes: 0, listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, facturados: 0, writebackPendiente: 0, conMegapaca: 0, enDetalle: 0, fechaIngresoMasAntigua: null };
       grupos.set(clave, g);
     }
     g.expedientes++;
@@ -55,7 +57,8 @@ export function agruparPorCliente(expedientes: readonly ExpedienteLocal[], razon
     if (enCola(e)) {
       if (e.estadoTarifa === 'sin_tarifa') g.sinTarifa++;
       if (e.estadoTarifa === 'cliente_sin_mapear') g.sinMapear++;
-      if (facturable(e)) { g.listos++; g.totalSinIva = round2(g.totalSinIva + (e.montoCalculado ?? 0)); }
+      if (e.detalleId) g.enDetalle++;
+      if (conPrecio(e)) { g.listos++; g.totalSinIva = round2(g.totalSinIva + (e.montoCalculado ?? 0)); }
       if (e.fechaIngreso && (!g.fechaIngresoMasAntigua || e.fechaIngreso < g.fechaIngresoMasAntigua)) g.fechaIngresoMasAntigua = e.fechaIngreso;
     }
     if ((e.cobroMegapaca ?? 0) > 0) g.conMegapaca++;
@@ -80,7 +83,7 @@ export function kpisPorFacturar(expedientes: readonly ExpedienteLocal[]): KpisPo
     if (!enCola(e)) continue;
     if (e.estadoTarifa === 'sin_tarifa') k.sinTarifa++;
     if (e.estadoTarifa === 'cliente_sin_mapear') { k.sinMapear++; sinMapear.add(claveGrupo(e)); }
-    if (facturable(e)) { k.listos++; k.totalSinIva = round2(k.totalSinIva + (e.montoCalculado ?? 0)); }
+    if (conPrecio(e)) { k.listos++; k.totalSinIva = round2(k.totalSinIva + (e.montoCalculado ?? 0)); }
   }
   k.totalConIva = conIva(k.totalSinIva).total;
   k.clientes = clientes.size; k.clientesSinMapear = sinMapear.size;

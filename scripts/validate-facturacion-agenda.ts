@@ -65,7 +65,22 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   const sin18 = m18.replace(/--.*$/gm, '');
   ok(/alter table cliente_externo add column if not exists no_factura boolean not null default false/.test(m18) && /add column if not exists motivo_no_factura text/.test(m18) && /drop constraint if exists facturacion_expediente_estado_tarifa_check/.test(m18) && /add constraint facturacion_expediente_estado_tarifa_check\s+check \(estado_tarifa in \('resuelta', 'sin_tarifa', 'cliente_sin_mapear', 'excluido_psicometrica', 'excluido_no_factura'\)\)/.test(m18), '018: cliente_externo.no_factura + motivo; check de estado_tarifa recreado (idempotente) con excluido_no_factura');
   ok(/create or replace function facturacion_agenda_resumen/.test(m18) && /estado_tarifa not in \('excluido_psicometrica', 'excluido_no_factura'\)/.test(m18) && /'excluidos_no_factura'/.test(m18) && /'no_facturan'/.test(m18) && !/\bdrop\s+(table|function|index|column)\b/i.test(sin18) && !/\b(truncate|delete\s+from)\b/i.test(sin18) && !/^\s*(begin|commit)\s*;/im.test(sin18), '018: resumen() cuenta excluido_no_factura aparte, nunca entra a grupos/cola, lista las empresas marcadas; sin drop de tablas/funciones ni delete/commit');
-  ok(fs.readdirSync('supabase/migrations').filter(f => /^019_|^0[2-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 018');
+  const m19 = rd('supabase/migrations/019_detalle_facturacion.sql');
+  const sin19 = m19.replace(/--.*$/gm, '');
+  ok(/create table if not exists detalle_facturacion \(/.test(m19) && /check \(estado in \('borrador', 'enviada', 'aprobada', 'facturada', 'anulada'\)\)/.test(m19) && /correlativo\s+text not null unique default \('DET-'/.test(m19) && /aprobado_canal in \('correo', 'link', 'otro'\)/.test(m19) && /alter table facturacion_expediente add column if not exists detalle_id uuid references detalle_facturacion\(id\)/.test(m19) && /create index if not exists idx_fact_exp_detalle/.test(m19), '019: detalle_facturacion (5 estados, correlativo DET-0001, canal de aprobación) + facturacion_expediente.detalle_id con índice');
+  ok(/create or replace function detalle_facturacion_crear\(p_actor text, p_ids_externos text\[\], p_notas text default null\)/.test(m19) && /EXPEDIENTE_RESERVADO/.test(m19) && /EXPEDIENTE_NO_FACTURABLE/.test(m19) && /DETALLE_VARIOS_CLIENTES/.test(m19) && /create or replace function detalle_facturacion_anular/.test(m19) && /DETALLE_FACTURADO/.test(m19) && /'detalles',/.test(m19) && !/\b(drop|truncate)\b/i.test(sin19) && !/\bdelete\s+from\b/i.test(sin19) && !/^\s*(begin|commit)\s*;/im.test(sin19) && !/facturacion_agenda_emitir/.test(sin19), '019: RPC crear (reserva todo o nada: resueltos, en cola, un cliente, no reservados) y anular (libera; nunca facturada); resumen cuenta detalles; no toca la RPC de emisión; sin drop/delete/commit');
+  ok(fs.readdirSync('supabase/migrations').filter(f => /^02\d_|^0[3-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 019');
+  const dbSrc19 = rd('src/lib/db/facturacion-agenda.ts');
+  const emitirBody = dbSrc19.slice(dbSrc19.indexOf('export async function emitirFacturaAgenda('), dbSrc19.indexOf('// ── Write-back a la Agenda'));
+  ok(/input\.detalleId/.test(emitirBody) && /detalle\.estado !== 'aprobada'/.test(emitirBody) && /exactamente los/.test(emitirBody), 'emitirFacturaAgenda: exige un detalle APROBADO y exactamente sus expedientes (todo lo de la Agenda pasa por el detalle)');
+  const detSrc = rd('src/lib/db/detalle-facturacion.ts');
+  ok(/rpc<Row>\('detalle_facturacion_crear'/.test(detSrc) && /rpc<Row>\('detalle_facturacion_anular'/.test(detSrc) && /transicionValida\(d\.estado, a\)/.test(detSrc) && /\.eq\('estado', d\.estado\)/.test(detSrc) && /d\.estado !== 'aprobada'/.test(detSrc), 'db/detalle-facturacion: crear y anular por RPC; transiciones validadas y escritas con el estado previo como condición; facturar solo aprobada');
+  const detUI = rd('src/components/por-facturar/detalle-view.tsx');
+  ok(/data-accion="marcar-enviada"/.test(detUI) && /data-accion="marcar-aprobada"/.test(detUI) && /aria-label="Quién aprobó"/.test(detUI) && /data-accion="facturar"/.test(detUI) && /d\.estado === 'aprobada' && !anulando && <button/.test(detUI) && /data-accion="anular"/.test(detUI) && /\/imprimir\/detalle\//.test(detUI) && !/window\.(confirm|alert|prompt)\(/.test(detUI), 'detalle: botones por estado (enviada → aprobada con quién/canal → Facturar solo aprobada → anular), Imprimir / PDF; sin diálogos del navegador');
+  const grupoUI = rd('src/components/por-facturar/grupo-detalle.tsx');
+  ok(/data-accion="generar-detalle"/.test(grupoUI) && /crearDetalleAction/.test(grupoUI) && !/emitirFacturaAgendaAction|Facturar seleccionados/.test(grupoUI) && /En detalle →/.test(grupoUI), 'grupo: la selección genera un DETALLE (ya no factura directo); los reservados muestran "En detalle →"');
+  ok(fs.existsSync('src/app/imprimir/detalle/[id]/page.tsx') && /@media print/.test(rd('src/components/por-facturar/detalle-imprimible.tsx')) && /Detalle de servicios/.test(rd('src/components/por-facturar/detalle-imprimible.tsx')) && /Detalle de la factura/.test(rd('src/components/por-facturar/detalle-imprimible.tsx')) && /data-faltantes/.test(rd('src/components/por-facturar/detalle-imprimible.tsx')), 'imprimible fuera del shell: "Detalle de servicios / Pre-liquidación" sin número de SAT; con número cuando ya se facturó; faltantes marcados');
+  ok(/data-accion="imprimir-detalle"/.test(rd('src/components/por-facturar/procesos-agenda-section.tsx')) && /data-tab="detalles"/.test(rd('src/components/por-facturar/por-facturar-client.tsx')) && /data-kpi="detalles"/.test(rd('src/components/por-facturar/por-facturar-client.tsx')), 'post-factura: "Imprimir detalle" en la sección de procesos; tablero: pestaña y KPI "Detalles por aprobar"');
   const mapeoSrc = rd('src/lib/facturacion-agenda/mapeo.ts');
   const cuerpoClas = mapeoSrc.slice(mapeoSrc.indexOf('export function clasificarExpediente('));
   ok(cuerpoClas.indexOf('esPsicometrica(exp)') < cuerpoClas.indexOf('noFacturaEmpresas?.has(') && cuerpoClas.indexOf('noFacturaEmpresas?.has(') < cuerpoClas.indexOf('nitPorEmpresa.get('), 'motor: orden psicométricas → no se factura → mapeo a NIT → cliente sin mapear');
@@ -98,7 +113,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   const firma = rd('src/lib/facturacion-agenda/firma.ts');
   ok(/timingSafeEqual/.test(firma) && /TOLERANCIA_SEGUNDOS = 300/.test(firma) && /createHmac\('sha256', secreto\)\.update\(`\$\{p\.t\}\.\$\{cuerpoCrudo\}`\)/.test(firma), 'firma: HMAC-SHA256(secreto, t + "." + cuerpo crudo), comparación en tiempo constante, 5 min de tolerancia');
   const acts = rd('src/app/(app)/por-facturar/actions.ts');
-  for (const fn of ['sincronizarAgendaAction', 'mapearClienteAction', 'emitirFacturaAgendaAction', 'reintentarWritebackAction']) {
+  for (const fn of ['sincronizarAgendaAction', 'mapearClienteAction', 'reintentarWritebackAction', 'crearDetalleAction', 'marcarEnviadaAction', 'marcarAprobadaAction', 'anularDetalleAction', 'facturarDetalleAction']) {
     ok(new RegExp(`export async function ${fn}\\([^)]*\\)[^{]*\\{\\s*const permiso = await autorizar\\('facturar_agenda'\\);`).test(acts), `${fn}: primera línea autorizar('facturar_agenda')`);
   }
   const roles = rd('src/lib/auth/roles.ts');
@@ -109,7 +124,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   const cron = rd('src/app/api/cron/traer-facturacion-agenda/route.ts');
   const vj = JSON.parse(rd('vercel.json')) as { crons: { path: string; schedule: string }[] };
   ok(/verifyCronSecret\(req\)/.test(cron) && /agendaConfigurada\(\)/.test(cron) && vj.crons.some(c => c.path === '/api/cron/traer-facturacion-agenda' && c.schedule === '*/15 * * * *'), 'cron: /api/cron/traer-facturacion-agenda con CRON_SECRET, cada 15 min en vercel.json, se omite sin llave');
-  const ui = ['por-facturar-client', 'grupo-detalle', 'reintentar-writeback-button', 'procesos-agenda-section'].map(f => rd(`src/components/por-facturar/${f}.tsx`)).join('\n');
+  const ui = ['por-facturar-client', 'grupo-detalle', 'reintentar-writeback-button', 'procesos-agenda-section', 'facturar-dialogo', 'detalle-view', 'sin-mapear-lista'].map(f => rd(`src/components/por-facturar/${f}.tsx`)).join('\n');
   ok(!/window\.(confirm|alert|prompt)\(|\bconfirm\(/.test(ui) && /role="dialog"/.test(ui) && /Número de factura \(SAT\/FEL\)/.test(ui), 'pantalla: sin diálogos del navegador; "Facturar" pide número SAT/FEL y fecha en un modal propio');
   ok(/disabled=\{!esFacturable\}/.test(ui) && /facturable\(e\)/.test(ui), 'pantalla: solo se seleccionan expedientes en estado resuelta y en cola');
   ok(/'\/por-facturar'/.test(rd('src/components/shell/sidebar.tsx')) && /'\/por-facturar'/.test(rd('src/components/shell/topbar.tsx')) && /startsWith\('\/por-facturar\/'\)/.test(rd('src/components/shell/topbar.tsx')), 'nav: "Por facturar · Agenda" en sidebar y breadcrumb');
@@ -227,6 +242,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
       ['volumen', () => sb.from('facturacion_expediente').delete().like('id_externo', 'recVOL%')],
       ['factura_detalle_expediente', () => sb.from('factura_detalle_expediente').delete().like('id_externo', 'recE2E%')],
       ['facturacion_expediente', () => sb.from('facturacion_expediente').delete().like('id_externo', 'recE2E%')],
+      ['detalle_facturacion', () => sb.from('detalle_facturacion').delete().in('nit', [NIT_A, NIT_B])],
       ['facturas_clientes', () => sb.from('facturas_clientes').delete().in('no_factura', FACTS)],
       ['cliente_externo', () => sb.from('cliente_externo').delete().in('empresa_id_externo', [EMP_A, EMP_B, EMP_C])],
       ['facturacion_webhook_evento', () => sb.from('facturacion_webhook_evento').delete().like('id', 'fact_evt_e2e%')],
@@ -323,6 +339,16 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   process.env.EMPRESA_SLUG = 'golden';   // en HIT el write-back va forzado OFF; acá probamos el ciclo completo contra el doble
   const apiRapida = () => crearAgendaApi({ baseUrl: URL_DOBLE, apiKey: 'llave-de-prueba', esperar: async () => {}, log: l => DB.registrarLog({ ...l, actor: ACTOR }) });
 
+  const DET = await import('../src/lib/db/detalle-facturacion');
+  const MM = await import('../src/lib/facturacion-agenda/mapeo');
+  type FacVia = Awaited<ReturnType<typeof DET.facturarDetalle>>;
+  /** Flujo real (019): generar detalle → enviada → aprobada → facturar. */
+  const facturarVia = async (ids: string[], nf: string, fecha: string, centroPorTipo?: Record<string, string>): Promise<FacVia> => {
+    const c = await DET.crearDetalle({ idsExternos: ids }, ACTOR); if (!c.ok) return { ok: false, error: `crear: ${c.error}` };
+    const en = await DET.marcarEnviada(c.detalle.id, ACTOR); if (!en.ok) return { ok: false, error: `enviar: ${en.error}` };
+    const ap = await DET.marcarAprobada(c.detalle.id, { aprobadoPor: 'Contadora del Cliente', canal: 'correo' }, ACTOR); if (!ap.ok) return { ok: false, error: `aprobar: ${ap.error}` };
+    return DET.facturarDetalle(c.detalle.id, { noFactura: nf, fechaEmision: fecha, centroPorTipo }, ACTOR, { api: apiRapida() });
+  };
   const creadosTar: string[] = [];
   try {
     ok(await DB.facturacionAgendaDisponible(), `facturacionAgendaDisponible() detecta la 016 en ${base}`);
@@ -380,18 +406,45 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     // Emitir: validaciones
     const hoy = (await import('../src/lib/utils/fechas')).obtenerFechaHoyGuatemala();
     const manana = new Date(Date.now() + 86400_000 * 2).toISOString().slice(0, 10);
-    let e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E001'], noFactura: 'F-E2E-X', fechaEmision: manana }, ACTOR);
-    ok(!e.ok && /futura/.test(e.ok ? '' : e.error), 'facturar: fecha futura → error');
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E005'], noFactura: 'F-E2E-X', fechaEmision: hoy }, ACTOR);
-    ok(!e.ok && /Sin tarifa/.test(e.ok ? '' : e.error), 'facturar: un expediente sin tarifa → error (solo se facturan resueltos)');
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E001', 'recE2E008'], noFactura: 'F-E2E-X', fechaEmision: hoy }, ACTOR);
-    ok(!e.ok, 'facturar: expedientes de clientes distintos → error');
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E009'], noFactura: 'F-E2E-X', fechaEmision: hoy }, ACTOR);
-    ok(!e.ok && /cobro ya resuelto/.test(e.ok ? '' : e.error), 'facturar: expediente ya FACTURADO en la Agenda → error (no está en cola)');
+    // ── 019: DETALLE DE FACTURACIÓN (pre-liquidación) ──
+    console.log('\n   019 · detalle: generar → enviada → aprobada → facturar');
+    ok(await DET.detallesDisponibles(), `detallesDisponibles() detecta la 019 en ${base}`);
+    let cd = await DET.crearDetalle({ idsExternos: ['recE2E005'] }, ACTOR);
+    ok(!cd.ok && /precio resuelto y en cola/.test(cd.ok ? '' : cd.error), 'generar detalle con un expediente sin tarifa → error (solo entran resueltos con precio)');
+    cd = await DET.crearDetalle({ idsExternos: ['recE2E009'] }, ACTOR);
+    ok(!cd.ok, 'generar detalle con un expediente ya FACTURADO en la Agenda → error (no está en cola)');
+    cd = await DET.crearDetalle({ idsExternos: [] }, ACTOR);
+    ok(!cd.ok && /al menos un/.test(cd.ok ? '' : cd.error), 'generar detalle sin expedientes → error');
+    const d1 = await DET.crearDetalle({ idsExternos: ['recE2E001', 'recE2E003', 'recE2E001'], notas: ' pre-liquidación de octubre ' }, ACTOR);
+    locales = await DB.listarExpedientesLocal();
+    ok(d1.ok && d1.detalle.estado === 'borrador' && /^DET-\d{4}$/.test(d1.detalle.correlativo) && d1.detalle.nit === NIT_A && d1.detalle.clienteId === cliA!.id && d1.detalle.expedientes === 2 && d1.detalle.subtotal === 1150 && d1.detalle.iva === 138 && d1.detalle.total === 1288 && d1.detalle.creadoPor === ACTOR && d1.detalle.notas === 'pre-liquidación de octubre' && byId('recE2E001').detalleId === d1.detalle.id && byId('recE2E003').detalleId === d1.detalle.id, `generar detalle (e001 + COMPLETO e003, id repetido deduplicado): ${d1.ok ? d1.detalle.correlativo : d1.error} en borrador, totales del tarifario 1150 + 138 = 1288, expedientes RESERVADOS`);
+    const D1 = d1.ok ? d1.detalle.id : '';
+    cd = await DET.crearDetalle({ idsExternos: ['recE2E001'] }, ACTOR);
+    ok(!cd.ok && /otro detalle/.test(cd.ok ? '' : cd.error), 'un expediente reservado no entra en otro detalle');
+    const vD = await DB.vistaPorFacturar();
+    ok(vD.detalles.borrador.n === 1 && vD.detalles.borrador.total === 1288 && vD.grupos.find(g => g.nit === NIT_A)?.enDetalle === 2 && !MM.facturable(byId('recE2E001')) && MM.conPrecio(byId('recE2E001')), 'tablero: 1 detalle en borrador (Q1,288); el cliente A muestra 2 en detalle; un reservado ya no es seleccionable aunque siga en cola');
+    const g1 = await DET.getDetalle(D1);
+    ok(!!g1 && g1.documento.incluidas.length === 2 && g1.documento.faltantes.length === 0 && g1.documento.total === 1288 && g1.documento.lineas.find(l => l.idExterno === 'recE2E003')?.componentes.includes('POLIGRAFO Q350.00 + SOCIOECONOMICO Q450.00') === true && g1.clienteNombre === 'E2E AGENDA, S.A.', 'documento imprimible: 2 líneas, el COMPLETO con sus componentes, total 1288, cliente resuelto');
+    let tr = await DET.marcarAprobada(D1, { aprobadoPor: 'X' }, ACTOR);
+    ok(!tr.ok && /no puede pasar/.test(tr.ok ? '' : tr.error), 'transición inválida: borrador → aprobada se rechaza (primero hay que enviarlo)');
+    let fx = await DET.facturarDetalle(D1, { noFactura: 'F-E2E-X', fechaEmision: hoy }, ACTOR, { api: apiRapida() });
+    ok(!fx.ok && /solo se factura un detalle aprobado/.test(fx.ok ? '' : fx.error), 'facturar un borrador → error: solo se factura un detalle aprobado');
+    const dir = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E001', 'recE2E003'], noFactura: 'F-E2E-X', fechaEmision: hoy }, ACTOR);
+    ok(!dir.ok && /detalle de facturación aprobado/.test(dir.ok ? '' : dir.error), 'emitir directo (sin detalle) → error: todo lo de la Agenda pasa por un detalle aprobado');
+    tr = await DET.marcarEnviada(D1, ACTOR);
+    ok(tr.ok && tr.detalle.estado === 'enviada' && !!tr.detalle.enviadaEn && tr.detalle.enviadaPor === ACTOR, 'borrador → enviada: queda quién y cuándo');
+    tr = await DET.marcarAprobada(D1, { aprobadoPor: '   ' }, ACTOR);
+    ok(!tr.ok && /quién aprobó/.test(tr.ok ? '' : tr.error), 'aprobar sin decir quién → error');
+    tr = await DET.marcarAprobada(D1, { aprobadoPor: '  Contadora  del Cliente ', canal: 'correo' }, ACTOR);
+    ok(tr.ok && tr.detalle.estado === 'aprobada' && tr.detalle.aprobadoPor === 'Contadora del Cliente' && tr.detalle.aprobadoCanal === 'correo' && !!tr.detalle.aprobadaEn, 'enviada → aprobada: quién aprobó (texto) y canal correo, con fecha');
+    fx = await DET.facturarDetalle(D1, { noFactura: 'F-E2E-X', fechaEmision: manana }, ACTOR, { api: apiRapida() });
+    ok(!fx.ok && /futura/.test(fx.ok ? '' : fx.error), 'facturar: fecha futura → error (el detalle sigue aprobado)');
 
     // Emitir F-E2E-1 (e001 + e003) → write-back 201
     const cPorTipo = { POLIGRAFO: ccPol, SOCIOECONOMICO: ccSoc };
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E001', 'recE2E003'], noFactura: ' F-E2E-1 ', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
+    let e = await DET.facturarDetalle(D1, { noFactura: ' F-E2E-1 ', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
+    const dF = e.ok ? e.detalle : null;
+    ok(!!dF && dF.estado === 'facturada' && dF.noFactura === 'F-E2E-1' && !!dF.facturaAppId && !!dF.facturadoEn, `aprobada → facturada: el detalle guarda la factura (${dF?.noFactura}) y la fecha`);
     ok(e.ok && e.noFactura === 'F-E2E-1' && e.expedientes === 2 && e.lineas === (ccPol === ccSoc ? 1 : 2) && e.subtotal === 1150 && e.iva === 138 && e.total === 1288 && e.writeback.estado === 'confirmado', `F-E2E-1 (e001 + COMPLETO e003): factura creada, no_factura recortado por el trigger 012, 1150 + 138 = 1288, write-back confirmado (${e.ok ? e.writeback.detalle : e.error})`);
     const { data: fRows } = await sb.from('facturas_clientes').select('id, airtable_id, no_factura, estado, subtotal, iva, total, cliente_id, centro_costo_id').eq('no_factura', 'F-E2E-1').order('total', { ascending: false });
     ok((fRows ?? []).length === (ccPol === ccSoc ? 1 : 2) && (fRows ?? []).every(r => r.estado === 'EMITIDA' && r.cliente_id === cliA!.id && String(r.airtable_id).startsWith('sbw')) && r2((fRows ?? []).reduce((s, r) => s + Number(r.total), 0)) === 1288 && r2((fRows ?? []).reduce((s, r) => s + Number(r.subtotal), 0)) === 1150, 'facturas_clientes: líneas EMITIDA del cliente, airtable_id sintético, subtotal materializado = total − IVA (misma forma que createFactura)');
@@ -403,15 +456,32 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     ok(post1.numeroFactura === 'F-E2E-1' && post1.fechaFactura === hoy && post1.statusCobro === 'FACTURADO' && post1.expedientes.length === 2 && post1.expedientes.find(x => x.id === 'recE2E001')?.monto === 392 && post1.expedientes.find(x => x.id === 'recE2E003')?.monto === 896 && post1.expedientes.every(x => !!x.siActualizadoEn), 'POST /facturas: número, fecha, FACTURADO, expedientes con monto CON IVA (392 / 896) y siActualizadoEn');
     const proc = await DB.procesosDeFactura('F-E2E-1');
     ok(!!proc && proc.detalle.length === 3 && proc.subtotal === 1150 && proc.writeback.confirmados === 2 && proc.detalle.every(d => d.centroNombre.length > 0), 'procesosDeFactura: "la factura F-E2E-1 incluye estos servicios" con centro de costo y write-back');
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E010'], noFactura: 'F-E2E-1', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
-    ok(!e.ok && /ya existe/.test(e.ok ? '' : e.error), 'mismo número de factura otra vez → "ya existe" (RPC, sin crear nada)');
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E001'], noFactura: 'F-E2E-DUP', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
-    ok(!e.ok && /ya está en la factura F-E2E-1/.test(e.ok ? '' : e.error), 'expediente ya facturado no se vuelve a facturar');
+    const { data: dFac } = await sb.from('detalle_facturacion').select('factura_id').eq('id', D1).maybeSingle();
+    ok(!!dFac && (dFac as { factura_id: string | null }).factura_id === (fRows ?? [])[0]?.id && (await DET.listarDetalles({ estados: ['facturada'] })).some(x => x.id === D1), 'detalle facturado: factura_id = la línea principal; aparece en la lista de facturados');
+    tr = await DET.anularDetalle(D1, 'x', ACTOR);
+    ok(!tr.ok && /anulá la factura/.test(tr.ok ? '' : tr.error), 'un detalle facturado no se anula');
+    cd = await DET.crearDetalle({ idsExternos: ['recE2E001'] }, ACTOR);
+    ok(!cd.ok, 'expediente ya facturado no entra en un detalle nuevo');
+    // Anular libera · faltantes no rompen el documento · número repetido
+    const d3 = await DET.crearDetalle({ idsExternos: ['recE2E010', 'recE2E011'] }, ACTOR);
+    const D3 = d3.ok ? d3.detalle.id : '';
+    await sb.from('facturacion_expediente').update({ estado_tarifa: 'sin_tarifa', monto_calculado: null, detalle_tarifa: 'simulado: la tarifa se borró' }).eq('id_externo', 'recE2E011');
+    const g3 = await DET.getDetalle(D3);
+    ok(d3.ok && !!g3 && g3.documento.incluidas.length === 1 && g3.documento.faltantes.length === 1 && g3.documento.faltantes[0].motivo === 'sin tarifa' && g3.documento.subtotal === 350 && g3.documento.total === 392 && g3.detalle.total === 784, 'faltante: un proceso que perdió el precio NO rompe el documento: queda "no incluido · sin tarifa" y el total refleja solo lo incluido (Q392 vs Q784 al generar)');
+    await sb.from('facturacion_expediente').update({ estado_tarifa: 'resuelta', monto_calculado: 350, detalle_tarifa: '' }).eq('id_externo', 'recE2E011');
+    tr = await DET.anularDetalle(D3, 'se rehace', ACTOR);
+    locales = await DB.listarExpedientesLocal();
+    ok(tr.ok && tr.detalle.estado === 'anulada' && tr.detalle.motivoAnulacion === 'se rehace' && tr.detalle.anuladaPor === ACTOR && byId('recE2E010').detalleId === null && byId('recE2E011').detalleId === null && MM.facturable(byId('recE2E010')), 'anular: libera los expedientes (vuelven a la cola, seleccionables) y guarda motivo y quién');
+    const d3b = await DET.crearDetalle({ idsExternos: ['recE2E010', 'recE2E011'] }, ACTOR);
+    const D3b = d3b.ok ? d3b.detalle.id : '';
+    ok(d3b.ok && (await DET.marcarEnviada(D3b, ACTOR)).ok && (await DET.marcarAprobada(D3b, { aprobadoPor: 'Gerente Cliente' }, ACTOR)).ok, 'los liberados entran en un detalle nuevo (enviado y aprobado)');
+    e = await DET.facturarDetalle(D3b, { noFactura: 'F-E2E-1', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
+    ok(!e.ok && /ya existe/.test(e.ok ? '' : e.error) && (await DET.getDetalleBasico(D3b))?.estado === 'aprobada', 'mismo número de factura otra vez → "ya existe" (RPC, sin crear nada); el detalle sigue aprobado');
 
     // 409: e002 cambia en la Agenda después de leído
     const antes409 = conteo['POST /facturas'] ?? 0;
     exps.get('recE2E002')!.actualizadoEn = '2026-10-27T12:00:00.000Z'; exps.get('recE2E002')!.puesto = 'CAMBIADO EN LA AGENDA';
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E002'], noFactura: 'F-E2E-2', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
+    e = await facturarVia(['recE2E002'], 'F-E2E-2', hoy, cPorTipo);
     locales = await DB.listarExpedientesLocal();
     ok(e.ok && e.writeback.estado === 'conflicto' && (conteo['POST /facturas'] ?? 0) === antes409 + 1 && byId('recE2E002').facturaId !== null && byId('recE2E002').writebackEstado === 'conflicto' && byId('recE2E002').puesto === 'CAMBIADO EN LA AGENDA' && byId('recE2E002').actualizadoEnExterno !== null && Date.parse(byId('recE2E002').actualizadoEnExterno!) === Date.parse('2026-10-27T12:00:00.000Z'), '409: UN solo POST (sin loop), factura creada en financiero, expediente en "conflicto" y RE-LEÍDO (espejo con el cambio de la Agenda)');
     const { count: cF2 } = await sb.from('facturas_clientes').select('id', { count: 'exact', head: true }).eq('no_factura', 'F-E2E-2');
@@ -423,7 +493,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     // 500 parcial: e010 + e011
     modo.facturas = '500parcial';
     const antes500 = conteo['POST /facturas'] ?? 0;
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E010', 'recE2E011'], noFactura: 'F-E2E-3', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
+    e = await DET.facturarDetalle(D3b, { noFactura: 'F-E2E-3', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
     locales = await DB.listarExpedientesLocal();
     ok(e.ok && e.writeback.estado === 'pendiente' && (conteo['POST /facturas'] ?? 0) === antes500 + 1 && byId('recE2E010').writebackEstado === 'confirmado' && byId('recE2E011').writebackEstado === 'pendiente' && /500/.test(byId('recE2E011').writebackDetalle ?? ''), '500 parcial: un solo POST; registra hasta dónde llegó (e010 confirmado, e011 pendiente)');
     const rr3 = await DB.reintentarWriteback('F-E2E-3', ACTOR, { api: apiRapida() });
@@ -434,12 +504,12 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     // 503 con backoff: e012
     modo.facturas = '503x1';
     const antes503 = conteo['POST /facturas'] ?? 0;
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E012'], noFactura: 'F-E2E-4', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
+    e = await facturarVia(['recE2E012'], 'F-E2E-4', hoy, cPorTipo);
     ok(e.ok && e.writeback.estado === 'confirmado' && (conteo['POST /facturas'] ?? 0) === antes503 + 2, '503 → reintento con backoff → 201 confirmado (2 POST)');
 
     // 404: e013 desaparece de la Agenda
     exps.get('recE2E013')!.eliminado = true;
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E013'], noFactura: 'F-E2E-5', fechaEmision: hoy, centroPorTipo: cPorTipo }, ACTOR, { api: apiRapida() });
+    e = await facturarVia(['recE2E013'], 'F-E2E-5', hoy, cPorTipo);
     locales = await DB.listarExpedientesLocal();
     ok(e.ok && e.writeback.estado === 'error' && byId('recE2E013').eliminado && byId('recE2E013').writebackEstado === 'error' && /404/.test(byId('recE2E013').writebackDetalle ?? ''), '404: el expediente ya no existe → sale de la cola (eliminado) con el error visible; la factura local queda para que la contadora decida');
 
@@ -457,7 +527,6 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     modo.lote = 'ok';
     process.env.FACTURAR_WRITEBACK = 'OFF';
     const cobOff = await DB.notificarCobroAgenda('F-E2E-4', ACTOR, { api: apiRapida() });
-    e = await DB.emitirFacturaAgenda({ idsExternos: ['recE2E005'], noFactura: 'F-E2E-X', fechaEmision: hoy }, ACTOR);
     process.env.FACTURAR_WRITEBACK = 'ON';
     ok(cobOff.estado === 'omitido', 'FACTURAR_WRITEBACK=OFF: no se escribe nada a la Agenda (cobro omitido)');
 
@@ -589,6 +658,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     } else {
       await limpiar();
       const { count: v } = await sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }).like('id_externo', 'recVOL%');
+      const { count: dd } = await sb.from('detalle_facturacion').select('id', { count: 'exact', head: true }).in('nit', [NIT_A, NIT_B]);
       const [{ count: a }, { count: b }, { count: c }, { count: d }, { count: f }] = await Promise.all([
         sb.from('facturas_clientes').select('id', { count: 'exact', head: true }).in('no_factura', FACTS),
         sb.from('factura_detalle_expediente').select('id', { count: 'exact', head: true }).in('no_factura', FACTS),
@@ -596,7 +666,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
         sb.from('cliente_externo').select('id', { count: 'exact', head: true }).in('empresa_id_externo', [EMP_A, EMP_B, EMP_C]),
         sb.from('clientes').select('id', { count: 'exact', head: true }).in('nit', [NIT_A, NIT_B]),
       ]);
-      ok(a === 0 && b === 0 && c === 0 && d === 0 && f === 0 && v === 0, 'limpieza verificada: 0 facturas / detalle (cascade) / expedientes / mapeos / clientes de prueba / filas de volumen');
+      ok(a === 0 && b === 0 && c === 0 && d === 0 && f === 0 && v === 0 && dd === 0, 'limpieza verificada: 0 facturas / detalle (cascade) / expedientes / mapeos / clientes de prueba / filas de volumen / detalles de facturación');
     }
   }
   console.log(`\n${pass} 🟢 / ${fail} 🔴`);
