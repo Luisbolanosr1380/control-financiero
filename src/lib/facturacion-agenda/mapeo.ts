@@ -143,9 +143,17 @@ export function cobroPendiente(statusCobro: string | null | undefined, estatusPa
   return statusPendiente && normalizarTexto(estatusPago) !== 'PAGADO';
 }
 
-/** Listo para la cola "Por facturar": terminado, vigente, sin factura local y con cobro pendiente (y no pagado) en la Agenda. */
-export function enCola(e: Pick<ExpedienteLocal, 'terminado' | 'cancelado' | 'eliminado' | 'estadoTarifa' | 'facturaId' | 'statusCobroExterno' | 'estatusPagoExterno'>): boolean {
-  return e.terminado && !e.cancelado && !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && !e.facturaId && cobroPendiente(e.statusCobroExterno, e.estatusPagoExterno);
+/**
+ * Listo para la cola "Por facturar": terminado, vigente, sin factura local, con cobro pendiente (y no pagado) en la
+ * Agenda y (022) no anterior al arranque del cliente (`arranqueExcluido`, anotado al leer desde cliente_externo.facturar_desde).
+ */
+export function enCola(e: Pick<ExpedienteLocal, 'terminado' | 'cancelado' | 'eliminado' | 'estadoTarifa' | 'facturaId' | 'statusCobroExterno' | 'estatusPagoExterno' | 'arranqueExcluido'>): boolean {
+  return e.terminado && !e.cancelado && !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && !e.facturaId && cobroPendiente(e.statusCobroExterno, e.estatusPagoExterno) && !e.arranqueExcluido;
+}
+
+/** 022: ¿la fecha de ingreso es anterior al arranque del cliente? ('YYYY-MM-DD' compara bien como texto; sin fecha → no se excluye). */
+export function antesDelArranque(fechaIngreso: string | null | undefined, facturarDesde: string | null | undefined): boolean {
+  return !!facturarDesde && !!fechaIngreso && fechaIngreso.slice(0, 10) < facturarDesde.slice(0, 10);
 }
 
 /** Con precio y en cola (entra al flujo de facturación). */

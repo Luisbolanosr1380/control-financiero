@@ -105,6 +105,8 @@ export interface ExpedienteLocal {
   enVistaFacturacion: boolean | null;
   statusCobroExterno: string | null;
   estatusPagoExterno: string | null;
+  /** 022: true si la fecha de ingreso es anterior al `facturar_desde` del cliente (corte de arranque): fuera de la cola, sigue en la data. Se anota al leer (no se guarda). */
+  arranqueExcluido?: boolean;
   montoExterno: number | null;
   numeroFacturaExterno: string | null;
   fechaFacturaExterno: string | null;
@@ -148,6 +150,8 @@ export interface ClienteExterno {
   /** 018: la empresa NO se factura por este flujo (interna / intercompany / reclutamiento = Fase A). Sus expedientes quedan 'excluido_no_factura'. */
   noFactura: boolean;
   motivoNoFactura: string;
+  /** 022: fecha de arranque de la facturación por este flujo ('YYYY-MM-DD'). Los expedientes con fecha de ingreso ANTERIOR quedan fuera de la cola (histórico ya cubierto, p. ej. provisión). null = sin corte. */
+  facturarDesde: string | null;
 }
 
 /** Empresa marcada como "no se factura" (pestaña "No se facturan"). */
