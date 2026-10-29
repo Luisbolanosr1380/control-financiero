@@ -13,6 +13,7 @@ import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
 import { ChipsInput } from '@/components/clientes/chips-input';
 import { editarNombresClienteAction } from '@/app/(app)/clientes/actions';
+import { CambiarNitModal } from '@/components/clientes/cambiar-nit-modal';
 import type { Customer } from '@/lib/types';
 
 export function NombresClienteCard({ cliente }: { cliente: Customer }) {
@@ -22,6 +23,8 @@ export function NombresClienteCard({ cliente }: { cliente: Customer }) {
   const [nombreComercial, setNombreComercial] = useState(cliente.nombreComercial ?? '');
   const [aliases, setAliases] = useState<string[]>(cliente.aliases ?? []);
   const [busy, setBusy] = useState(false);
+  // 023: "Cambiar NIT" con arrastre (tarifario, mapeo, expedientes, detalles) — modal con resumen y confirmación.
+  const [cambiandoNit, setCambiandoNit] = useState(false);
   const puedeEditar = puede('emitir_factura');
 
   const guardar = async () => {
@@ -36,9 +39,11 @@ export function NombresClienteCard({ cliente }: { cliente: Customer }) {
 
   return (
     <div className="card" data-nombres-cliente style={{ marginBottom: 18 }}>
+      {cambiandoNit && <CambiarNitModal objetivo={{ clienteId: cliente.id }} nitActual={cliente.nit} nombre={cliente.name} onClose={() => setCambiandoNit(false)} onHecho={() => router.refresh()} />}
       <div className="card-head">
         <div className="card-title">Nombres y marcas</div>
         <div className="card-actions">
+          {puedeEditar && !editando && <button type="button" className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setCambiandoNit(true)} data-accion="cambiar-nit" title="Corregir el NIT en el cliente, su tarifario, el mapeo de la Agenda, los expedientes y los detalles, de una sola vez"><I.Refresh size={12} /> Cambiar NIT</button>}
           {puedeEditar && !editando && <button type="button" className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setEditando(true)} data-accion="editar-nombres"><I.Edit size={12} /> Editar</button>}
         </div>
       </div>

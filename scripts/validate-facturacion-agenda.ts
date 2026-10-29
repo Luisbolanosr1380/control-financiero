@@ -81,7 +81,10 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   const sin22 = m22.replace(/--.*$/gm, '');
   ok(/alter table cliente_externo add column if not exists facturar_desde date;/.test(m22) && /create or replace function facturacion_agenda_en_arranque\(p_fuente text, p_empresa text, p_fecha date\)/.test(m22) && /p_fecha is not null and p_fecha < m\.facturar_desde/.test(m22) && (m22.match(/facturacion_agenda_en_arranque\((e\.)?fuente, (e\.)?empresa_id_externo, (e\.)?fecha_ingreso\)/g) ?? []).length === 4 && (m22.match(/facturacion_agenda_cobro_pendiente\((e\.)?status_cobro_externo, (e\.)?estatus_pago_externo\)/g) ?? []).length === 4 && /'detalles',/.test(m22) && /en_detalle/.test(m22), '022: cliente_externo.facturar_desde (date, null = sin corte) + en_arranque(fuente, empresa, fecha) (sin fecha → no excluye); resumen (cola + 2 conteos) y sin_mapear la aplican además de la 021; conservan 018/019');
   ok(!/\b(drop|truncate)\b/i.test(sin22) && !/\bdelete\s+from\b/i.test(sin22) && !/^\s*(begin|commit)\s*;/im.test(sin22) && !/\b(update|insert)\b/i.test(sin22) && !/11854243|GENESIS/i.test(sin22), '022: no clava NIT ni fecha de GENESIS en el SQL (el corte es un dato por cliente); sin drop/delete/commit, no toca datos');
-  ok(fs.readdirSync('supabase/migrations').filter(f => /^02[3-9]_|^0[3-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 022');
+  const m23 = rd('supabase/migrations/023_cliente_cambiar_nit.sql');
+  const sin23 = m23.replace(/--.*$/gm, '');
+  ok(/create or replace function cliente_cambiar_nit\(/.test(m23) && /update cliente_externo m set nit = v_nuevo/.test(m23) && /update facturacion_expediente e set nit_resuelto = v_nuevo/.test(m23) && /update detalle_facturacion d set nit = v_nuevo/.test(m23) && (m23.match(/cliente_id is null or v_cli\.id is null or \w\.cliente_id = v_cli\.id/g) ?? []).length === 6 && /'tarifa_choque'/.test(m23) && /'nit_compartido'/.test(m23) && !/\b(drop|truncate)\b/i.test(sin23) && !/\bdelete\s+from\b/i.test(sin23) && !/^\s*(begin|commit)\s*;/im.test(sin23) && !/\b(alter|create) table\b/i.test(sin23), '023: cliente_cambiar_nit arrastra mapeo (cliente_externo.nit), expedientes (nit_resuelto) y detalles (nit) del cliente objetivo (o sin cliente_id) en la misma transacción que clientes + tarifario + bitácora; choque de llave no pisa; NIT compartido pide p_forzar; sin drop/delete/commit');
+  ok(fs.readdirSync('supabase/migrations').filter(f => /^02[4-9]_|^0[3-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 023');
   const db22 = rd('src/lib/db/facturacion-agenda.ts'), mapeo22 = rd('src/lib/facturacion-agenda/mapeo.ts');
   ok(/export function antesDelArranque\(/.test(mapeo22) && /&& !e\.arranqueExcluido;/.test(mapeo22) && /export const arranquePorEmpresa/.test(db22) && /export const anotarArranque/.test(db22) && /return anotarArranque\(rows\.map\(rowToLocal\), arranquePorEmpresa\(mapeos\)\);/.test(db22) && /empresa_id_externo\.neq\.\$\{empresa\},fecha_ingreso\.gte\.\$\{desde\},fecha_ingreso\.is\.null/.test(db22) && /resumenSinRpc\(sb, arranquePorEmpresa\(mapeos\)\)/.test(db22) && !/facturar_desde/.test(db22.slice(db22.indexOf('export async function guardarMapeo('), db22.indexOf('export async function reclasificar('))), 'app: enCola() respeta arranqueExcluido (anotado al leer desde facturar_desde); el fallback PostgREST filtra por empresa con corte; los upserts del mapeo / no-factura NO tocan facturar_desde (sync-safe)');
   ok(/data-arranque/.test(rd('src/components/por-facturar/grupo-detalle.tsx')) && /data-antes-arranque/.test(rd('src/components/por-facturar/grupo-detalle.tsx')), 'detalle del cliente: aviso del corte y badge "antes del arranque" por fila (siguen en la lista para conciliar)');
@@ -315,13 +318,13 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
       ['volumen', () => sb.from('facturacion_expediente').delete().like('id_externo', 'recVOL%')],
       ['factura_detalle_expediente', () => sb.from('factura_detalle_expediente').delete().like('id_externo', 'recE2E%')],
       ['facturacion_expediente', () => sb.from('facturacion_expediente').delete().like('id_externo', 'recE2E%')],
-      ['detalle_facturacion', () => sb.from('detalle_facturacion').delete().in('nit', [NIT_A, NIT_B])],
+      ['detalle_facturacion', () => sb.from('detalle_facturacion').delete().in('nit', [NIT_A, NIT_B, '99990014K'])],
       ['facturas_clientes', () => sb.from('facturas_clientes').delete().in('no_factura', FACTS)],
       ['cliente_externo', () => sb.from('cliente_externo').delete().in('empresa_id_externo', [EMP_A, EMP_B, EMP_C, EMP_D, EMP_E, EMP_F])],
       ['facturacion_webhook_evento', () => sb.from('facturacion_webhook_evento').delete().like('id', 'fact_evt_e2e%')],
       ['facturacion_log', () => sb.from('facturacion_log').delete().eq('actor', ACTOR)],
-      ['tarifario', () => sb.from('tarifario').delete().in('nit', [NIT_A, NIT_B, NIT_C])],
-      ['clientes', () => sb.from('clientes').delete().in('nit', [NIT_A, NIT_B, NIT_C])],
+      ['tarifario', () => sb.from('tarifario').delete().in('nit', [NIT_A, NIT_B, NIT_C, '99990014K'])],
+      ['clientes', () => sb.from('clientes').delete().in('nit', [NIT_A, NIT_B, NIT_C, '99990014K'])],
     ];
     for (const [nombre, fn] of pasos) { const { error } = await fn(); if (error) console.log(`     ✗ limpieza ${nombre}: ${error.message}`); }
     await sb.from('facturacion_sync_estado').delete().eq('fuente', 'agenda');
@@ -783,6 +786,52 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     await sb.from('facturacion_expediente').delete().in('id_externo', ['recE2E920', 'recE2E921', 'recE2E922', 'recE2E923']);
     await TDB.activarTarifa(tSvPre!.id, false, ACTOR); await TDB.activarTarifa(tSvRut!.id, false, ACTOR);
     ok((await DB.reclasificar({ nit: NIT_A })) === 0, 'sin los virtuales sembrados y con sus tarifas desactivadas, la cola de A queda igual (0 cambios)');
+
+    // ── 023 · CAMBIAR NIT con arrastre: guardas, simulación, A → X mueve todo (tarifas, bitácora, mapeo, expedientes, detalles) y la cola sigue resolviendo en X; X → A (por NIT) vuelve ──
+    console.log('\n   023 · cambiar NIT con arrastre');
+    const NIT_X = '99990014K';
+    const cntNit = async (nit: string) => {
+      const c = async (t: string, col = 'nit') => (await sb.from(t).select('id', { count: 'exact', head: true }).eq(col, nit)).count ?? 0;
+      return { cli: await c('clientes'), tar: await c('tarifario'), his: await c('tarifario_historial'), ext: await c('cliente_externo'), exp: await c('facturacion_expediente', 'nit_resuelto'), det: await c('detalle_facturacion') };
+    };
+    const CERO = { cli: 0, tar: 0, his: 0, ext: 0, exp: 0, det: 0 };
+    const firmaTar = (n: string) => TDB.getTarifario().then(ts => ts.filter(t => t.nit === n).map(t => `${t.tipoPrueba}|${t.categoria}|${t.territorio}|${t.monto}|${t.activo}|${t.aprobadoEn ?? ''}`).sort().join(';'));
+    const aAntes = await cntNit(NIT_A), firmaA = await firmaTar(NIT_A), idA = cliA!.airtable_id;
+    const gCF = await CDB.cambiarNitCliente({ clienteId: idA }, 'CF', ACTOR), g0 = await CDB.cambiarNitCliente({ clienteId: idA }, '0', ACTOR), gBad = await CDB.cambiarNitCliente({ clienteId: idA }, 'ABC', ACTOR), gIg = await CDB.cambiarNitCliente({ clienteId: idA }, `${NIT_A.slice(0, 7)}-${NIT_A.slice(7)}`, ACTOR), gNo = await CDB.cambiarNitCliente({ clienteId: 'rec_no_existe' }, NIT_X, ACTOR), gVac = await CDB.cambiarNitCliente({ nitViejo: '' }, NIT_X, ACTOR);
+    ok(aAntes.cli === 1 && aAntes.tar > 0 && aAntes.ext > 0 && aAntes.exp > 0 && aAntes.det > 0 && !gCF.ok && gCF.codigo === 'nit_placeholder' && !g0.ok && g0.codigo === 'nit_placeholder' && !gBad.ok && gBad.codigo === 'nit_invalido' && !gIg.ok && gIg.codigo === 'nit_igual' && !gNo.ok && gNo.codigo === 'cliente_no_existe' && !gVac.ok && gVac.codigo === 'nit_viejo_placeholder' && JSON.stringify(await cntNit(NIT_A)) === JSON.stringify(aAntes) && JSON.stringify(await cntNit(NIT_X)) === JSON.stringify(CERO), `guardas: CF / 0 → placeholder, "ABC" → inválido, el mismo NIT con guion → igual (nitComparable), cliente inexistente, NIT viejo vacío; nada se movió (A hoy: ${aAntes.tar} tarifas, ${aAntes.his} bitácora, ${aAntes.ext} mapeos, ${aAntes.exp} expedientes, ${aAntes.det} detalles)`);
+    const gComp = await CDB.cambiarNitCliente({ clienteId: idA }, NIT_B, ACTOR, { simular: true });
+    const gCompF = await CDB.cambiarNitCliente({ clienteId: idA }, NIT_B, ACTOR, { simular: true, forzar: true });
+    ok(!gComp.ok && gComp.codigo === 'nit_compartido' && gComp.compartidoCon === 'OTRA EMPRESA, S.A.' && gComp.movera?.tarifario === aAntes.tar && gComp.movera?.facturacionExpediente === aAntes.exp && gCompF.ok && gCompF.simulado && gCompF.compartidoCon === 'OTRA EMPRESA, S.A.' && gCompF.movidas.facturacionExpediente === aAntes.exp && JSON.stringify(await cntNit(NIT_A)) === JSON.stringify(aAntes), `NIT compartido: A → ${NIT_B} (de "OTRA EMPRESA, S.A.") pide confirmación explícita y muestra qué movería; con forzar la simulación pasa; nada escrito`);
+    const tChoque = await TDB.crearTarifa({ nit: NIT_B, razonSocial: 'OTRA EMPRESA, S.A.', tipoPrueba: 'POLIGRAFO', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA', monto: 999 }, ACTOR);
+    const gCh = await CDB.cambiarNitCliente({ clienteId: idA }, NIT_B, ACTOR, { forzar: true });
+    const chq = gCh.ok ? [] : gCh.choques ?? [];
+    ok(tChoque.ok && !gCh.ok && gCh.codigo === 'tarifa_choque' && chq.length === 1 && chq[0].tipoPrueba === 'POLIGRAFO' && chq[0].categoria === 'PRE EMPLEO' && chq[0].territorio === 'METROPOLITANA' && chq[0].montoViejo === 350 && chq[0].montoNuevo === 999 && /no se movió nada/.test(gCh.ok ? '' : gCh.error) && JSON.stringify(await cntNit(NIT_A)) === JSON.stringify(aAntes) && (await cntNit(NIT_B)).tar === 1 && (await firmaTar(NIT_A)) === firmaA, 'choque de llave: B tiene POLIGRAFO · PRE EMPLEO · METROPOLITANA (Q999) → A → B aborta con el detalle de la llave (Q350 vs Q999) y no pisa nada, ni con forzar');
+    if (tChoque.ok) await sb.from('tarifario').delete().eq('id', tChoque.id);
+    const gSim = await CDB.cambiarNitCliente({ clienteId: idA }, NIT_X, ACTOR, { simular: true });
+    const esperado = { clientes: 1, tarifario: aAntes.tar, tarifarioHistorial: aAntes.his, clienteExterno: aAntes.ext, facturacionExpediente: aAntes.exp, detalleFacturacion: aAntes.det };
+    ok(gSim.ok && gSim.simulado && gSim.clienteId === idA && gSim.clienteNombre === 'E2E AGENDA, S.A.' && gSim.compartidoCon === null && gSim.destino === null && JSON.stringify(gSim.movidas) === JSON.stringify(esperado) && /^Se moverán: /.test(gSim.mensaje) && JSON.stringify(await cntNit(NIT_A)) === JSON.stringify(aAntes), `simulación A → ${NIT_X}: cuenta exactamente lo que hay (1 cliente, ${aAntes.tar} tarifas, ${aAntes.his} bitácora, ${aAntes.ext} mapeos, ${aAntes.exp} expedientes, ${aAntes.det} detalles) y no escribe (${gSim.ok ? gSim.mensaje : gSim.error})`);
+    const vAntes = await DB.vistaPorFacturar(); const gAv = vAntes.grupos.find(g => g.nit === NIT_A)!;
+    const gMv = await CDB.cambiarNitCliente({ clienteId: idA }, NIT_X, ACTOR);
+    const { data: cliAx } = await sb.from('clientes').select('nit').eq('airtable_id', idA).single();
+    ok(gMv.ok && !gMv.simulado && JSON.stringify(gMv.movidas) === JSON.stringify(esperado) && cliAx?.nit === NIT_X && JSON.stringify(await cntNit(NIT_A)) === JSON.stringify(CERO) && JSON.stringify(await cntNit(NIT_X)) === JSON.stringify({ cli: 1, tar: aAntes.tar, his: aAntes.his, ext: aAntes.ext, exp: aAntes.exp, det: aAntes.det }) && (await firmaTar(NIT_X)) === firmaA && gMv.motivo === `cambio de NIT ${NIT_A} → ${NIT_X}`, `aplicar A → ${NIT_X}: movió exactamente lo simulado en una transacción; en ${NIT_A} no queda nada; montos, aprobaciones y activo de las tarifas intactos; motivo "cambio de NIT viejo → nuevo" (${gMv.ok ? gMv.mensaje : gMv.error})`);
+    const mapX = (await DB.getMapeos()).find(m => m.empresaIdExterno === EMP_A);
+    const recX = await DB.reclasificar({ nit: NIT_X });
+    const vX = await DB.vistaPorFacturar(); const gX = vX.grupos.find(g => g.nit === NIT_X);
+    const locX = await DB.listarExpedientesLocal({ nit: NIT_X });
+    ok(mapX?.nit === NIT_X && !!gX && !vX.grupos.some(g => g.nit === NIT_A) && gX.listos === gAv.listos && gX.totalSinIva === gAv.totalSinIva && gX.sinTarifa === gAv.sinTarifa && locX.length === aAntes.exp && locX.every(e => e.nitResuelto === NIT_X && !(e.detalleTarifa ?? '').includes(NIT_A)) && locX.filter(e => e.estadoTarifa === 'resuelta').length === (await DB.listarExpedientesLocal({ nit: NIT_X })).filter(e => e.estadoTarifa === 'resuelta').length, `la cola sigue igual bajo ${NIT_X}: el mapeo de E2E AGENDA apunta a ${NIT_X}, re-resolver (${recX} con texto refrescado) no cambia estados ni montos, el grupo de /por-facturar conserva listos / Q / sin tarifa y ya no existe bajo ${NIT_A}; ningún detalle menciona el NIT viejo`);
+    const { data: detX } = await sb.from('detalle_facturacion').select('nit, estado, cliente_id').eq('cliente_id', cliA!.id);
+    ok((detX ?? []).length === aAntes.det && (detX ?? []).every(d => d.nit === NIT_X) && (await sb.from('facturas_clientes').select('id', { count: 'exact', head: true }).eq('cliente_id', cliA!.id)).count! > 0, 'los detalles de facturación del cliente (incluidos facturados / anulados) cruzan ahora por el NIT nuevo; sus facturas siguen por cliente_id (sin tocar)');
+    const filaNx = { fuente: 'agenda', id_externo: 'recE2E940', empresa_id_externo: EMP_A, empresa_nombre_externo: 'E2E AGENDA', nit_resuelto: null, tipo_cobrado: null, estado_tarifa: 'cliente_sin_mapear', detalle_tarifa: 'sembrado', terminado: true, cancelado: false, eliminado: false, status_cobro_externo: 'PENDIENTE', fecha_ingreso: '2026-10-15', tipo_prueba: 'POLIGRAFO', proceso_solicitado: 'SOLO POLIGRAFO', categoria_prueba: 'PRE EMPLEO', depto_visita: 'GUATEMALA', persona: 'PERSONA 940', raw: { id: 'recE2E940', empresa: { id: EMP_A, nombre: 'E2E AGENDA' }, tipoPrueba: 'POLIGRAFO', procesoSolicitado: 'SOLO POLIGRAFO', categoriaPrueba: 'PRE EMPLEO', deptoVisita: 'GUATEMALA', terminado: true, cancelado: false, eliminado: false, fechaIngreso: '2026-10-15', cobro: { statusCobro: 'PENDIENTE' }, actualizadoEn: '2026-10-20T10:00:00.000Z', nombre: 'PERSONA 940' } };
+    const { error: eNx } = await sb.from('facturacion_expediente').insert(filaNx);
+    const recNx = await DB.reclasificar({ empresaIdExterno: EMP_A });
+    const e940 = (await DB.listarExpedientesLocal({ nit: NIT_X })).find(e => e.idExterno === 'recE2E940');
+    ok(!eNx && recNx === 1 && !!e940 && e940.estadoTarifa === 'resuelta' && e940.montoCalculado === 350 && e940.nitResuelto === NIT_X, `un expediente nuevo de E2E AGENDA resuelve con las tarifas ya en ${NIT_X} (POLIGRAFO PRE EMPLEO metro → Q350, resuelta)`);
+    await sb.from('facturacion_expediente').delete().eq('id_externo', 'recE2E940');
+    const gBack = await CDB.cambiarNitCliente({ nitViejo: NIT_X }, NIT_A, ACTOR);
+    const { data: cliAb } = await sb.from('clientes').select('nit').eq('airtable_id', idA).single();
+    const recA = await DB.reclasificar({ nit: NIT_A });
+    const locA = await DB.listarExpedientesLocal({ nit: NIT_A });
+    ok(gBack.ok && gBack.clienteId === idA && JSON.stringify(gBack.movidas) === JSON.stringify(esperado) && cliAb?.nit === NIT_A && JSON.stringify(await cntNit(NIT_A)) === JSON.stringify(aAntes) && JSON.stringify(await cntNit(NIT_X)) === JSON.stringify(CERO) && (await firmaTar(NIT_A)) === firmaA && locA.length === aAntes.exp && locA.every(e => !(e.detalleTarifa ?? '').includes(NIT_X)), `por NIT (${NIT_X} → ${NIT_A}, único cliente activo en ese NIT): también vuelve el cliente; todo restaurado con la misma firma de tarifas (re-resolver: ${recA} textos refrescados, sin cambios de estado)`);
 
     // ── 022 · CORTE DE ARRANQUE (facturar_desde por cliente): lo anterior sale de la cola y de "sin mapear"; sigue en la data ──
     console.log('\n   022 · corte de arranque: facturar_desde por cliente');
