@@ -14,7 +14,7 @@
  *  - cliente ← empresa.id vía cliente_externo; sin mapeo → "cliente sin mapear".
  *  - Precio del tarifario SIN IVA; IVA 12 %. No se reimplementa el motor.
  */
-import { canonCategoria, canonTipoPrueba, conIva, normalizarTexto, round2 } from '@/lib/tarifario/canon';
+import { canonCategoria, canonTipoPrueba, conIva, formaPrecio, normalizarTexto, round2, usaCategoria } from '@/lib/tarifario/canon';
 import { resolverTarifa, type Tarifa } from '@/lib/tarifario/lookup';
 import { nitComparable } from '@/lib/clientes/nit';
 import { ESTADOS_EXCLUIDOS, STATUS_COBRO_POR_FACTURAR, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal } from './tipos';
@@ -82,8 +82,9 @@ export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio)
   if (empresaId && ctx.noFacturaEmpresas?.has(empresaId)) return { ...base, estado: 'excluido_no_factura', nit: null, monto: null, detalle: `La empresa está marcada como "no se factura" por este flujo (${ctx.noFacturaEmpresas.get(empresaId) || 'interno / no aplica'}).` };
   const nit = empresaId ? (ctx.nitPorEmpresa.get(empresaId) ?? null) : null;
   if (!nit) return { ...base, estado: 'cliente_sin_mapear', nit: null, monto: null, detalle: empresaId ? `La empresa "${exp.empresa?.nombre ?? empresaId}" no está mapeada a un cliente de financiero.` : 'El expediente no trae empresa.' };
-  if (!cat) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: 'El expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO): sin categoría no hay tarifa.' };
   if (!tipo) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: 'El expediente no trae tipo de prueba ni proceso solicitado.' };
+  // Solo las formas "matriz" cobran por categoría: SOCIO EMPRESARIAL (por territorio) e INFORNET (único) resuelven sin ella.
+  if (usaCategoria(formaPrecio(tipo)) && !cat) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: `${tipo} se cobra por categoría y el expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO).` };
   const r = resolverTarifa(ctx.tarifas, { nit, tipoPrueba: tipo, categoria: cat, territorio: ter || undefined });
   if (r.estado === 'ok') {
     const partes = r.componentes ?? [r.tarifa];

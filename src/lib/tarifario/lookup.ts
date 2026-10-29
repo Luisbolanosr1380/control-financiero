@@ -16,9 +16,13 @@
  *  - COMPLETO = POLIGRAFO + SOCIOECONOMICO: se resuelven los dos y se suman.
  *  - Varias tarifas activas para la misma llave canónica (duplicado con
  *    distinta grafía): mismo monto → ok con aviso; distinto → ambigua.
+ *  - FORMAS DE PRECIO (canon.ts): matriz (categoría × territorio, como arriba),
+ *    por territorio (SOCIO EMPRESARIAL: ignora la categoría del expediente) y
+ *    único (INFORNET: ignora categoría y territorio). Para las formas sin
+ *    categoría, que el expediente venga sin categoría NO es "sin tarifa".
  */
 import { nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
-import { canonCategoria, canonTerritorio, canonTipoPrueba, conIva, esSinTarifa, llaveTarifa, normalizarTexto } from './canon';
+import { canonCategoria, canonTerritorio, canonTipoPrueba, conIva, esSinTarifa, formaPrecio, llaveTarifa, normalizarTexto, usaCategoria, usaTerritorio } from './canon';
 
 export interface Tarifa {
   id: string;
@@ -123,6 +127,16 @@ function elegir(cands: Tarifa[], nit: string, territorio: string): { ok: Tarifa;
   return { ok: porTerritorio[0], avisos };
 }
 
+/** Forma 'unico': todas las tarifas activas del tipo valen (aunque alguna legacy traiga categoría/territorio); montos distintos → ambigua. */
+function elegirUnico(cands: Tarifa[], nit: string, tp: string): { ok: Tarifa; avisos: string[] } | { ambigua: Tarifa[]; mensaje: string } | null {
+  if (cands.length === 0) return null;
+  const montos = new Set(cands.map(c => Number(c.monto)));
+  if (montos.size > 1) return { ambigua: cands, mensaje: `${tp} es de precio único por cliente y el NIT ${nit} tiene ${montos.size} montos distintos (${[...montos].map(m => `Q${m.toFixed(2)}`).join(' · ')}): dejá uno solo en el tarifario.` };
+  const avisos: string[] = [];
+  if (cands.length > 1) avisos.push(`${tp} tiene ${cands.length} filas para el mismo cliente (precio único): conviene normalizarlas a una.`);
+  return { ok: cands[0], avisos };
+}
+
 /** Resuelve el precio de un expediente contra el tarifario (solo tarifas activas). */
 export function resolverTarifa(tarifas: readonly Tarifa[], exp: Expediente, clientes: readonly AliasCliente[] = []): ResultadoLookup {
   const nit = resolverNit(exp, indiceAlias(tarifas, clientes));
@@ -134,13 +148,17 @@ export function resolverTarifa(tarifas: readonly Tarifa[], exp: Expediente, clie
   const tipos = tipo === 'COMPLETO' ? ['POLIGRAFO', 'SOCIOECONOMICO'] : [tipo];
   const partes: Tarifa[] = []; const avisos: string[] = [];
   for (const tp of tipos) {
-    const cands = delCliente.filter(t => canonTipoPrueba(t.tipoPrueba) === tp && canonCategoria(t.categoria) === cat);
-    const r = elegir(cands, nit, ter);
+    const forma = formaPrecio(tp);
+    if (usaCategoria(forma) && !cat) return { estado: 'no_encontrada', nit, candidatas: delCliente, mensaje: `${tp} se cobra por categoría y el expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO).` };
+    const delTipo = delCliente.filter(t => canonTipoPrueba(t.tipoPrueba) === tp);
+    const cands = usaCategoria(forma) ? delTipo.filter(t => canonCategoria(t.categoria) === cat) : delTipo;
+    const r = forma === 'unico' ? elegirUnico(cands, nit, tp) : elegir(cands, nit, usaTerritorio(forma) ? ter : '');
     if (!r) {
-      const sinTerritorio = ter ? delCliente.filter(t => canonTipoPrueba(t.tipoPrueba) === tp && canonCategoria(t.categoria) === cat) : [];
+      const etiqueta = usaCategoria(forma) ? `${tp} ${cat}` : tp;
+      const sinTerritorio = ter && usaTerritorio(forma) ? cands : [];
       const msg = sinTerritorio.length
-        ? `El NIT ${nit} tiene ${tp} ${cat} pero no en ${ter} (solo ${[...new Set(sinTerritorio.map(t => canonTerritorio(t.territorio)))].join(', ')}).`
-        : `El NIT ${nit} no tiene tarifa para ${tp} ${cat}${ter ? ' ' + ter : ''}.`;
+        ? `El NIT ${nit} tiene ${etiqueta} pero no en ${ter} (solo ${[...new Set(sinTerritorio.map(t => canonTerritorio(t.territorio)))].join(', ')}).`
+        : `El NIT ${nit} no tiene tarifa para ${etiqueta}${ter && usaTerritorio(forma) ? ' ' + ter : ''}${forma === 'unico' ? ' (precio único por cliente)' : forma === 'territorio' ? ' (precio por territorio, sin categoría)' : ''}.`;
       return { estado: 'no_encontrada', nit, candidatas: delCliente, mensaje: msg };
     }
     if ('ambigua' in r) return { estado: 'ambigua', nit, candidatas: r.ambigua, mensaje: r.mensaje };

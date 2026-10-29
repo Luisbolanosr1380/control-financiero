@@ -132,7 +132,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   ok(M.territorioDesdeDepto('GUATEMALA') === 'METROPOLITANA' && M.territorioDesdeDepto(' guatemala ') === 'METROPOLITANA' && M.territorioDesdeDepto('SACATEPEQUEZ') === 'DEPARTAMENTAL' && M.territorioDesdeDepto('IZABAL') === 'DEPARTAMENTAL' && M.territorioDesdeDepto('') === '' && M.territorioDesdeDepto(null) === '', 'territorio: GUATEMALA → METROPOLITANA; cualquier otro depto → DEPARTAMENTAL; vacío → no indicado (lo decide el motor)');
   ok(M.esPsicometrica({ tipoPrueba: 'PSICOMETRICAS', procesoSolicitado: 'SOLO POLIGRAFO' }) && M.esPsicometrica({ tipoPrueba: 'POLIGRAFO', procesoSolicitado: 'PSICOMETRICAS' }) && M.esPsicometrica({ tipoPrueba: 'Psicométricas ' }) && !M.esPsicometrica({ tipoPrueba: 'POLIGRAFO', procesoSolicitado: 'SOLO POLIGRAFO' }), 'PSICOMETRICAS (en tipo o en proceso, con tildes/espacios) se excluye por completo');
   const T = (id: string, nit: string, tipo: string, cat: string, ter: string, monto: number, aprobado = true): Tarifa => ({ id, nit, razonSocial: 'E2E', tipoPrueba: tipo, categoria: cat, territorio: ter, monto, anio: '2026', aprobadoPor: aprobado ? 'x' : '', aprobadoEn: aprobado ? '2026-01-01' : null, activo: true });
-  const tarifas = [T('t1', '123', 'POLIGRAFO', 'PRE EMPLEO', 'METROPOLITANA', 350), T('t2', '123', 'POLIGRAFO', 'PRE EMPLEO', 'DEPARTAMENTAL', 350), T('t3', '123', 'SOCIOECONOMICO', 'PRE EMPLEO', 'METROPOLITANA', 450), T('t4', '123', 'SOCIOECONOMICO', 'RUTINA', 'METROPOLITANA', 0), T('t5', '123', 'POLIGRAFO', 'RUTINA', 'METROPOLITANA', 300), T('t6', '123', 'POLIGRAFO', 'RUTINA', 'DEPARTAMENTAL', 330)];
+  const tarifas = [T('t1', '123', 'POLIGRAFO', 'PRE EMPLEO', 'METROPOLITANA', 350), T('t2', '123', 'POLIGRAFO', 'PRE EMPLEO', 'DEPARTAMENTAL', 350), T('t3', '123', 'SOCIOECONOMICO', 'PRE EMPLEO', 'METROPOLITANA', 450), T('t4', '123', 'SOCIOECONOMICO', 'RUTINA', 'METROPOLITANA', 0), T('t5', '123', 'POLIGRAFO', 'RUTINA', 'METROPOLITANA', 300), T('t6', '123', 'POLIGRAFO', 'RUTINA', 'DEPARTAMENTAL', 330), T('t7', '123', 'INFORNET', 'UNICA', 'UNICA', 44.64), T('t8', '123', 'SOCIOECONOMICO EMPRESARIAL', 'UNICA', 'METROPOLITANA', 600), T('t9', '123', 'SOCIOECONOMICO EMPRESARIAL', 'UNICA', 'DEPARTAMENTAL', 600)];
   const ctx = { nitPorEmpresa: new Map([['recA', '123']]), tarifas };
   const E = (o: Partial<Exp>): Exp => ({ id: 'rec1', empresa: { id: 'recA', nombre: 'A' }, tipoPrueba: 'POLIGRAFO', procesoSolicitado: 'SOLO POLIGRAFO', categoriaPrueba: 'PRE EMPLEO', deptoVisita: 'GUATEMALA', terminado: true, cancelado: false, eliminado: false, cobro: { statusCobro: 'PENDIENTE' }, actualizadoEn: '2026-10-27T16:40:05.123Z', ...o });
   let c = M.clasificarExpediente(E({}), ctx);
@@ -158,6 +158,10 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   const ctxNF = { ...ctx, noFacturaEmpresas: new Map([['recA', 'intercompany'], ['recZ', '']]) };
   c = M.clasificarExpediente(E({}), ctxNF);
   ok(c.estado === 'excluido_no_factura' && c.nit === null && c.monto === null && /intercompany/.test(c.detalle) && M.clasificarExpediente(E({ empresa: { id: 'recZ', nombre: 'X' } }), ctxNF).estado === 'excluido_no_factura' && M.clasificarExpediente(E({ tipoPrueba: 'PSICOMETRICAS', procesoSolicitado: 'PSICOMETRICAS' }), ctxNF).estado === 'excluido_psicometrica', 'empresa marcada "no se factura" → excluido_no_factura aunque esté mapeada o sin mapear; las psicométricas siguen ganando primero');
+  c = M.clasificarExpediente(E({ tipoPrueba: 'INFORNET', procesoSolicitado: 'CONSULTA INFORNET', categoriaPrueba: null, categoria: null, deptoVisita: null }), ctx);
+  ok(c.estado === 'resuelta' && c.monto === 44.64 && c.tipoCobrado === 'INFORNET' && c.componentes[0].categoria === 'UNICA', 'FORMA único: INFORNET sin categoría ni territorio → resuelta Q44.64 (no cae en "sin tarifa")');
+  c = M.clasificarExpediente(E({ tipoPrueba: 'SOCIO EMPRESARIAL ', procesoSolicitado: 'SOCIO EMPRESARIAL', categoriaPrueba: null, categoria: null, deptoVisita: 'SACATEPEQUEZ' }), ctx);
+  ok(c.estado === 'resuelta' && c.monto === 600 && c.tipoCobrado === 'SOCIOECONOMICO EMPRESARIAL' && c.territorio === 'DEPARTAMENTAL' && M.clasificarExpediente(E({ tipoPrueba: 'SOCIO EMPRESARIAL', procesoSolicitado: 'SOCIO EMPRESARIAL', categoriaPrueba: null, deptoVisita: null }), ctx).estado === 'resuelta', 'FORMA por territorio: SOCIO EMPRESARIAL sin categoría → resuelta por territorio (y sin territorio si el precio es igual en ambos)');
   ok(conIva(350).iva === 42 && conIva(350).total === 392 && conIva(89.29).total === 100 && M.montoParaAgenda(89.29, 'con_iva') === 100 && M.montoParaAgenda(89.29, 'sin_iva') === 89.29, 'IVA 12 %: 350 → 42 / 392; 89.29 → Q100; monto para la Agenda con IVA (default) o sin IVA');
   const L = (o: Partial<Local>): Local => ({ ...(M.expedienteALocal(E({}), M.clasificarExpediente(E({}), ctx)) as unknown as Local), id: 'x', facturaId: null, facturaAppId: null, noFactura: null, facturadoEn: null, facturadoPor: null, writebackEstado: null, writebackDetalle: null, writebackEn: null, cobroWritebackEstado: null, cobroWritebackDetalle: null, updatedAt: null, ...o });
   const l1 = L({ idExterno: 'r1', persona: 'ANA' });
@@ -255,6 +259,8 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     mk2('recE2E012', { actualizadoEn: '2026-10-23T10:00:00.000Z' }),
     mk2('recE2E013', { actualizadoEn: '2026-10-23T11:00:00.000Z', cobro: { statusCobro: 'PENDIENTE', cobroMegapaca: 25 } }),
     mk2('recE2E014', { empresa: { id: EMP_C, nombre: 'GOLDEN TALENT' }, actualizadoEn: '2026-10-23T12:00:00.000Z' }),
+    mk2('recE2E015', { tipoPrueba: 'SOCIO EMPRESARIAL ', procesoSolicitado: 'SOCIO EMPRESARIAL', categoriaPrueba: null, categoria: null, deptoVisita: 'SACATEPEQUEZ', actualizadoEn: '2026-10-23T13:00:00.000Z' }),
+    mk2('recE2E016', { tipoPrueba: 'INFORNET', procesoSolicitado: 'CONSULTA INFORNET', categoriaPrueba: null, categoria: null, deptoVisita: null, actualizadoEn: '2026-10-23T14:00:00.000Z' }),
   ];
   for (const e of seed) exps.set(e.id, e);
   const modo = { facturas: 'ok' as 'ok' | '500parcial' | '503x1', lote: 'ok' as 'ok' | '409' };
@@ -344,7 +350,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     // Sync primera corrida (desde=) paginada
     const s1 = await DB.sincronizarAgenda({ actor: ACTOR, api: apiRapida() });
     const q1 = ultimo['GET /expedientes'] as Record<string, string>;
-    ok(s1.ok && s1.leidos === 14 && s1.paginas === 4 && q1.desde === '2026-01-01' && q1.incluirEliminados === 'true' && q1.porPagina === '200', `primera corrida: desde=2026-01-01, incluirEliminados, 4 páginas, 14 expedientes (${JSON.stringify({ leidos: s1.leidos, paginas: s1.paginas })})`);
+    ok(s1.ok && s1.leidos === 16 && s1.paginas === 4 && q1.desde === '2026-01-01' && q1.incluirEliminados === 'true' && q1.porPagina === '200', `primera corrida: desde=2026-01-01, incluirEliminados, 4 páginas, 16 expedientes (${JSON.stringify({ leidos: s1.leidos, paginas: s1.paginas })})`);
     let locales = await DB.listarExpedientesLocal();
     const byId = (id: string) => locales.find(e => e.idExterno === id)!;
     ok(byId('recE2E001').estadoTarifa === 'resuelta' && byId('recE2E001').montoCalculado === 350 && byId('recE2E001').territorioResuelto === 'METROPOLITANA' && byId('recE2E001').nitResuelto === NIT_A && byId('recE2E001').clienteId === cliA!.id, 'e001 POLIGRAFO PRE EMPLEO GUATEMALA → resuelta Q350, METROPOLITANA, NIT y cliente del mapeo');
@@ -353,10 +359,11 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     ok(byId('recE2E004').estadoTarifa === 'excluido_psicometrica', 'e004 PSICOMETRICAS → excluido');
     ok(byId('recE2E005').estadoTarifa === 'sin_tarifa' && byId('recE2E005').montoCalculado === null && /Q0/.test(byId('recE2E005').detalleTarifa), 'e005 SOCIO RUTINA (Q0) → sin tarifa');
     ok(byId('recE2E008').estadoTarifa === 'cliente_sin_mapear' && byId('recE2E008').nitResuelto === null, 'e008 empresa B sin mapear → cliente sin mapear');
+    ok(byId('recE2E015').estadoTarifa === 'sin_tarifa' && byId('recE2E015').tipoCobrado === 'SOCIOECONOMICO EMPRESARIAL' && /no tiene tarifa para SOCIOECONOMICO EMPRESARIAL/.test(byId('recE2E015').detalleTarifa) && byId('recE2E016').estadoTarifa === 'sin_tarifa' && byId('recE2E016').tipoCobrado === 'INFORNET' && /precio único/.test(byId('recE2E016').detalleTarifa), 'e015 SOCIO EMPRESARIAL y e016 INFORNET sin categoría → "sin tarifa" por falta de tarifa (no por la categoría): el detalle dice qué cargar');
     ok(!byId('recE2E006').terminado && byId('recE2E007').cancelado && byId('recE2E009').statusCobroExterno === 'FACTURADO' && byId('recE2E013').cobroMegapaca === 25, 'e006 no terminado, e007 cancelado, e009 ya FACTURADO en la Agenda (fuera de la cola), e013 conserva cobroMegapaca');
     const vista = await DB.vistaPorFacturar();
     const gA = vista.grupos.find(g => g.clave === `n-${NIT_A}`)!;
-    ok(!!gA && gA.listos === 7 && gA.totalSinIva === 350 + 450 + 800 + 350 * 4 && gA.totalConIva === 3360 && gA.sinTarifa === 1 && gA.nombre === 'E2E AGENDA, S.A.' && gA.expedientes === 8 && vista.grupos.length === 1 && vista.agregadoEnSql && vista.kpis.excluidos === 1 && vista.kpis.sinMapear === 2 && vista.kpis.clientesSinMapear === 2 && vista.sinMapear.empresas === 2 && vista.kpis.listos === 7 && vista.kpis.clientes === 1 && vista.total === 14 && vista.kpis.excluidosNoFactura === 0 && vista.noFacturan.length === 0 && vista.sync?.corridas === 1, `vista "Por facturar" (agregados en SQL): solo el cliente A (7 listos por Q${gA?.totalSinIva}, 1 sin tarifa); sin mapear (2 empresas) y psicométricas (1) solo se CUENTAN; total 14 en el espejo`);
+    ok(!!gA && gA.listos === 7 && gA.totalSinIva === 350 + 450 + 800 + 350 * 4 && gA.totalConIva === 3360 && gA.sinTarifa === 3 && gA.nombre === 'E2E AGENDA, S.A.' && gA.expedientes === 10 && vista.grupos.length === 1 && vista.agregadoEnSql && vista.kpis.excluidos === 1 && vista.kpis.sinMapear === 2 && vista.kpis.clientesSinMapear === 2 && vista.sinMapear.empresas === 2 && vista.kpis.listos === 7 && vista.kpis.clientes === 1 && vista.total === 16 && vista.kpis.excluidosNoFactura === 0 && vista.noFacturan.length === 0 && vista.sync?.corridas === 1, `vista "Por facturar" (agregados en SQL): solo el cliente A (7 listos por Q${gA?.totalSinIva}, 3 sin tarifa); sin mapear (2 empresas) y psicométricas (1) solo se CUENTAN; total 16 en el espejo`);
     const vistaF = await DB.vistaPorFacturar({ sinRpc: true });
     ok(!vistaF.agregadoEnSql && JSON.stringify(vistaF.grupos) === JSON.stringify(vista.grupos) && JSON.stringify(vistaF.kpis) === JSON.stringify(vista.kpis) && vistaF.total === vista.total, 'fallback sin la 017 (consultas livianas) da exactamente los mismos grupos y KPIs');
     const sm = await DB.empresasSinMapear({});
@@ -368,7 +375,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     locales = await DB.listarExpedientesLocal();
     ok(m2.ok && m2.reclasificados === 1 && byId('recE2E008').estadoTarifa === 'sin_tarifa' && byId('recE2E008').nitResuelto === NIT_B && /no tiene tarifario/.test(byId('recE2E008').detalleTarifa), 'al mapear la empresa B sus expedientes se re-resuelven solos: ahora "sin tarifa" (NIT sin tarifario) con el detalle');
     const detA = await DB.getGrupo(`n-${NIT_A}`);
-    ok(!!detA && detA.cliente?.id === cliA!.airtable_id && detA.expedientes.length === 11 && detA.centros.length === centros.length, 'detalle del cliente A: cliente de financiero resuelto, 11 expedientes (la psicométrica no tiene NIT), centros de costo activos para el diálogo');
+    ok(!!detA && detA.cliente?.id === cliA!.airtable_id && detA.expedientes.length === 13 && detA.centros.length === centros.length, 'detalle del cliente A: cliente de financiero resuelto, 13 expedientes (la psicométrica no tiene NIT), centros de costo activos para el diálogo');
 
     // Emitir: validaciones
     const hoy = (await import('../src/lib/utils/fechas')).obtenerFechaHoyGuatemala();
@@ -529,6 +536,22 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     locales = await DB.listarExpedientesLocal();
     ok(nf5.ok && byId('recE2E008').estadoTarifa === 'sin_tarifa' && byId('recE2E014').estadoTarifa === 'excluido_no_factura', 'GOLDEN TALENT queda marcada para la sección de volumen; B sin tarifa con su NIT');
 
+    // ── FORMAS DE PRECIO: CIBUS espejo (socio empresarial + infornet) ──
+    console.log('\n   formas de precio · CIBUS espejo: generar tarifas → cargar precios → resuelven');
+    const TDB = await import('../src/lib/db/tarifario');
+    const plA = await TDB.planGenerarTarifas(NIT_A);
+    ok(!('error' in plA) && plA.tiposAgenda.includes('SOCIOECONOMICO EMPRESARIAL') && plA.tiposAgenda.includes('INFORNET') && plA.filas.length === 8 && plA.omitidas.length === 5 && plA.porTipo['SOCIOECONOMICO EMPRESARIAL'] === 2 && plA.porTipo.INFORNET === 1, `plan para el cliente A: lee de la Agenda que pide SOCIO EMPRESARIAL e INFORNET → 5 de plantilla + 2 + 1 = 8 (${'error' in plA ? plA.error : `${plA.resumen} · omitidas: ${plA.omitidas.map(f => `${f.tipoPrueba} ${f.categoria} ${f.territorio}`).join(', ')}`})`);
+    const gA2 = await TDB.generarTarifasCliente({ nit: NIT_A }, ACTOR);
+    const tarA = (await TDB.getTarifario()).filter(t => t.nit === NIT_A && t.activo);
+    const seD = tarA.find(t => t.tipoPrueba === 'SOCIOECONOMICO EMPRESARIAL' && t.territorio === 'DEPARTAMENTAL'), inf = tarA.find(t => t.tipoPrueba === 'INFORNET');
+    ok(gA2.ok && gA2.creadas === 8 && !!seD && seD.categoria === 'UNICA' && seD.monto === 0 && !!inf && inf.categoria === 'UNICA' && inf.territorio === 'UNICA' && inf.monto === 0, 'generar: 8 filas en Q0 con la forma correcta (SOCIO EMPRESARIAL UNICA × 2 territorios; INFORNET UNICA/UNICA)');
+    locales = await DB.listarExpedientesLocal();
+    ok(byId('recE2E015').estadoTarifa === 'sin_tarifa' && byId('recE2E016').estadoTarifa === 'sin_tarifa', 'con las filas en Q0 siguen "sin tarifa" (Q0 no es gratis)');
+    ok((await TDB.editarTarifa(seD!.id, { monto: 750 }, ACTOR, 'precio pactado')).ok && (await TDB.editarTarifa(inf!.id, { monto: 44.64 }, ACTOR, 'precio pactado')).ok, 'se cargan los precios: SOCIO EMPRESARIAL DEPARTAMENTAL Q750, INFORNET Q44.64');
+    const recl = await DB.reclasificar({ empresaIdExterno: EMP_A });
+    locales = await DB.listarExpedientesLocal(); const vFP = await DB.vistaPorFacturar(); const gAFP = vFP.grupos.find(g => g.nit === NIT_A)!;
+    ok(recl === 2 && byId('recE2E015').estadoTarifa === 'resuelta' && byId('recE2E015').montoCalculado === 750 && byId('recE2E015').territorioResuelto === 'DEPARTAMENTAL' && byId('recE2E016').estadoTarifa === 'resuelta' && byId('recE2E016').montoCalculado === 44.64 && M_enCola(byId('recE2E015')) && gAFP.listos === 3 && gAFP.sinTarifa === 1, 'al cargar los precios pasan de "sin tarifa" a "resuelta" y facturables (listos 1 → 3; queda 1 sin tarifa: la SOCIO RUTINA en Q0)');
+
     // Sin llave / HIT
     process.env.EMPRESA_SLUG = 'hit';
     const sinKey = await DB.sincronizarAgenda({ actor: ACTOR });   // sin api inyectada: usa la config → HIT no tiene llave real pero sí la de prueba… la quitamos:
@@ -544,9 +567,9 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
     for (let i = 0; i < 1000; i++) vol.push({ fuente: 'agenda', id_externo: `recVOLpsi${String(i).padStart(4, '0')}`, empresa_id_externo: `recVOLemp${String(i % 13).padStart(3, '0')}`, empresa_nombre_externo: `VOL EMPRESA ${String(i % 13).padStart(3, '0')}`, estado_tarifa: 'excluido_psicometrica', terminado: true, cancelado: false, eliminado: false, status_cobro_externo: 'PENDIENTE', fecha_ingreso: '2026-08-01', tipo_prueba: 'PSICOMETRICAS' });
     for (let i = 0; i < vol.length; i += 1000) { const { error } = await sb.from('facturacion_expediente').insert(vol.slice(i, i + 1000)); if (error) throw new Error(`seed volumen: ${error.message}`); }
     const { count: nVol } = await sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }).eq('fuente', 'agenda');
-    ok((nVol ?? 0) >= 8014, `espejo con ${nVol} filas (7,000 sin mapear en 200 empresas + 1,000 psicométricas + las del ciclo)`);
+    ok((nVol ?? 0) >= 8016, `espejo con ${nVol} filas (7,000 sin mapear en 200 empresas + 1,000 psicométricas + las del ciclo)`);
     let t0 = Date.now(); const vistaV = await DB.vistaPorFacturar(); const msRpc = Date.now() - t0;
-    ok(msRpc < 2000 && vistaV.agregadoEnSql && vistaV.grupos.length === 2 && vistaV.kpis.listos === 1 && vistaV.kpis.sinTarifa === 2 && vistaV.kpis.sinMapear === 7000 && vistaV.sinMapear.empresas === 200 && vistaV.kpis.excluidos === 1001 && vistaV.kpis.excluidosNoFactura === 1 && vistaV.noFacturan.length === 1 && vistaV.total === (nVol ?? 0), `vistaPorFacturar con ${nVol} filas: ${msRpc} ms (< 2 s); la lista sigue con los 2 clientes del ciclo (1 listo, 2 sin tarifa); KPIs: 7,000 sin mapear en 200 empresas, 1,001 psicométricas — nada de eso se cargó (${JSON.stringify({ grupos: vistaV.grupos.length, kpis: vistaV.kpis })})`);
+    ok(msRpc < 2000 && vistaV.agregadoEnSql && vistaV.grupos.length === 2 && vistaV.kpis.listos === 3 && vistaV.kpis.sinTarifa === 2 && vistaV.kpis.sinMapear === 7000 && vistaV.sinMapear.empresas === 200 && vistaV.kpis.excluidos === 1001 && vistaV.kpis.excluidosNoFactura === 1 && vistaV.noFacturan.length === 1 && vistaV.total === (nVol ?? 0), `vistaPorFacturar con ${nVol} filas: ${msRpc} ms (< 2 s); la lista sigue con los 2 clientes del ciclo (3 listos, 2 sin tarifa); KPIs: 7,000 sin mapear en 200 empresas, 1,001 psicométricas — nada de eso se cargó (${JSON.stringify({ grupos: vistaV.grupos.length, kpis: vistaV.kpis })})`);
     t0 = Date.now(); const vistaVF = await DB.vistaPorFacturar({ sinRpc: true }); const msFb = Date.now() - t0;
     ok(JSON.stringify(vistaVF.kpis) === JSON.stringify(vistaV.kpis) && JSON.stringify(vistaVF.grupos) === JSON.stringify(vistaV.grupos), `fallback sin 017 con ${nVol} filas: ${msFb} ms, mismos KPIs y grupos (solo columnas livianas de la cola, nunca el raw)`);
     t0 = Date.now(); const p1 = await DB.empresasSinMapear({ limite: 25 }); const msSm = Date.now() - t0;

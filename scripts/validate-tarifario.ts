@@ -132,6 +132,39 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
   const dd = tarifasDuplicadas(tarifas);
   ok(dd.size === 2 && dd.has('6') && dd.has('7'), 'tarifasDuplicadas marca ESPECIFICA/ESPECIFICO del mismo NIT');
 
+  // ── FORMAS DE PRECIO (matriz / por territorio / único) ──
+  const C = await import('../src/lib/tarifario/canon');
+  ok(C.formaPrecio('INFORNET') === 'unico' && C.formaPrecio('Consulta Infornet') === 'unico' && C.formaPrecio('SOCIO EMPRESARIAL') === 'territorio' && C.formaPrecio('SOCIOECONOMICO EMPRESARIAL') === 'territorio' && C.formaPrecio('POLIGRAFO') === 'matriz' && C.formaPrecio('SOCIOECONOMICO') === 'matriz' && C.formaPrecio('BACKGROUND CHECK') === 'matriz' && C.formaPrecio('MIDOT') === 'matriz', 'formaPrecio: INFORNET único; SOCIO EMPRESARIAL por territorio; polígrafo/socio y lo no definido (BACKGROUND CHECK, MIDOT) matriz');
+  ok(C.llaveTarifa({ nit: '1', tipoPrueba: 'INFORNET', categoria: 'PRE EMPLEO', territorio: 'metro' }) === '1|INFORNET|UNICA|UNICA' && C.llaveTarifa({ nit: '1', tipoPrueba: 'Socio Empresarial', categoria: 'RUTINA', territorio: 'depto' }) === '1|SOCIOECONOMICO EMPRESARIAL|UNICA|DEPARTAMENTAL' && C.llaveTarifa({ nit: '1', tipoPrueba: 'POLIGRAFO', categoria: 'RUTINA', territorio: 'depto' }) === '1|POLIGRAFO|RUTINA|DEPARTAMENTAL' && C.dimTexto(C.UNICA) === '—' && C.canonCategoria('UNICA') === 'UNICA' && C.canonTerritorio('unica') === 'UNICA' && !(C.CATEGORIAS as readonly string[]).includes('INFORNET'), 'llave efectiva: las dimensiones que la forma no usa van al centinela UNICA (sin migración); INFORNET ya no es categoría');
+  const formas = [
+    T('u1', '777', 'INFORNET', 'UNICA', 'UNICA', 44.64, { aprobadoEn: '2026-01-01' }),
+    T('l1', '888', 'INFORNET', 'PRE EMPLEO', 'METROPOLITANA', 44), T('l2', '888', 'INFORNET', 'PRE EMPLEO', 'DEPARTAMENTAL', 44),
+    T('x1', '999', 'INFORNET', 'INFORNET', 'METROPOLITANA', 44), T('x2', '999', 'INFORNET', 'PRE EMPLEO', 'DEPARTAMENTAL', 50),
+    T('s1', '777', 'SOCIOECONOMICO EMPRESARIAL', 'UNICA', 'METROPOLITANA', 600), T('s2', '777', 'SOCIOECONOMICO EMPRESARIAL', 'UNICA', 'DEPARTAMENTAL', 750),
+  ];
+  r = resolverTarifa(formas, { nit: '777', tipoPrueba: 'CONSULTA INFORNET', categoria: '', territorio: '' });
+  ok(r.estado === 'ok' && r.monto === 44.64 && r.aprobada, 'único: INFORNET resuelve sin categoría ni territorio (Q44.64)');
+  r = resolverTarifa(formas, { nit: '777', tipoPrueba: 'INFORNET', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA' });
+  ok(r.estado === 'ok' && r.monto === 44.64, 'único: ignora la categoría y el territorio que traiga el expediente');
+  r = resolverTarifa(formas, { nit: '888', tipoPrueba: 'INFORNET', categoria: '', territorio: '' });
+  ok(r.estado === 'ok' && r.monto === 44 && r.avisos.some(a => /normalizarlas/.test(a)), 'único con filas legacy (PRE EMPLEO × 2 territorios, mismo monto) → resuelve y avisa que conviene normalizar');
+  r = resolverTarifa(formas, { nit: '999', tipoPrueba: 'INFORNET', categoria: 'RUTINA', territorio: 'DEPARTAMENTAL' });
+  ok(r.estado === 'ambigua' && /precio único/.test(r.mensaje) && r.candidatas.length === 2, 'único con montos distintos (44 vs 50) → ambigua: dejar un solo precio');
+  r = resolverTarifa(formas, { nit: '777', tipoPrueba: 'SOCIO EMPRESARIAL', categoria: '', territorio: 'GUATEMALA' });
+  ok(r.estado === 'ok' && r.monto === 600, 'por territorio: SOCIO EMPRESARIAL sin categoría en GUATEMALA → Q600');
+  r = resolverTarifa(formas, { nit: '777', tipoPrueba: 'SOCIO EMPRESARIAL', categoria: 'RUTINA', territorio: 'DEPARTAMENTAL' });
+  ok(r.estado === 'ok' && r.monto === 750, 'por territorio: ignora la categoría (RUTINA) y toma DEPARTAMENTAL → Q750');
+  r = resolverTarifa(formas, { nit: '777', tipoPrueba: 'SOCIO EMPRESARIAL', categoria: '', territorio: '' });
+  ok(r.estado === 'ambigua' && /territorio/.test(r.mensaje), 'por territorio sin territorio y precios distintos → ambigua (pide territorio)');
+  r = resolverTarifa(formas, { nit: '777', tipoPrueba: 'POLIGRAFO', categoria: '', territorio: 'METROPOLITANA' });
+  ok(r.estado === 'no_encontrada' && /no trae categoría/.test(r.mensaje), 'matriz sin categoría → no_encontrada con el motivo (la categoría sigue siendo obligatoria en polígrafo/socio)');
+  ok(buscarDuplicado(formas, { nit: '888', tipoPrueba: 'INFORNET', categoria: 'RUTINA', territorio: 'UNICA' })?.id === 'l1' && tarifasDuplicadas(formas).has('l1') && tarifasDuplicadas(formas).has('x2') && !tarifasDuplicadas(formas).has('u1'), 'duplicados por llave efectiva: las filas legacy de INFORNET del mismo NIT cuentan como repetidas');
+  const G = await import('../src/lib/tarifario/generar');
+  let plan = G.planGenerar('555', [], ['SOCIO EMPRESARIAL', 'CONSULTA INFORNET', 'COMPLETO']);
+  ok(plan.filas.length === 13 && plan.porTipo.POLIGRAFO === 6 && plan.porTipo.SOCIOECONOMICO === 4 && plan.porTipo['SOCIOECONOMICO EMPRESARIAL'] === 2 && plan.porTipo.INFORNET === 1 && plan.filas.filter(f => f.tipoPrueba === 'INFORNET').every(f => f.categoria === 'UNICA' && f.territorio === 'UNICA') && plan.filas.filter(f => f.tipoPrueba === 'SOCIOECONOMICO EMPRESARIAL').every(f => f.categoria === 'UNICA') && /INFORNET 1 \(único\)/.test(G.resumenPlan(plan)) && /SOCIOECONOMICO EMPRESARIAL 2 \(por territorio\)/.test(G.resumenPlan(plan)), 'planGenerar: plantilla (10) + socio empresarial (2, por territorio) + infornet (1, único); COMPLETO no genera filas');
+  plan = G.planGenerar('555', [T('p1', '555', 'POLIGRAFO', 'PREEMPLEO', 'metro', 1), T('p2', '555', 'INFORNET', 'PRE EMPLEO', 'METROPOLITANA', 1, { activo: false })], ['INFORNET'], ['BACKGROUND CHECK']);
+  ok(plan.filas.length === 15 && plan.omitidas.length === 2 && plan.porTipo['BACKGROUND CHECK'] === 6, 'planGenerar no duplica: omite lo que ya existe por llave efectiva (incluso inactivo o con otra grafía); un tipo extra matriz genera 6');
+
   const { resumenPorEmpresa, filtrarEmpresas, aprobablesDe } = await import('../src/lib/tarifario/resumen');
   const resumen = resumenPorEmpresa([...tarifas, T('10', '53563972', 'POLIGRAFO', 'RUTINA', 'METROPOLITANA', 300, { razonSocial: 'CREDICHAPIN', aprobadoEn: '2026-01-01' })]);
   ok(resumen.length === 3 && resumen[0].nit === '104455470' && resumen[0].semaforo === 'rojo' && resumen[0].activas === 5 && resumen[0].sinTarifa === 1 && resumen[0].pendientes === 2 && resumen[0].aprobadas === 2 && resumen[0].estancadas === 0 && resumen[0].precioDesde === null, `resumen por empresa: IDEA CENTRAL primero (rojo: 5 activas, 1 Q0, 2 pendientes, 2 aprobadas; sin antigüedad → 0 estancadas) → ${JSON.stringify(resumen[0])}`);
@@ -255,9 +288,37 @@ const rd = (p: string) => fs.readFileSync(path.join(process.cwd(), p), 'utf8');
     h = await hist(id1);
     const dir = h[h.length - 1];
     ok(!eDir && dir?.accion === 'cambio_precio' && dir.montoAnterior === 375 && dir.montoNuevo === 380 && dir.variacionPct === 1.33 && dir.usuario === '' && dir.motivo === '', `un UPDATE directo (sin RPC ni GUC) también deja renglón: 375 → 380 (+1.33 %) con usuario null (${JSON.stringify(dir ? { usuario: dir.usuario, pct: dir.variacionPct } : null)})`);
+
+    // ── FORMAS DE PRECIO + GENERAR TARIFAS (en la base) ──
+    console.log('   formas de precio · generar tarifas');
+    const { planGenerarTarifas, generarTarifasCliente } = await import('../src/lib/db/tarifario');
+    const cI = await crearTarifa({ nit: NIT, tipoPrueba: 'Consulta Infornet', categoria: 'PRE EMPLEO', territorio: 'METROPOLITANA', monto: 44.64 }, ACTOR);
+    const fI = cI.ok ? (await getTarifario()).find(t => t.id === cI.id) : undefined;
+    ok(cI.ok && !!fI && fI.tipoPrueba === 'INFORNET' && fI.categoria === 'UNICA' && fI.territorio === 'UNICA', `crear INFORNET con categoría/territorio → se guarda como precio único (UNICA/UNICA): ${cI.ok ? cI.mensaje : cI.error}`);
+    const cI2 = await crearTarifa({ nit: NIT, tipoPrueba: 'INFORNET', categoria: 'RUTINA', territorio: 'DEPARTAMENTAL', monto: 50 }, ACTOR);
+    ok(!cI2.ok && !!cI2.duplicado, 'otra INFORNET del mismo NIT con otra categoría/territorio → aviso de repetida (la llave efectiva es la misma)');
+    const cS = await crearTarifa({ nit: NIT, tipoPrueba: 'SOCIO EMPRESARIAL', categoria: 'RUTINA', territorio: 'metro', monto: 600 }, ACTOR);
+    const fS = cS.ok ? (await getTarifario()).find(t => t.id === cS.id) : undefined;
+    ok(cS.ok && !!fS && fS.tipoPrueba === 'SOCIOECONOMICO EMPRESARIAL' && fS.categoria === 'UNICA' && fS.territorio === 'METROPOLITANA', 'crear SOCIO EMPRESARIAL → por territorio: categoría UNICA, territorio METROPOLITANA');
+    let rf = await resolverTarifaExpediente({ nit: NIT, tipoPrueba: 'CONSULTA INFORNET', categoria: '', territorio: '' });
+    ok(rf.estado === 'ok' && rf.monto === 44.64, 'lookup real: INFORNET sin categoría ni territorio → Q44.64');
+    rf = await resolverTarifaExpediente({ nit: NIT, tipoPrueba: 'SOCIO EMPRESARIAL', categoria: '', territorio: 'GUATEMALA' });
+    ok(rf.estado === 'ok' && rf.monto === 600, 'lookup real: SOCIO EMPRESARIAL sin categoría, GUATEMALA → Q600');
+    rf = await resolverTarifaExpediente({ nit: NIT, tipoPrueba: 'SOCIO EMPRESARIAL', categoria: 'PRE EMPLEO', territorio: 'depto' });
+    ok(rf.estado === 'no_encontrada' && /DEPARTAMENTAL/.test(rf.mensaje), 'lookup real: SOCIO EMPRESARIAL en DEPARTAMENTAL sin tarifa → no_encontrada con el faltante');
+    const pl = await planGenerarTarifas(NIT, { incluirAgenda: false, tiposExtra: ['SOCIO EMPRESARIAL'] });
+    const yaHay = (await getTarifario()).filter(t => t.nit === NIT).length;
+    ok(!('error' in pl) && pl.filas.length + pl.omitidas.length === 12 && pl.porTipo['SOCIOECONOMICO EMPRESARIAL'] === 1 && pl.filas.every(f => f.forma !== 'unico'), `planGenerarTarifas: plantilla (10) + SOCIO EMPRESARIAL (2) = 12 llaves; ${'error' in pl ? pl.error : `${pl.filas.length} a crear, ${pl.omitidas.length} ya existen (${yaHay} filas del NIT)`}`);
+    const g1 = await generarTarifasCliente({ nit: NIT, tiposExtra: ['SOCIO EMPRESARIAL'], incluirAgenda: false }, ACTOR);
+    const g2 = await generarTarifasCliente({ nit: NIT, tiposExtra: ['SOCIO EMPRESARIAL'], incluirAgenda: false }, ACTOR);
+    const delNit = (await getTarifario()).filter(t => t.nit === NIT);
+    ok(g1.ok && !('error' in pl) && g1.creadas === pl.filas.length && g2.ok && g2.creadas === 0 && delNit.filter(t => t.tipoPrueba === 'POLIGRAFO').length === 6 && delNit.filter(t => t.tipoPrueba === 'SOCIOECONOMICO').length === 4 && delNit.filter(t => t.tipoPrueba === 'SOCIOECONOMICO EMPRESARIAL').length === 2 && delNit.filter(t => t.tipoPrueba === 'INFORNET').length === 1, `generar: crea ${g1.ok ? g1.creadas : '?'} en Q0 (bitácora 'alta'); la segunda corrida crea 0 (no duplica) → polígrafo 6, socio 4, socio empresarial 2, infornet 1`);
+    const hG = await listarHistorialPorNit(NIT);
+    ok(hG.filter(h => h.accion === 'alta' && h.usuario === ACTOR && /generadas en Q0/.test(h.motivo)).length === (g1.ok ? g1.creadas : -1), 'las generadas quedaron en la bitácora como alta con el motivo "generadas en Q0…"');
   } catch (e) { fail++; console.log(`  🔴 excepción: ${(e as Error).message}`); }
   finally {
     if (creados.length) { const { error } = await sb.from('tarifario').delete().in('id', creados); if (error) console.log(`     ✗ limpieza: ${error.message}`); }
+    { const { error } = await sb.from('tarifario').delete().eq('nit', NIT); if (error) console.log(`     ✗ limpieza (generadas): ${error.message}`); }
     const { count } = await sb.from('tarifario').select('id', { count: 'exact', head: true }).eq('nit', NIT);
     const { count: countH } = await sb.from('tarifario_historial').select('id', { count: 'exact', head: true }).eq('nit', NIT);
     ok((count ?? 0) === 0 && (countH ?? 0) === 0, `limpieza verificada: 0 filas del NIT de prueba ${NIT} en tarifario y en la bitácora (cascade)`);

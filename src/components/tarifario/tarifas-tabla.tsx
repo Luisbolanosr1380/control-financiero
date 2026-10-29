@@ -17,7 +17,7 @@ import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
 import { csvEscape } from '@/lib/facturacion/reporte-csv';
 import { activarTarifaAction, aprobarTarifaAction, editarTarifaAction, historialTarifaAction } from '@/app/(app)/tarifario/actions';
-import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, canonCategoria, canonTerritorio, canonTipoPrueba, esSinTarifa } from '@/lib/tarifario/canon';
+import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, canonCategoria, canonTerritorio, canonTipoPrueba, dimTexto, esSinTarifa, esUnica } from '@/lib/tarifario/canon';
 import { tarifasDuplicadas, type Tarifa } from '@/lib/tarifario/lookup';
 import { ETIQUETAS_ACCION, UMBRAL_ESTANCADA_MESES_DEFAULT, crecimiento, puntosPrecio, textoAntiguedad, type AntiguedadPrecio, type HistorialTarifa } from '@/lib/tarifario/antiguedad';
 import { TarifaForm } from './tarifa-form';
@@ -56,7 +56,7 @@ export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, an
 
   const duplicadas = useMemo(() => tarifasDuplicadas(tarifas), [tarifas]);
   const tipos = useMemo(() => [...new Set([...TIPOS_PRUEBA.filter(t => t !== 'COMPLETO'), ...tarifas.map(t => canonTipoPrueba(t.tipoPrueba))])], [tarifas]);
-  const categorias = useMemo(() => [...new Set([...CATEGORIAS, ...tarifas.map(t => canonCategoria(t.categoria))])], [tarifas]);
+  const categorias = useMemo(() => [...new Set([...CATEGORIAS, ...tarifas.map(t => canonCategoria(t.categoria))])].filter(Boolean), [tarifas]);
 
   let filas = tarifas;
   if (estado === 'activas')     filas = filas.filter(t => t.activo);
@@ -113,7 +113,7 @@ export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, an
         <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
           {!nitFijo && <input className="input" placeholder="NIT o razón social…" value={search} onChange={e => setSearch(e.target.value)} style={{ minWidth: 220 }} />}
           <select className="input" value={tipo} onChange={e => setTipo(e.target.value)} title="Tipo de prueba"><option value="">Tipo (todos)</option>{tipos.map(t => <option key={t} value={t}>{t}</option>)}</select>
-          <select className="input" value={categoria} onChange={e => setCategoria(e.target.value)} title="Categoría"><option value="">Categoría (todas)</option>{categorias.map(c => <option key={c} value={c}>{c}</option>)}</select>
+          <select className="input" value={categoria} onChange={e => setCategoria(e.target.value)} title="Categoría"><option value="">Categoría (todas)</option>{categorias.map(c => <option key={c} value={c}>{esUnica(c) ? 'Única (sin categoría)' : c}</option>)}</select>
           <select className="input" value={territorio} onChange={e => setTerritorio(e.target.value)} title="Territorio"><option value="">Territorio (todos)</option>{TERRITORIOS.map(t => <option key={t} value={t}>{t}</option>)}</select>
           <select className="input" value={estado} onChange={e => setEstado(e.target.value as Estado)} title="Estado">
             <option value="activas">Activas</option><option value="pendientes">Pendientes de aprobación</option><option value="aprobadas">Aprobadas</option>
@@ -139,8 +139,8 @@ export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, an
                   <tr style={{ opacity: t.activo ? 1 : 0.55, background: duplicadas.has(t.id) ? 'rgba(138, 42, 42, 0.05)' : undefined }}>
                     <td><div className="cell-strong" style={{ fontSize: 12.5 }}>{t.razonSocial || '—'}</div><div className="num cell-mute" style={{ fontSize: 11 }}>NIT {t.nit}{duplicadas.has(t.id) && <span className="badge badge-wine" style={{ fontSize: 9.5, marginLeft: 6 }}>Repetida</span>}</div></td>
                     <td style={{ fontSize: 12 }}>{canonTipoPrueba(t.tipoPrueba)}{canonTipoPrueba(t.tipoPrueba) !== t.tipoPrueba.trim().toUpperCase() && <span className="cell-mute" style={{ fontSize: 10.5 }}> ({t.tipoPrueba})</span>}</td>
-                    <td style={{ fontSize: 12 }}>{canonCategoria(t.categoria)}{canonCategoria(t.categoria) !== t.categoria.trim().toUpperCase() && <span className="cell-mute" style={{ fontSize: 10.5 }}> ({t.categoria})</span>}</td>
-                    <td style={{ fontSize: 12 }}>{canonTerritorio(t.territorio)}</td>
+                    <td style={{ fontSize: 12 }} title={esUnica(t.categoria) ? 'Sin categoría: la forma de precio de este servicio no la usa' : undefined}>{dimTexto(t.categoria)}{!esUnica(t.categoria) && canonCategoria(t.categoria) !== t.categoria.trim().toUpperCase() && <span className="cell-mute" style={{ fontSize: 10.5 }}> ({t.categoria})</span>}</td>
+                    <td style={{ fontSize: 12 }} title={esUnica(t.territorio) ? 'Sin territorio: precio único por cliente' : undefined}>{dimTexto(t.territorio)}</td>
                     <td className="num" style={{ whiteSpace: 'nowrap' }}>
                       {editando === t.id ? (
                         <span style={{ display: 'inline-flex', gap: 4, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>

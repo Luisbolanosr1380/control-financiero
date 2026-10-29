@@ -9,6 +9,7 @@
  */
 import { useState } from 'react';
 import { toast } from 'sonner';
+import { I } from '@/components/common/icons';
 import { resolverTarifaAction } from '@/app/(app)/tarifario/actions';
 import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, canonTipoPrueba, esSinTarifa } from '@/lib/tarifario/canon';
 import { tarifasDuplicadas, type ResultadoLookup, type Tarifa } from '@/lib/tarifario/lookup';
@@ -16,6 +17,7 @@ import type { EmpresaTarifario } from '@/lib/tarifario/resumen';
 import { UMBRAL_ESTANCADA_MESES_DEFAULT, type AntiguedadPrecio } from '@/lib/tarifario/antiguedad';
 import { EmpresasLista } from './empresas-lista';
 import { TarifasTabla } from './tarifas-tabla';
+import { GenerarTarifas } from './generar-tarifas';
 
 interface Props {
   disponible: boolean; tarifas: Tarifa[]; empresas: EmpresaTarifario[];
@@ -29,6 +31,7 @@ type Modo = 'empresas' | 'todas';
 
 export function TarifarioClient({ disponible, tarifas, empresas, historialDisponible = true, antiguedad = {}, umbralMeses = UMBRAL_ESTANCADA_MESES_DEFAULT }: Props) {
   const [modo, setModo] = useState<Modo>('empresas');
+  const [generando, setGenerando] = useState(false);
   const activas = tarifas.filter(t => t.activo);
   const kpis = {
     empresas: empresas.length,
@@ -49,6 +52,7 @@ export function TarifarioClient({ disponible, tarifas, empresas, historialDispon
           <div className="page-subtitle">Precio pactado con cada cliente (NIT) por tipo de prueba, categoría y territorio. Montos <strong>sin IVA</strong>; Q0 = sin tarifa definida.</div>
         </div>
         <div className="page-actions" role="tablist" aria-label="Modo">
+          {disponible && !generando && <button className="btn btn-ghost" onClick={() => setGenerando(true)} data-accion="generar-tarifas-hub" title="Crear en Q0 la plantilla de un cliente nuevo (más lo que pide en la Agenda)"><I.Plus size={13} /> Generar tarifas de un cliente</button>}
           <button role="tab" aria-selected={modo === 'empresas'} className={'btn ' + (modo === 'empresas' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setModo('empresas')}>Por empresa</button>
           <button role="tab" aria-selected={modo === 'todas'} className={'btn ' + (modo === 'todas' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setModo('todas')}>Ver todas</button>
         </div>
@@ -73,6 +77,8 @@ export function TarifarioClient({ disponible, tarifas, empresas, historialDispon
         <div className="kpi"><div className="kpi-label">Combinaciones repetidas</div><div className="kpi-value" style={{ color: kpis.duplicadas ? 'var(--wine)' : undefined }}>{kpis.duplicadas}</div><div className="kpi-delta"><span className="vs">misma llave, distinta grafía</span></div></div>
         <div className="kpi" data-kpi="estancadas"><div className="kpi-label">Tarifas estancadas</div><div className="kpi-value" style={{ color: kpis.estancadas ? 'var(--wine)' : undefined }}>{kpis.estancadas}</div><div className="kpi-delta"><span className="vs">sin subir &gt; {umbralMeses} meses · {kpis.empresasEstancadas} empresa{kpis.empresasEstancadas === 1 ? '' : 's'}</span></div></div>
       </div>
+
+      {generando && <GenerarTarifas modo="tarjeta" irAlDetalle />}
 
       <Simulador />
 
