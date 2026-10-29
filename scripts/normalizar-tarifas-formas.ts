@@ -1,8 +1,9 @@
 /**
  * TARIFARIO · Normalización a las FORMAS DE PRECIO (canon.ts).
  *
- * Las tarifas de servicios de precio único (INFORNET) o por territorio (SOCIO
- * EMPRESARIAL) que quedaron con categoría/territorio "de matriz" (p. ej.
+ * Las tarifas de servicios de precio único (INFORNET, PDA, ENTREVISTA GERENCIAL /
+ * ESPECIALISTA, INSIGHT, MIDOT) o por territorio (SOCIO EMPRESARIAL) que quedaron
+ * con categoría/territorio "de matriz" (p. ej.
  * INFORNET · PRE EMPLEO · METROPOLITANA, o categoría 'INFORNET') se llevan al
  * centinela: categoria = 'UNICA' (y territorio = 'UNICA' para único). Por cada
  * NIT + tipo (+ territorio si aplica) se deja UNA fila activa (se prefiere la
@@ -43,14 +44,17 @@ const ACTOR = 'normalizacion-formas@tarifario';
     const e = llaveEfectiva(filas[0]);
     const yaBien = filas.length === 1 && canonCategoria(filas[0].categoria) === e.categoria && canonTerritorio(filas[0].territorio) === e.territorio;
     if (yaBien) { enOrden++; continue; }
-    const montos = [...new Set(filas.map(f => Number(f.monto)))];
+    // Q0 = "sin tarifa definida", no un precio: el patrón real (PDA / INSIGHT cargados como matriz de 6 celdas con
+    // el precio en UNA y las otras 5 en Q0) no es conflicto; se conserva la que tiene precio. Conflicto = 2+ precios distintos.
+    const montos = [...new Set(filas.filter(f => Number(f.monto) > 0).map(f => Number(f.monto)))];
     const etiqueta = `${filas[0].razonSocial || filas[0].nit} · ${e.tipoPrueba}${e.territorio !== 'UNICA' ? ' · ' + e.territorio : ''}`;
     if (montos.length > 1) {
       conflictos++;
       console.log(`  ⚠ CONFLICTO ${etiqueta}: ${filas.map(f => `${f.categoria}/${f.territorio} Q${f.monto.toFixed(2)}`).join(' · ')} → no se toca; dejá un solo precio a mano.`);
       continue;
     }
-    const orden = [...filas].sort((a, b) => (b.aprobadoEn ? 1 : 0) - (a.aprobadoEn ? 1 : 0) || a.id.localeCompare(b.id));
+    // Principal: la que tiene precio; a igualdad, la aprobada; luego la más vieja.
+    const orden = [...filas].sort((a, b) => (Number(b.monto) > 0 ? 1 : 0) - (Number(a.monto) > 0 ? 1 : 0) || (b.aprobadoEn ? 1 : 0) - (a.aprobadoEn ? 1 : 0) || a.id.localeCompare(b.id));
     const [principal, ...resto] = orden;
     console.log(`  → ${etiqueta}: Q${principal.monto.toFixed(2)} · ${principal.categoria}/${principal.territorio} → ${e.categoria}/${e.territorio}${resto.length ? ` · desactivar ${resto.length}: ${resto.map(f => `${f.categoria}/${f.territorio}`).join(', ')}` : ''}`);
     cambios++; desactivadas += resto.length;
