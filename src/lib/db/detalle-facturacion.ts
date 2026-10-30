@@ -12,7 +12,8 @@ import { rpc } from '@/lib/supabase/writes';
 import { nitComparable } from '@/lib/clientes/nit';
 import { documentoDetalle, transicionValida, type CanalAprobacion, type DetalleFacturacion, type DocumentoDetalle, type EstadoDetalle } from '@/lib/facturacion-agenda/detalle';
 import type { ExpedienteLocal } from '@/lib/facturacion-agenda/tipos';
-import { emitirFacturaAgenda, listarExpedientesLocal, type EmitirResult } from './facturacion-agenda';
+import { emitirFacturaAgenda, listarExpedientesLocal, pruebasDeDetalle, type EmitirResult } from './facturacion-agenda';
+import type { PruebaLocal } from '@/lib/facturacion-agenda/tipos';
 import { getClientes } from './clientes';
 import { getCentrosCostoActivos, type CentroCosto } from './centros';
 import type { AgendaApi } from '@/lib/facturacion-agenda/agenda-api';
@@ -21,7 +22,7 @@ const FUENTE = 'agenda';
 
 interface Row {
   id: string; fuente: string; cliente_id: string | null; nit: string; correlativo: string; estado: EstadoDetalle;
-  subtotal: number | string; iva: number | string; total: number | string; expedientes: number;
+  subtotal: number | string; iva: number | string; total: number | string; expedientes: number; /** 024 */ pruebas?: number | null;
   creado_por: string | null; created_at: string; enviada_en: string | null; enviada_por: string | null;
   aprobada_en: string | null; aprobado_por: string | null; aprobado_canal: CanalAprobacion | null;
   factura_id: string | null; factura_app_id: string | null; no_factura: string | null; facturado_en: string | null;
@@ -29,7 +30,7 @@ interface Row {
 }
 const rowToDetalle = (r: Row): DetalleFacturacion => ({
   id: r.id, fuente: r.fuente, clienteId: r.cliente_id, nit: r.nit, correlativo: r.correlativo, estado: r.estado,
-  subtotal: Number(r.subtotal), iva: Number(r.iva), total: Number(r.total), expedientes: Number(r.expedientes),
+  subtotal: Number(r.subtotal), iva: Number(r.iva), total: Number(r.total), expedientes: Number(r.expedientes), pruebas: Number(r.pruebas ?? r.expedientes),
   creadoPor: r.creado_por ?? '', createdAt: r.created_at, enviadaEn: r.enviada_en, enviadaPor: r.enviada_por ?? '',
   aprobadaEn: r.aprobada_en, aprobadoPor: r.aprobado_por ?? '', aprobadoCanal: r.aprobado_canal,
   facturaId: r.factura_id, facturaAppId: r.factura_app_id, noFactura: r.no_factura, facturadoEn: r.facturado_en,
@@ -47,7 +48,7 @@ export type DetalleResult = { ok: true; detalle: DetalleFacturacion } | { ok: fa
 
 const errorLegible = (m: string): string => {
   if (/EXPEDIENTE_RESERVADO/.test(m)) return 'Alguno de los expedientes ya está en otro detalle de facturación.';
-  if (/EXPEDIENTE_NO_FACTURABLE/.test(m)) return 'Solo entran expedientes con precio resuelto y en cola (sin tarifa, sin mapear o ya facturados no).';
+  if (/EXPEDIENTE_NO_FACTURABLE/.test(m)) return 'Solo entran pruebas con resultado cobrable, precio resuelto y en cola (pendientes, sin tarifa, sin mapear o ya facturadas no).';
   if (/DETALLE_VARIOS_CLIENTES/.test(m)) return 'Un detalle es de UN cliente: los expedientes elegidos son de clientes distintos.';
   if (/DETALLE_SIN_EXPEDIENTES/.test(m)) return 'Elegí al menos un expediente.';
   if (/EXPEDIENTE_DESCONOCIDO/.test(m)) return 'Algún expediente ya no está en la cola: recargá la pantalla.';
@@ -57,13 +58,22 @@ const errorLegible = (m: string): string => {
   return m.replace(/^detalle_facturacion_\w+: /, '');
 };
 
-/** Crea el detalle en borrador y reserva sus expedientes (RPC: todo o nada). */
-export async function crearDetalle(input: { idsExternos: string[]; notas?: string }, actor: string): Promise<DetalleResult> {
-  const ids = [...new Set((input.idsExternos ?? []).map(s => String(s).trim()).filter(Boolean))];
-  if (!ids.length) return { ok: false, error: 'Elegí al menos un expediente.' };
-  if (ids.length > 200) return { ok: false, error: 'Un detalle cubre hasta 200 expedientes (límite de la factura en la Agenda).' };
+/**
+ * Crea el detalle en borrador y reserva sus PRUEBAS (024, RPC detalle_facturacion_crear_pruebas: todo o nada).
+ * `componenteIds` = las pruebas elegidas; `idsExternos` (compatibilidad) = TODAS las pruebas facturables hoy de esos expedientes.
+ */
+export async function crearDetalle(input: { idsExternos?: string[]; componenteIds?: string[]; notas?: string }, actor: string): Promise<DetalleResult> {
+  let ids = [...new Set((input.componenteIds ?? []).map(s => String(s).trim()).filter(Boolean))];
+  if (!ids.length && input.idsExternos?.length) {
+    const exps = await listarExpedientesLocal({ idsExternos: [...new Set(input.idsExternos.map(s => String(s).trim()).filter(Boolean))] });
+    // Las pruebas cobrables con precio (también las reservadas: la RPC avisa "otro detalle"); sin factura.
+    ids = exps.flatMap(e => e.pruebas.filter(p => p.situacion === 'cobra' && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 && !p.facturaId).map(p => p.id));
+    if (!ids.length) return { ok: false, error: 'Esos expedientes no tienen pruebas con resultado, precio resuelto y en cola.' };
+  }
+  if (!ids.length) return { ok: false, error: 'Elegí al menos una prueba.' };
+  if (ids.length > 200) return { ok: false, error: 'Un detalle cubre hasta 200 pruebas (límite de la factura en la Agenda).' };
   try {
-    const r = await rpc<Row>('detalle_facturacion_crear', { p_actor: actor, p_ids_externos: ids, p_notas: (input.notas ?? '').trim().slice(0, 500) || null });
+    const r = await rpc<Row>('detalle_facturacion_crear_pruebas', { p_actor: actor, p_componente_ids: ids, p_notas: (input.notas ?? '').trim().slice(0, 500) || null });
     return { ok: true, detalle: rowToDetalle(r) };
   } catch (e) { return { ok: false, error: errorLegible(e instanceof Error ? e.message : String(e)) }; }
 }
@@ -75,15 +85,15 @@ export async function getDetalleBasico(id: string): Promise<DetalleFacturacion |
   return rowToDetalle(data as Row);
 }
 
-export interface DetalleCompleto { detalle: DetalleFacturacion; expedientes: ExpedienteLocal[]; documento: DocumentoDetalle; clienteNombre: string; clienteAppId: string | null; centros: CentroCosto[]; empresaNombreExterno: string }
+export interface DetalleCompleto { detalle: DetalleFacturacion; expedientes: ExpedienteLocal[]; /** 024: las pruebas reservadas en el detalle */ pruebas: PruebaLocal[]; documento: DocumentoDetalle; clienteNombre: string; clienteAppId: string | null; centros: CentroCosto[]; empresaNombreExterno: string }
 
-/** El detalle con sus expedientes, el documento imprimible (faltantes marcados) y el cliente. */
+/** El detalle con sus pruebas y expedientes, el documento imprimible (faltantes marcados) y el cliente. */
 export async function getDetalle(id: string): Promise<DetalleCompleto | null> {
   const detalle = await getDetalleBasico(id); if (!detalle) return null;
-  const [expedientes, clientes, centros] = await Promise.all([listarExpedientesLocal({ detalleId: id }), getClientes(), getCentrosCostoActivos()]);
-  // Una facturada ya no reserva (detalle_id se conserva); una anulada liberó: en ambos casos la lista sale del vínculo histórico.
+  const [pruebas, expedientes, clientes, centros] = await Promise.all([pruebasDeDetalle(id), listarExpedientesLocal({ detalleId: id }), getClientes(), getCentrosCostoActivos()]);
+  // Una facturada conserva detalle_id en sus pruebas (histórico); una anulada las liberó (la lista queda vacía).
   const c = clientes.find(x => x.activo !== false && nitComparable(x.nit) === detalle.nit) ?? clientes.find(x => nitComparable(x.nit) === detalle.nit);
-  return { detalle, expedientes, documento: documentoDetalle(expedientes), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '' };
+  return { detalle, expedientes, pruebas, documento: documentoDetalle(expedientes, pruebas), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '' };
 }
 
 export async function listarDetalles(f: { nit?: string; estados?: EstadoDetalle[]; limite?: number } = {}): Promise<DetalleFacturacion[]> {
@@ -133,9 +143,9 @@ export async function facturarDetalle(id: string, input: { noFactura: string; fe
   const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
   const d = await getDetalleBasico(id); if (!d) return { ok: false, error: 'El detalle no existe.' };
   if (d.estado !== 'aprobada') return { ok: false, error: `El detalle ${d.correlativo} está en "${d.estado}": solo se factura un detalle aprobado por el cliente.` };
-  const exps = await listarExpedientesLocal({ detalleId: id });
-  if (!exps.length) return { ok: false, error: 'El detalle no tiene expedientes.' };
-  const r = await emitirFacturaAgenda({ idsExternos: exps.map(e => e.idExterno), noFactura: input.noFactura, fechaEmision: input.fechaEmision, centroPorTipo: input.centroPorTipo, detalleId: id }, actor, { api: opts.api });
+  const pruebas = await pruebasDeDetalle(id);
+  if (!pruebas.length) return { ok: false, error: 'El detalle no tiene pruebas.' };
+  const r = await emitirFacturaAgenda({ componenteIds: pruebas.map(p => p.id), noFactura: input.noFactura, fechaEmision: input.fechaEmision, centroPorTipo: input.centroPorTipo, detalleId: id }, actor, { api: opts.api });
   if (!r.ok) return r;
   const { data } = await sb.from('detalle_facturacion').update({ estado: 'facturada', factura_app_id: r.facturaAppId, no_factura: r.noFactura, facturado_en: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', id).select('*').maybeSingle();
   // factura_id (uuid) desde la fila principal

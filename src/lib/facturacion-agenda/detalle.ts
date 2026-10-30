@@ -7,7 +7,8 @@
  * "no incluido" y el total refleja solo lo incluido.
  */
 import { dimTexto, conIva, round2 } from '@/lib/tarifario/canon';
-import type { ExpedienteLocal } from './tipos';
+import type { ExpedienteLocal, PruebaLocal } from './tipos';
+import { resultadoLegible } from './situacion';
 
 export type EstadoDetalle = 'borrador' | 'enviada' | 'aprobada' | 'facturada' | 'anulada';
 export type CanalAprobacion = 'correo' | 'link' | 'otro';
@@ -26,7 +27,7 @@ export const transicionValida = (de: EstadoDetalle, a: EstadoDetalle): boolean =
 
 export interface DetalleFacturacion {
   id: string; fuente: string; clienteId: string | null; nit: string; correlativo: string; estado: EstadoDetalle;
-  subtotal: number; iva: number; total: number; expedientes: number;
+  subtotal: number; iva: number; total: number; expedientes: number; /** 024: pruebas reservadas */ pruebas: number;
   creadoPor: string; createdAt: string;
   enviadaEn: string | null; enviadaPor: string;
   aprobadaEn: string | null; aprobadoPor: string; aprobadoCanal: CanalAprobacion | null;
@@ -36,27 +37,29 @@ export interface DetalleFacturacion {
 }
 
 export interface LineaDetalle {
-  idExterno: string; persona: string; puesto: string; fechaIngreso: string | null;
-  servicio: string; /** texto de los componentes (COMPLETO = polígrafo + socio) */ componentes: string;
+  idExterno: string; /** 024: la prueba (facturacion_componente.id) */ componenteId: string; persona: string; puesto: string; fechaIngreso: string | null;
+  servicio: string; /** 024: resultado legible para el cliente ("Polígrafo — aprobó") */ resultado: string; /** texto auxiliar (vacío en el cobro por prueba) */ componentes: string;
   categoria: string; territorio: string; monto: number;
   incluido: boolean; motivo: string;
 }
 
 export interface DocumentoDetalle { lineas: LineaDetalle[]; incluidas: LineaDetalle[]; faltantes: LineaDetalle[]; subtotal: number; iva: number; total: number }
 
-/** Arma el documento: solo las resueltas con precio suman; las demás quedan marcadas. */
-export function documentoDetalle(expedientes: readonly ExpedienteLocal[]): DocumentoDetalle {
-  const lineas: LineaDetalle[] = expedientes.map(e => {
-    const partes = e.componentes.length ? e.componentes : [];
-    const incluido = e.estadoTarifa === 'resuelta' && (e.montoCalculado ?? 0) > 0 && !e.eliminado && !e.cancelado;
-    const motivo = incluido ? '' : e.eliminado ? 'eliminado en la Agenda' : e.cancelado ? 'cancelado' : e.estadoTarifa === 'sin_tarifa' ? 'sin tarifa' : e.estadoTarifa === 'cliente_sin_mapear' ? 'cliente sin mapear' : e.estadoTarifa.startsWith('excluido') ? 'no se factura por este flujo' : 'sin precio';
-    const cat = partes.length ? partes.map(p => dimTexto(p.categoria)).filter(x => x !== '—')[0] ?? '—' : dimTexto(e.categoriaCanon);
-    const ter = partes.length ? partes.map(p => dimTexto(p.territorio)).filter(x => x !== '—')[0] ?? '—' : (e.territorioResuelto ? dimTexto(e.territorioResuelto) : '—');
+/**
+ * Arma el documento (024): UNA LÍNEA POR PRUEBA reservada en el detalle (persona + prueba + resultado).
+ * Solo las pruebas con resultado cobrable y precio suman; las demás quedan marcadas con el motivo.
+ * `pruebas` = las reservadas en el detalle; `expedientes` da persona / puesto / fecha.
+ */
+export function documentoDetalle(expedientes: readonly ExpedienteLocal[], pruebas: readonly PruebaLocal[]): DocumentoDetalle {
+  const porId = new Map(expedientes.map(e => [e.idExterno, e]));
+  const lineas: LineaDetalle[] = pruebas.map(p => {
+    const e = porId.get(p.idExterno);
+    const incluido = p.situacion === 'cobra' && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 && !!e && !e.eliminado;
+    const motivo = incluido ? '' : !e || e.eliminado ? 'eliminado en la Agenda' : p.situacion === 'no_cobra' ? `no se cobra (${p.motivo || 'cerrado'})` : p.situacion === 'pendiente' ? `sin resultado todavía (${p.estadoPrueba || 'pendiente'})` : p.estadoTarifa === 'sin_tarifa' ? 'sin tarifa' : p.estadoTarifa === 'cliente_sin_mapear' ? 'cliente sin mapear' : p.estadoTarifa.startsWith('excluido') ? 'no se factura por este flujo' : 'sin precio';
     return {
-      idExterno: e.idExterno, persona: e.persona || e.idExterno, puesto: e.puesto, fechaIngreso: e.fechaIngreso,
-      servicio: e.tipoCobrado || e.tipoPrueba || '—',
-      componentes: partes.length > 1 ? partes.map(p => `${p.tipoPrueba} Q${Number(p.monto).toFixed(2)}`).join(' + ') : '',
-      categoria: cat, territorio: ter, monto: incluido ? round2(e.montoCalculado ?? 0) : 0, incluido, motivo,
+      idExterno: p.idExterno, componenteId: p.id, persona: e?.persona || p.idExterno, puesto: e?.puesto ?? '', fechaIngreso: e?.fechaIngreso ?? null,
+      servicio: p.servicio, resultado: resultadoLegible(p.servicio, p.estadoPrueba), componentes: '',
+      categoria: dimTexto(p.categoria), territorio: dimTexto(p.territorio), monto: incluido ? round2(p.montoCalculado ?? 0) : 0, incluido, motivo,
     };
   });
   const incluidas = lineas.filter(l => l.incluido), faltantes = lineas.filter(l => !l.incluido);

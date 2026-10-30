@@ -4,7 +4,8 @@
  * empresa de la Agenda no está mapeada, por su empresa.id.
  */
 import { conIva, normalizarTexto, round2 } from '@/lib/tarifario/canon';
-import { conPrecio, enCola, facturable } from './mapeo';
+import { conPrecio, enCola, facturable, montoFacturable, pruebasEnCola, pruebasFacturables, pruebasPendientes } from './mapeo';
+import { servicioPorEstado } from './situacion';
 import { ESTADOS_EXCLUIDOS, type ExpedienteLocal } from './tipos';
 
 export interface GrupoCliente {
@@ -26,8 +27,10 @@ export interface GrupoCliente {
   facturados: number;
   writebackPendiente: number;
   conMegapaca: number;
-  /** 019: en cola pero ya reservados en un detalle de facturación. */
+  /** 019: pruebas cobrables ya reservadas en un detalle de facturación vivo. */
   enDetalle: number;
+  /** 024: pruebas que esperan resultado en la Agenda (informativo). */
+  pendientes: number;
   fechaIngresoMasAntigua: string | null;
 }
 
@@ -39,8 +42,8 @@ export function parseClave(clave: string): { tipo: 'nit'; nit: string } | { tipo
   return null;
 }
 
-/** Vigente para la pantalla: terminado, no cancelado, no eliminado, no psicométrica. */
-export const vigente = (e: ExpedienteLocal): boolean => e.terminado && !e.cancelado && !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa);
+/** Vigente para la pantalla: no eliminado, no excluido, y terminado (o con alguna prueba que se cobra por su propio estado: 024, el polígrafo de un expediente abierto). */
+export const vigente = (e: ExpedienteLocal): boolean => !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && ((e.terminado && !e.cancelado) || e.pruebas.some(p => servicioPorEstado(p.servicio)));
 
 export function agruparPorCliente(expedientes: readonly ExpedienteLocal[], razonPorNit: ReadonlyMap<string, string> = new Map()): GrupoCliente[] {
   const grupos = new Map<string, GrupoCliente>();
@@ -49,16 +52,21 @@ export function agruparPorCliente(expedientes: readonly ExpedienteLocal[], razon
     const clave = claveGrupo(e);
     let g = grupos.get(clave);
     if (!g) {
-      g = { clave, nit: e.nitResuelto, empresaIdExterno: e.empresaIdExterno, nombre: (e.nitResuelto && razonPorNit.get(e.nitResuelto)) || e.empresaNombreExterno || e.empresaIdExterno || '—', nombreExterno: e.empresaNombreExterno, expedientes: 0, listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, facturados: 0, writebackPendiente: 0, conMegapaca: 0, enDetalle: 0, fechaIngresoMasAntigua: null };
+      g = { clave, nit: e.nitResuelto, empresaIdExterno: e.empresaIdExterno, nombre: (e.nitResuelto && razonPorNit.get(e.nitResuelto)) || e.empresaNombreExterno || e.empresaIdExterno || '—', nombreExterno: e.empresaNombreExterno, expedientes: 0, listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, facturados: 0, writebackPendiente: 0, conMegapaca: 0, enDetalle: 0, pendientes: 0, fechaIngresoMasAntigua: null };
       grupos.set(clave, g);
     }
     g.expedientes++;
     if (e.facturaId) { g.facturados++; if (e.writebackEstado && e.writebackEstado !== 'confirmado' && e.writebackEstado !== 'omitido') g.writebackPendiente++; }
+    // 024: los conteos de la cola son por PRUEBA (misma definición que facturacion_agenda_resumen en SQL).
+    g.pendientes += pruebasPendientes(e).length;
+    g.enDetalle += e.pruebas.filter(p => p.situacion === 'cobra' && !p.facturaId && !!p.detalleId).length;
     if (enCola(e)) {
-      if (e.estadoTarifa === 'sin_tarifa') g.sinTarifa++;
-      if (e.estadoTarifa === 'cliente_sin_mapear') g.sinMapear++;
-      if (e.detalleId) g.enDetalle++;
-      if (conPrecio(e)) { g.listos++; g.totalSinIva = round2(g.totalSinIva + (e.montoCalculado ?? 0)); }
+      for (const p of pruebasEnCola(e)) {
+        if (p.estadoTarifa === 'sin_tarifa') g.sinTarifa++;
+        if (p.estadoTarifa === 'cliente_sin_mapear') g.sinMapear++;
+      }
+      const fact = pruebasFacturables(e);
+      if (fact.length) { g.listos += fact.length; g.totalSinIva = round2(g.totalSinIva + montoFacturable(e)); }
       if (e.fechaIngreso && (!g.fechaIngresoMasAntigua || e.fechaIngreso < g.fechaIngresoMasAntigua)) g.fechaIngresoMasAntigua = e.fechaIngreso;
     }
     if ((e.cobroMegapaca ?? 0) > 0) g.conMegapaca++;
@@ -69,21 +77,26 @@ export function agruparPorCliente(expedientes: readonly ExpedienteLocal[], razon
   return out.sort((a, b) => peso(a) - peso(b) || b.totalSinIva - a.totalSinIva || a.nombre.localeCompare(b.nombre, 'es'));
 }
 
-export interface KpisPorFacturar { listos: number; totalSinIva: number; totalConIva: number; sinTarifa: number; sinMapear: number; /** psicométricas vigentes */ excluidos: number; /** 018: expedientes de empresas marcadas "no se factura" */ excluidosNoFactura: number; facturados: number; writebackPendiente: number; clientes: number; clientesSinMapear: number }
+export interface KpisPorFacturar { /** 024: pruebas cobrables ahora (con precio, en cola) */ listos: number; totalSinIva: number; totalConIva: number; sinTarifa: number; sinMapear: number; /** psicométricas vigentes */ excluidos: number; /** 018: expedientes de empresas marcadas "no se factura" */ excluidosNoFactura: number; facturados: number; writebackPendiente: number; clientes: number; clientesSinMapear: number; /** 024: pruebas que esperan resultado (informativo) y expedientes con cobro parcial */ pendientes: number; pendientesExpedientes: number; parciales: number }
 
 export function kpisPorFacturar(expedientes: readonly ExpedienteLocal[]): KpisPorFacturar {
-  const k: KpisPorFacturar = { listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, excluidos: 0, excluidosNoFactura: 0, facturados: 0, writebackPendiente: 0, clientes: 0, clientesSinMapear: 0 };
+  const k: KpisPorFacturar = { listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, excluidos: 0, excluidosNoFactura: 0, facturados: 0, writebackPendiente: 0, clientes: 0, clientesSinMapear: 0, pendientes: 0, pendientesExpedientes: 0, parciales: 0 };
   const clientes = new Set<string>(); const sinMapear = new Set<string>();
   for (const e of expedientes) {
     if (e.estadoTarifa === 'excluido_psicometrica' && e.terminado && !e.cancelado && !e.eliminado) { k.excluidos++; continue; }
     if (e.estadoTarifa === 'excluido_no_factura' && e.terminado && !e.cancelado && !e.eliminado) { k.excluidosNoFactura++; continue; }
+    const pend = pruebasPendientes(e).length;
+    if (pend) { k.pendientes += pend; k.pendientesExpedientes++; }
+    if (e.writebackEstado === 'parcial') k.parciales++;
     if (!vigente(e)) continue;
     clientes.add(claveGrupo(e));
     if (e.facturaId) { k.facturados++; if (e.writebackEstado && !['confirmado', 'omitido'].includes(e.writebackEstado)) k.writebackPendiente++; }
     if (!enCola(e)) continue;
-    if (e.estadoTarifa === 'sin_tarifa') k.sinTarifa++;
-    if (e.estadoTarifa === 'cliente_sin_mapear') { k.sinMapear++; sinMapear.add(claveGrupo(e)); }
-    if (conPrecio(e)) { k.listos++; k.totalSinIva = round2(k.totalSinIva + (e.montoCalculado ?? 0)); }
+    for (const p of pruebasEnCola(e)) {
+      if (p.estadoTarifa === 'sin_tarifa') k.sinTarifa++;
+      if (p.estadoTarifa === 'cliente_sin_mapear') { k.sinMapear++; sinMapear.add(claveGrupo(e)); }
+    }
+    if (conPrecio(e)) { k.listos += pruebasFacturables(e).length; k.totalSinIva = round2(k.totalSinIva + montoFacturable(e)); }
   }
   k.totalConIva = conIva(k.totalSinIva).total;
   k.clientes = clientes.size; k.clientesSinMapear = sinMapear.size;
@@ -105,8 +118,9 @@ export function filtrarExpedientes(exps: readonly ExpedienteLocal[], f: { mes?: 
     if (!vigente(e)) return false;
     if (f.mes && mesDe(e.fechaIngreso) !== f.mes) return false;
     const cobro = f.cobro ?? 'por_facturar';
-    if (cobro === 'por_facturar' && !enCola(e)) return false;
-    if (cobro === 'facturados' && !(e.facturaId || !enCola(e))) return false;
+    // 024: "por facturar" = con alguna prueba en cola O con pruebas pendientes de resultado (se ven ⏳ para saber qué falta).
+    if (cobro === 'por_facturar' && !enCola(e) && !pruebasPendientes(e).length) return false;
+    if (cobro === 'facturados' && !(e.facturaId || e.pruebas.some(p => p.facturaId) || !enCola(e))) return false;
     if (f.soloListos && !facturable(e)) return false;
     return true;
   });

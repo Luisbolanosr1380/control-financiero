@@ -16,7 +16,7 @@ export function normalizarTexto(s: string | null | undefined): string {
 /** Solo letras y dígitos (para comparar variantes de grafía). */
 const compacto = (s: string | null | undefined) => normalizarTexto(s).replace(/[^A-Z0-9]/g, '');
 
-export const TIPOS_PRUEBA = ['POLIGRAFO', 'SOCIOECONOMICO', 'COMPLETO', 'POLIGRAFO BASIC', 'INFORNET', 'VISITA DOMICILIAR', 'ENTREVISTA FORENSE', 'SOCIOECONOMICO EMPRESARIAL', 'SOCIOECONOMICO VIRTUAL', 'PDA', 'ENTREVISTA GERENCIAL', 'ENTREVISTA ESPECIALISTA', 'INSIGHT', 'MIDOT', 'BACKGROUND CHECK'] as const;
+export const TIPOS_PRUEBA = ['POLIGRAFO', 'SOCIOECONOMICO', 'COMPLETO', 'POLIGRAFO BASIC', 'INFORNET', 'VISITA DOMICILIAR', 'ENTREVISTA FORENSE', 'SOCIOECONOMICO EMPRESARIAL', 'SOCIOECONOMICO VIRTUAL', 'PDA', 'ENTREVISTA GERENCIAL', 'ENTREVISTA ESPECIALISTA', 'INSIGHT', 'MIDOT', 'BACKGROUND CHECK', 'FEE VISITA SOCIO CANCELADO'] as const;
 export const CATEGORIAS   = ['PRE EMPLEO', 'RUTINA', 'ESPECIFICO'] as const;
 /** Categorías del socioeconómico (ESPECIFICO no aplica al socio): las usa la plantilla y la forma 'categoria'. */
 export const CATEGORIAS_SOCIO = ['PRE EMPLEO', 'RUTINA'] as const;
@@ -37,6 +37,7 @@ export type FormaPrecio = 'matriz' | 'territorio' | 'categoria' | 'unico';
 export const UNICA = 'UNICA';
 const FORMA_POR_TIPO: Record<string, FormaPrecio> = {
   'SOCIOECONOMICO EMPRESARIAL': 'territorio',
+  'FEE VISITA SOCIO CANCELADO': 'territorio',   // 024: socio cancelado con la visita/entrevista ya hecha → fee con tarifa propia (costo de visita: metro/depto)
   'SOCIOECONOMICO VIRTUAL': 'categoria',
   INFORNET: 'unico',
   'BACKGROUND CHECK': 'unico',   // confirmado por el CFO: sin versiones (ni categoría ni territorio); la Agenda manda PRE EMPLEO (y erratas) que se ignoran
@@ -78,6 +79,7 @@ export const TERRITORIOS  = ['METROPOLITANA', 'DEPARTAMENTAL'] as const;
 export function canonTipoPrueba(s: string | null | undefined): string {
   const c = compacto(s);
   if (!c) return '';
+  if (c.includes('FEE')) return 'FEE VISITA SOCIO CANCELADO';   // 024: fee del socio cancelado con visita realizada — ANTES de las reglas de SOCIO (el nombre lo contiene)
   if (c.includes('POLIGRAF') && c.includes('BASIC')) return 'POLIGRAFO BASIC';
   if (c.includes('COMPLET') || (c.includes('POLIGRAF') && c.includes('SOCIO'))) return 'COMPLETO';
   if (c.includes('POLIGRAF')) return 'POLIGRAFO';
@@ -92,7 +94,7 @@ export function canonTipoPrueba(s: string | null | undefined): string {
   if (c.includes('ESPECIALISTA')) return 'ENTREVISTA ESPECIALISTA';
   if (c.includes('INSIGHT'))  return 'INSIGHT';
   if (c.includes('MIDOT'))    return 'MIDOT';
-  if (c.includes('BACKGROUND')) return 'BACKGROUND CHECK';   // compacto quita espacios: cubre "BACK GROUND CHECK"
+  if (c.includes('BACKGROUND')) return 'BACKGROUND CHECK';
   if (/\bPDA\b/.test(normalizarTexto(s))) return 'PDA';
   return normalizarTexto(s);
 }

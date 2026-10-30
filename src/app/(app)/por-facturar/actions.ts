@@ -45,8 +45,8 @@ export async function mapearClienteAction(input: { empresaIdExterno: string; emp
   return r;
 }
 
-/** 019: generar el DETALLE (pre-liquidación) en borrador con los expedientes seleccionados; los reserva. */
-export async function crearDetalleAction(input: { idsExternos: string[]; notas?: string }): Promise<DetalleResult> {
+/** 019/024: generar el DETALLE (pre-liquidación) en borrador con las PRUEBAS seleccionadas; las reserva. */
+export async function crearDetalleAction(input: { idsExternos?: string[]; componenteIds?: string[]; notas?: string }): Promise<DetalleResult> {
   const permiso = await autorizar('facturar_agenda');
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await crearDetalle(input, permiso.email);

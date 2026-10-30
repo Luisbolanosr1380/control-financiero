@@ -45,14 +45,14 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
         {d.aprobadaEn && <div className="doc-mute">Aprobado por {d.aprobadoPor} ({d.aprobadoCanal}) el {formatearFechaCorta(d.aprobadaEn)}</div>}
       </section>
       <table className="doc-tabla">
-        <thead><tr><th>#</th><th>Persona</th><th>Ingreso</th><th>Servicio</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
+        <thead><tr><th>#</th><th>Persona</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
         <tbody>
           {doc.incluidas.map((l, i) => (
-            <tr key={l.idExterno}>
+            <tr key={l.componenteId || l.idExterno}>
               <td className="num">{i + 1}</td>
               <td>{l.persona}{l.puesto ? <div className="doc-mute">{l.puesto}</div> : null}</td>
               <td>{l.fechaIngreso ? formatearFechaCorta(l.fechaIngreso) : '—'}</td>
-              <td>{l.servicio}{l.componentes ? <div className="doc-mute">{l.componentes}</div> : null}</td>
+              <td>{l.resultado || l.servicio}</td>
               <td>{l.categoria}</td><td>{l.territorio}</td>
               <td className="num">{Q(l.monto)}</td>
             </tr>
@@ -68,7 +68,7 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
       {doc.faltantes.length > 0 && (
         <section style={{ marginTop: 18, fontSize: 12 }} data-faltantes>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>No incluidos en este detalle ({doc.faltantes.length})</div>
-          <ul style={{ margin: 0, paddingLeft: 18, color: '#555' }}>{doc.faltantes.map(l => <li key={l.idExterno}>{l.persona} · {l.servicio} · {l.motivo}</li>)}</ul>
+          <ul style={{ margin: 0, paddingLeft: 18, color: '#555' }}>{doc.faltantes.map(l => <li key={l.componenteId || l.idExterno}>{l.persona} · {l.resultado || l.servicio} · {l.motivo}</li>)}</ul>
         </section>
       )}
       {d.notas && <section style={{ marginTop: 18, fontSize: 12.5 }}><strong>Notas:</strong> {d.notas}</section>}

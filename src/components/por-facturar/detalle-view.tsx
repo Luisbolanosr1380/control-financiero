@@ -18,6 +18,7 @@ import { formatearFechaConHora } from '@/lib/utils/fechas';
 import { anularDetalleAction, facturarDetalleAction, marcarAprobadaAction, marcarEnviadaAction } from '@/app/(app)/por-facturar/actions';
 import { BADGE_ESTADO_DETALLE, ETIQUETA_ESTADO_DETALLE, type CanalAprobacion } from '@/lib/facturacion-agenda/detalle';
 import type { DetalleCompleto } from '@/lib/db/detalle-facturacion';
+import { pruebaParaFactura } from '@/lib/facturacion-agenda/mapeo';
 import { FacturarDialogo } from './facturar-dialogo';
 import { ReintentarWritebackButton } from './reintentar-writeback-button';
 
@@ -26,7 +27,7 @@ interface Props { datos: DetalleCompleto; writeback: boolean; configurada: boole
 export function DetalleView({ datos, writeback, configurada, montoModo }: Props) {
   const router = useRouter();
   const puede = usePuede()('facturar_agenda');
-  const { detalle: d, documento: doc, expedientes } = datos;
+  const { detalle: d, documento: doc, expedientes, pruebas } = datos;
   const [busy, setBusy] = useState(false);
   const [aprobando, setAprobando] = useState(false);
   const [quien, setQuien] = useState('');
@@ -91,7 +92,7 @@ export function DetalleView({ datos, writeback, configurada, montoModo }: Props)
             {d.estado === 'aprobada' && !anulando && <button className="btn btn-primary" onClick={() => setFacturando(true)} disabled={busy || doc.incluidas.length === 0} data-accion="facturar"><I.Receipt size={13} /> Facturar (SAT/FEL)</button>}
             {!anulando && <button className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={() => setAnulando(true)} disabled={busy} data-accion="anular">Anular detalle</button>}
             {anulando && <>
-              <span style={{ flex: 1, minWidth: 220 }}>Se anula <strong>{d.correlativo}</strong> y sus {d.expedientes} expediente(s) vuelven a la cola.</span>
+              <span style={{ flex: 1, minWidth: 220 }}>Se anula <strong>{d.correlativo}</strong> y sus {d.pruebas || d.expedientes} prueba(s) vuelven a la cola.</span>
               <input className="input" placeholder="Motivo (opcional)" value={motivo} onChange={e => setMotivo(e.target.value)} aria-label="Motivo de anulación" style={{ minWidth: 240 }} maxLength={300} disabled={busy} />
               <button className="btn btn-ghost" onClick={() => setAnulando(false)} disabled={busy}>Volver</button>
               <button className="btn btn-danger" onClick={() => void correr(() => anularDetalleAction(d.id, motivo), `${d.correlativo} anulado: los expedientes volvieron a la cola`).then(ok => { if (ok) setAnulando(false); })} disabled={busy} data-accion="confirmar-anular">Confirmar anulación</button>
@@ -101,22 +102,22 @@ export function DetalleView({ datos, writeback, configurada, montoModo }: Props)
       )}
 
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 14 }}>
-        <div className="kpi" data-kpi="procesos"><div className="kpi-label">Procesos incluidos</div><div className="kpi-value">{doc.incluidas.length}</div><div className="kpi-delta"><span className="vs">{doc.faltantes.length ? `${doc.faltantes.length} no incluido(s)` : 'todos con precio'}</span></div></div>
+        <div className="kpi" data-kpi="procesos"><div className="kpi-label">Pruebas incluidas</div><div className="kpi-value">{doc.incluidas.length}</div><div className="kpi-delta"><span className="vs">{doc.faltantes.length ? `${doc.faltantes.length} no incluido(s)` : 'todos con precio'}</span></div></div>
         <div className="kpi" data-kpi="subtotal"><div className="kpi-label">Subtotal sin IVA</div><div className="kpi-value">{Q(doc.subtotal)}</div><div className="kpi-delta"><span className="vs">del tarifario</span></div></div>
         <div className="kpi" data-kpi="iva"><div className="kpi-label">IVA 12 %</div><div className="kpi-value">{Q(doc.iva)}</div><div className="kpi-delta"><span className="vs">Guatemala</span></div></div>
         <div className="kpi" data-kpi="total"><div className="kpi-label">Total</div><div className="kpi-value">{Q(doc.total)}</div><div className="kpi-delta"><span className="vs">{doc.total !== d.total ? `al generar: ${Q(d.total)}` : 'igual que al generar'}</span></div></div>
       </div>
 
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="card-head"><div className="card-title">Procesos</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>una línea por proceso · un COMPLETO muestra sus componentes · montos sin IVA</span></div></div>
+        <div className="card-head"><div className="card-title">Pruebas</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>una línea por prueba con su resultado (un candidato puede tener solo el polígrafo acá) · montos sin IVA</span></div></div>
         <table className="table" data-lista="detalle">
-          <thead><tr><th>Persona</th><th>Ingreso</th><th>Servicio</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
+          <thead><tr><th>Persona</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
           <tbody>
             {doc.lineas.map(l => (
-              <tr key={l.idExterno} style={{ opacity: l.incluido ? 1 : 0.6 }} data-linea={l.incluido ? 'incluida' : 'faltante'}>
+              <tr key={l.componenteId || l.idExterno} style={{ opacity: l.incluido ? 1 : 0.6 }} data-linea={l.incluido ? 'incluida' : 'faltante'} data-prueba={l.componenteId}>
                 <td><div className="cell-strong">{l.persona}</div><div className="cell-mute" style={{ fontSize: 11 }}>{l.puesto || l.idExterno}</div></td>
                 <td className="num" style={{ fontSize: 12 }}>{l.fechaIngreso ?? '—'}</td>
-                <td>{l.servicio}{l.componentes ? <div className="cell-mute" style={{ fontSize: 11 }}>{l.componentes}</div> : null}</td>
+                <td><div>{l.resultado || l.servicio}</div>{l.resultado && l.resultado !== l.servicio ? <div className="cell-mute" style={{ fontSize: 11 }}>{l.servicio}</div> : null}</td>
                 <td>{l.categoria}</td><td>{l.territorio}</td>
                 <td className="num">{l.incluido ? <span className="cell-strong">{Q(l.monto)}</span> : <span className="badge badge-warn" style={{ fontSize: 10 }} title="No suma al total">no incluido · {l.motivo}</span>}</td>
               </tr>
@@ -129,7 +130,7 @@ export function DetalleView({ datos, writeback, configurada, montoModo }: Props)
 
       {facturando && d.estado === 'aprobada' && (
         <FacturarDialogo
-          seleccion={expedientes.filter(e => doc.incluidas.some(l => l.idExterno === e.idExterno))} centros={datos.centros} cliente={datos.clienteNombre} writeback={writeback} configurada={configurada} montoModo={montoModo}
+          seleccion={pruebas.filter(p => doc.incluidas.some(l => l.componenteId === p.id)).map(p => pruebaParaFactura(p, expedientes.find(e => e.idExterno === p.idExterno)?.persona ?? p.idExterno))} centros={datos.centros} cliente={datos.clienteNombre} writeback={writeback} configurada={configurada} montoModo={montoModo}
           contexto={`${d.correlativo} · aprobado por ${d.aprobadoPor}`}
           onClose={() => setFacturando(false)}
           onConfirmar={input => facturarDetalleAction(d.id, input)}

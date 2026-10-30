@@ -23,13 +23,14 @@ export function ProcesosAgendaSection({ noFactura, procesos, nombresCC = {} }: {
           {wb.pendientes > 0 && <span className="badge badge-warn" style={{ fontSize: 10 }} title={ETIQUETA_WRITEBACK.pendiente}>{wb.pendientes} falta confirmar</span>}
           {wb.conflictos > 0 && <span className="badge badge-wine" style={{ fontSize: 10 }} title={ETIQUETA_WRITEBACK.conflicto}>{wb.conflictos} conflicto{wb.conflictos === 1 ? '' : 's'}</span>}
           {wb.errores > 0 && <span className="badge badge-wine" style={{ fontSize: 10 }} title={ETIQUETA_WRITEBACK.error}>{wb.errores} error{wb.errores === 1 ? '' : 'es'}</span>}
+          {wb.parciales > 0 && <span className="badge badge-warn" style={{ fontSize: 10 }} title={ETIQUETA_WRITEBACK.parcial}>{wb.parciales} con otra prueba por cobrar</span>}
           {procesos.detalleFacturacion && <a className="btn btn-secondary" style={{ fontSize: 11, padding: '2px 8px' }} href={`/imprimir/detalle/${procesos.detalleFacturacion.id}`} target="_blank" rel="noopener" title={`Pre-liquidación ${procesos.detalleFacturacion.correlativo}${procesos.detalleFacturacion.aprobadoPor ? ` · aprobada por ${procesos.detalleFacturacion.aprobadoPor}` : ''}`} data-accion="imprimir-detalle">Imprimir detalle</a>}
           {pendientes > 0 && <ReintentarWritebackButton noFactura={noFactura} compacto />}
           {nit && <Link href={`/por-facturar/${encodeURIComponent('n-' + nit)}`} style={{ fontSize: 11.5, color: 'var(--ink-3)' }}>Ver cliente en Por facturar →</Link>}
         </div>
       </div>
       <table className="table">
-        <thead><tr><th>Persona</th><th>Expediente</th><th>Servicio</th><th>Categoría</th><th>Territorio</th><th>Centro de costo</th><th className="num">Monto sin IVA</th></tr></thead>
+        <thead><tr><th>Persona</th><th>Expediente</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th>Centro de costo</th><th className="num">Monto sin IVA</th></tr></thead>
         <tbody>
           {procesos.detalle.map(d => {
             const e = procesos.expedientes.find(x => x.idExterno === d.idExterno);
@@ -37,9 +38,9 @@ export function ProcesosAgendaSection({ noFactura, procesos, nombresCC = {} }: {
               <tr key={d.id}>
                 <td>{d.persona || e?.persona || '—'}</td>
                 <td className="num cell-mute" style={{ fontSize: 11 }}>{d.idExterno}</td>
-                <td>{d.tipoPrueba || '—'}</td>
-                <td>{d.categoria || '—'}</td>
-                <td>{d.territorio || '—'}</td>
+                <td>{d.resultado || d.tipoPrueba || '—'}{d.resultado && e?.writebackEstado === 'parcial' ? <div className="cell-mute" style={{ fontSize: 11 }}>el candidato tiene otra prueba por cobrar</div> : null}</td>
+                <td>{d.categoria === 'UNICA' ? '—' : d.categoria || '—'}</td>
+                <td>{d.territorio === 'UNICA' ? '—' : d.territorio || '—'}</td>
                 <td className="cell-mute" style={{ fontSize: 12 }}>{d.centroNombre || (d.centroCostoId ? nombresCC[d.centroCostoId] : '') || '—'}</td>
                 <td className="num">{Q(d.monto)}</td>
               </tr>

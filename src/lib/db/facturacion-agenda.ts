@@ -22,9 +22,11 @@ import { indiceAlias, nombreBase, resolverNit } from '@/lib/tarifario/lookup';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { configAgenda } from '@/lib/facturacion-agenda/config';
 import { AgendaApiError, crearAgendaApi, idsDe, resumirCuerpo, type AgendaApi, type LogSaliente } from '@/lib/facturacion-agenda/agenda-api';
-import { antesDelArranque, armarFactura, centroPorServicio, clasificarExpediente, conPrecio, expedienteALocal, montoParaAgenda, type ContextoPrecio } from '@/lib/facturacion-agenda/mapeo';
+import { antesDelArranque, armarFactura, centroPorServicio, clasificarExpediente, expedienteALocal, facturasDelExpediente, montoParaAgenda, pruebaEnCola, type ContextoPrecio, type PruebaCalculada, type PruebaParaFactura } from '@/lib/facturacion-agenda/mapeo';
+export { facturasDelExpediente };
 import { agruparPorCliente, kpisPorFacturar, parseClave, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
-import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type EmpresaNoFactura, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
+import { ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type EmpresaNoFactura, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type PruebaLocal, type Situacion, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
+import { servicioPorEstado } from '@/lib/facturacion-agenda/situacion';
 import { getTarifario } from './tarifario';
 import { getClientes } from './clientes';
 import { getCentrosCostoActivos, type CentroCosto } from './centros';
@@ -45,8 +47,21 @@ interface ExpRow {
   factura_id: string | null; factura_app_id: string | null; no_factura: string | null; facturado_en: string | null; facturado_por: string | null;
   writeback_estado: WritebackEstado | null; writeback_detalle: string | null; writeback_en: string | null; cobro_writeback_estado: string | null; cobro_writeback_detalle: string | null;
   detalle_id?: string | null;
+  /** 024 */ estado_poligrafo?: string | null; estado_socio?: string | null; pruebas_firma?: string | null;
   raw: unknown; updated_at: string | null;
 }
+
+/** 024: fila de facturacion_componente. */
+interface PruebaRow {
+  id: string; expediente_id: string; id_externo: string; servicio: string; estado_prueba: string | null; situacion: Situacion; motivo: string | null; categoria: string | null; territorio: string | null;
+  monto_calculado: number | string | null; estado_tarifa: EstadoTarifa; detalle_tarifa: string | null; tarifario_id: string | null; aprobada: boolean | null;
+  detalle_id: string | null; factura_id: string | null; no_factura: string | null; facturado_en: string | null; facturado_por: string | null;
+}
+const rowToPrueba = (r: PruebaRow): PruebaLocal => ({
+  id: r.id, expedienteId: r.expediente_id, idExterno: r.id_externo, servicio: r.servicio, estadoPrueba: r.estado_prueba ?? '', situacion: r.situacion, motivo: r.motivo ?? '', categoria: r.categoria ?? '', territorio: r.territorio ?? '',
+  montoCalculado: num(r.monto_calculado), estadoTarifa: r.estado_tarifa, detalleTarifa: r.detalle_tarifa ?? '', tarifarioId: r.tarifario_id, aprobada: r.aprobada,
+  detalleId: r.detalle_id, facturaId: r.factura_id, noFactura: r.no_factura, facturadoEn: r.facturado_en, facturadoPor: r.facturado_por,
+});
 const num = (v: number | string | null | undefined): number | null => (v === null || v === undefined ? null : Number(v));
 const txt = (v: string | null | undefined): string => v ?? '';
 /** `actualizadoEn` exacto del raw guardado (la Agenda compara el string que ella misma mandó). */
@@ -64,10 +79,11 @@ export const rowToLocal = (r: ExpRow): ExpedienteLocal => ({
   facturaId: r.factura_id, facturaAppId: r.factura_app_id, noFactura: r.no_factura, facturadoEn: r.facturado_en, facturadoPor: r.facturado_por,
   writebackEstado: r.writeback_estado, writebackDetalle: r.writeback_detalle, writebackEn: r.writeback_en, cobroWritebackEstado: r.cobro_writeback_estado, cobroWritebackDetalle: r.cobro_writeback_detalle,
   detalleId: r.detalle_id ?? null,
+  estadoPoligrafo: r.estado_poligrafo ?? null, estadoSocio: r.estado_socio ?? null, pruebas: [],
   updatedAt: r.updated_at,
 });
 
-type FilaEspejo = ReturnType<typeof expedienteALocal> & { clienteId: string | null; raw: unknown };
+type FilaEspejo = ReturnType<typeof expedienteALocal> & { clienteId: string | null; raw: unknown; /** 024 */ pruebasCalc: PruebaCalculada[] };
 const espejoARow = (l: FilaEspejo): Record<string, unknown> => ({
   fuente: FUENTE, id_externo: l.idExterno, empresa_id_externo: l.empresaIdExterno || null, empresa_nombre_externo: l.empresaNombreExterno || null, nit_resuelto: l.nitResuelto, cliente_id: l.clienteId,
   persona: l.persona || null, puesto: l.puesto || null, solicitante: l.solicitante || null, tipo_prueba: l.tipoPrueba || null, categoria_prueba: l.categoriaPrueba || null, proceso_solicitado: l.procesoSolicitado || null, depto_visita: l.deptoVisita || null,
@@ -76,6 +92,7 @@ const espejoARow = (l: FilaEspejo): Record<string, unknown> => ({
   status_cobro_externo: l.statusCobroExterno, estatus_pago_externo: l.estatusPagoExterno, monto_externo: l.montoExterno, numero_factura_externo: l.numeroFacturaExterno, fecha_factura_externo: l.fechaFacturaExterno, cobro_megapaca: l.cobroMegapaca, costo_visita: l.costoVisita,
   monto_calculado: l.montoCalculado, estado_tarifa: l.estadoTarifa, detalle_tarifa: l.detalleTarifa || null, componentes: l.componentes,
   creado_en_externo: l.creadoEnExterno, actualizado_en_externo: l.actualizadoEnExterno, raw: l.raw, updated_at: new Date().toISOString(),
+  estado_poligrafo: l.estadoPoligrafo, estado_socio: l.estadoSocio, pruebas_firma: l.pruebasFirma,
 });
 
 type Consulta = { range(a: number, b: number): PromiseLike<{ data: unknown; error: { message: string } | null }> };
@@ -239,26 +256,34 @@ export async function quitarNoFactura(empresaIdExterno: string, actor: string): 
 
 // ── Espejo de expedientes ───────────────────────────────────────────────────
 
-/** Guarda (upsert por fuente + id_externo) las filas espejo. NO toca factura_id ni los estados de write-back. */
+/**
+ * Guarda (upsert por fuente + id_externo) las filas espejo y, por lote, sus PRUEBAS (024, RPC
+ * facturacion_componentes_sincronizar: nunca pisa detalle_id / factura_id / facturado_*). NO toca
+ * factura_id ni los estados de write-back del expediente.
+ */
 export async function upsertExpedientes(filas: FilaEspejo[]): Promise<number> {
   const sb = supabase(); if (!sb) throw new Error('Supabase no está configurado.');
   let n = 0;
   for (let i = 0; i < filas.length; i += 200) {
-    const lote = filas.slice(i, i + 200).map(espejoARow);
+    const parte = filas.slice(i, i + 200);
+    const lote = parte.map(espejoARow);
     const { error } = await sb.from('facturacion_expediente').upsert(lote, { onConflict: 'fuente,id_externo' });
     if (error) throw new Error(`facturacion_expediente upsert: ${error.message}`);
+    const items = parte.map(f => ({ id_externo: f.idExterno, componentes: f.pruebasCalc.map(p => ({ servicio: p.servicio, estado_prueba: p.estadoPrueba, situacion: p.situacion, motivo: p.motivo, categoria: p.categoria, territorio: p.territorio, monto_calculado: p.monto, estado_tarifa: p.estadoTarifa, detalle_tarifa: p.detalleTarifa, tarifario_id: p.tarifarioId, aprobada: p.aprobada })) }));
+    const { error: eC } = await sb.rpc('facturacion_componentes_sincronizar', { p_fuente: FUENTE, p_items: items });
+    if (eC && !rpcNoExiste(eC)) throw new Error(`facturacion_componentes_sincronizar: ${eC.message}`);   // sin la 024: el espejo queda sin pruebas (la pantalla avisa)
     n += lote.length;
   }
   return n;
 }
 
-/** Clasifica (mapeo + tarifario) y guarda expedientes tal como vienen de la Agenda. */
+/** Clasifica (mapeo + tarifario + situación de cada prueba) y guarda expedientes tal como vienen de la Agenda. */
 export async function procesarExpedientes(exps: readonly ExpedienteAgenda[], ctx: Contexto): Promise<number> {
   const filas: FilaEspejo[] = [];
   for (const e of exps) {
     if (!e || typeof e !== 'object' || !e.id) continue;
     const c = clasificarExpediente(e, ctx);
-    filas.push({ ...expedienteALocal(e, c), clienteId: ctx.clienteUuidPorEmpresa.get(String(e.empresa?.id ?? '')) ?? null, raw: e });
+    filas.push({ ...expedienteALocal(e, c), clienteId: ctx.clienteUuidPorEmpresa.get(String(e.empresa?.id ?? '')) ?? null, raw: e, pruebasCalc: c.pruebas });
   }
   return filas.length ? upsertExpedientes(filas) : 0;
 }
@@ -271,9 +296,9 @@ export async function procesarExpedientes(exps: readonly ExpedienteAgenda[], ctx
 export async function reclasificar(filtro: { empresaIdExterno?: string; empresasIdExterno?: string[]; /** solo los expedientes ya resueltos a este NIT (tras tocar su tarifario) */ nit?: string } = {}, ctxDado?: Contexto): Promise<number> {
   const sb = supabase(); if (!sb) return 0;
   const ctx = ctxDado ?? await cargarContexto();
-  const rows = await paginar<{ id_externo: string; raw: ExpedienteAgenda | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; nit_resuelto: string | null; detalle_tarifa: string | null }>(() => {
-    // Solo la cola (terminados vigentes sin factura): lo demás se vuelve a clasificar cuando la Agenda lo cambie (sync).
-    let q = sb.from('facturacion_expediente').select('id_externo, raw, estado_tarifa, monto_calculado, nit_resuelto, detalle_tarifa').eq('fuente', FUENTE).is('factura_id', null).eq('terminado', true).eq('cancelado', false).eq('eliminado', false).order('id_externo');
+  const rows = await paginar<{ id_externo: string; raw: ExpedienteAgenda | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; nit_resuelto: string | null; detalle_tarifa: string | null; pruebas_firma?: string | null }>(() => {
+    // 024: todo lo vigente sin factura completa (también los no terminados: el polígrafo de un expediente abierto entra a la cola).
+    let q = sb.from('facturacion_expediente').select('id_externo, raw, estado_tarifa, monto_calculado, nit_resuelto, detalle_tarifa, pruebas_firma').eq('fuente', FUENTE).is('factura_id', null).eq('eliminado', false).order('id_externo');
     if (filtro.empresaIdExterno) q = q.eq('empresa_id_externo', filtro.empresaIdExterno);
     if (filtro.empresasIdExterno) q = q.in('empresa_id_externo', filtro.empresasIdExterno);
     if (filtro.nit) q = q.eq('nit_resuelto', filtro.nit);
@@ -283,27 +308,60 @@ export async function reclasificar(filtro: { empresaIdExterno?: string; empresas
   for (const r of rows) {
     if (!r.raw || typeof r.raw !== 'object') continue;
     const c = clasificarExpediente(r.raw, ctx);
-    if (c.estado !== r.estado_tarifa || (c.monto ?? null) !== num(r.monto_calculado) || (c.nit ?? null) !== (r.nit_resuelto ?? null) || c.detalle !== (r.detalle_tarifa ?? '')) cambiados.push(r.raw);
+    const l = expedienteALocal(r.raw, c);
+    if (c.estado !== r.estado_tarifa || (c.monto ?? null) !== num(r.monto_calculado) || (c.nit ?? null) !== (r.nit_resuelto ?? null) || c.detalle !== (r.detalle_tarifa ?? '') || l.pruebasFirma !== (r.pruebas_firma ?? '')) cambiados.push(r.raw);
   }
-  return cambiados.length ? procesarExpedientes(cambiados, ctx) : 0;
+  const n = cambiados.length ? await procesarExpedientes(cambiados, ctx) : 0;
+  await cerrarParciales().catch(e => console.error('cerrar parciales:', e));
+  return n;
 }
 
-export interface FiltroExpedientes { nit?: string; empresaIdExterno?: string; noFactura?: string; idsExternos?: string[]; detalleId?: string }
+/** 024: pruebas de una lista de expedientes (por id de app), en tandas. */
+async function pruebasDe(ids: readonly string[]): Promise<Map<string, PruebaLocal[]>> {
+  const sb = supabase(); const out = new Map<string, PruebaLocal[]>();
+  if (!sb || !ids.length) return out;
+  for (let i = 0; i < ids.length; i += 400) {
+    const { data, error } = await sb.from('facturacion_componente').select('*').in('expediente_id', ids.slice(i, i + 400)).order('servicio');
+    if (error) { if (/facturacion_componente/.test(error.message)) return out; throw new Error(`facturacion_componente: ${error.message}`); }   // sin la 024
+    for (const r of (data ?? []) as PruebaRow[]) { const p = rowToPrueba(r); (out.get(p.expedienteId) ?? out.set(p.expedienteId, []).get(p.expedienteId)!).push(p); }
+  }
+  return out;
+}
+/** Adjunta las pruebas (024) a los expedientes leídos. */
+async function conPruebas(exps: ExpedienteLocal[]): Promise<ExpedienteLocal[]> {
+  const m = await pruebasDe(exps.map(e => e.id));
+  for (const e of exps) e.pruebas = m.get(e.id) ?? [];
+  return exps;
+}
+
+export interface FiltroExpedientes { nit?: string; empresaIdExterno?: string; /** expedientes con alguna PRUEBA en esa factura (024) o con no_factura = esa */ noFactura?: string; idsExternos?: string[]; /** 024: expedientes con alguna prueba reservada en ese detalle */ detalleId?: string }
+
+/** 024: id_externo de los expedientes con pruebas en un detalle / una factura. */
+async function idsExternosPorPrueba(col: 'detalle_id' | 'no_factura', valor: string): Promise<string[]> {
+  const sb = supabase(); if (!sb) return [];
+  const { data, error } = await sb.from('facturacion_componente').select('id_externo').eq('fuente', FUENTE).eq(col, valor).limit(5000);
+  if (error) { if (/facturacion_componente/.test(error.message)) return []; throw new Error(`facturacion_componente: ${error.message}`); }
+  return [...new Set(((data ?? []) as { id_externo: string }[]).map(r => r.id_externo))];
+}
 
 export async function listarExpedientesLocal(f: FiltroExpedientes = {}): Promise<ExpedienteLocal[]> {
   const sb = supabase(); if (!sb) return [];
   try {
+    // 024: detalle y factura viven en las pruebas; se traducen a id_externo (se suman los expedientes con no_factura = esa, por compatibilidad).
+    let ids = f.idsExternos;
+    if (f.detalleId) { const porPrueba = await idsExternosPorPrueba('detalle_id', f.detalleId); ids = ids ? ids.filter(i => porPrueba.includes(i)) : porPrueba; if (!ids.length) return []; }
+    let orNoFactura: string | null = null;
+    if (f.noFactura) { const porPrueba = await idsExternosPorPrueba('no_factura', f.noFactura); orNoFactura = `no_factura.eq.${JSON.stringify(f.noFactura)}${porPrueba.length ? `,id_externo.in.(${porPrueba.map(i => JSON.stringify(i)).join(',')})` : ''}`; }
     const [rows, mapeos] = await Promise.all([paginar<ExpRow>(() => {
       let q = sb.from('facturacion_expediente').select('*').eq('fuente', FUENTE).order('fecha_ingreso', { ascending: false, nullsFirst: false }).order('id_externo');
       if (f.nit) q = q.eq('nit_resuelto', f.nit);
       if (f.empresaIdExterno) q = q.eq('empresa_id_externo', f.empresaIdExterno);
-      if (f.noFactura) q = q.eq('no_factura', f.noFactura);
-      if (f.idsExternos) q = q.in('id_externo', f.idsExternos);
-      if (f.detalleId) q = q.eq('detalle_id', f.detalleId);
+      if (orNoFactura) q = q.or(orNoFactura);
+      if (ids) q = q.in('id_externo', ids);
       return q;
     }, 'facturacion_expediente'), getMapeos()]);
     // 022: el corte de arranque del cliente se anota al leer (misma regla que facturacion_agenda_en_arranque en SQL).
-    return anotarArranque(rows.map(rowToLocal), arranquePorEmpresa(mapeos));
+    return anotarArranque(await conPruebas(rows.map(rowToLocal)), arranquePorEmpresa(mapeos));
   } catch (e) { console.error('listarExpedientesLocal:', e); return []; }
 }
 
@@ -446,11 +504,11 @@ export interface VistaPorFacturar {
 }
 
 interface ConteoEstado { estado_tarifa: EstadoTarifa; total: number; en_cola: number; empresas_en_cola: number }
-interface GrupoRpc { nit_resuelto: string; empresa_id_externo: string | null; empresa_nombre_externo: string | null; listos: number; total_sin_iva: number | string; sin_tarifa: number; con_megapaca: number; en_detalle?: number; fecha_mas_antigua: string | null }
+interface GrupoRpc { nit_resuelto: string; empresa_id_externo: string | null; empresa_nombre_externo: string | null; listos: number; total_sin_iva: number | string; sin_tarifa: number; con_megapaca: number; en_detalle?: number; fecha_mas_antigua: string | null; /** 024 */ pendientes?: number; expedientes?: number }
 interface FacturadoRpc { nit_resuelto: string | null; facturados: number; writeback_pendiente: number; con_megapaca: number }
 interface NoFacturaRpc { empresa_id_externo: string; empresa_nombre_externo: string | null; motivo_no_factura: string | null; creado_por: string | null; updated_at: string | null; expedientes: number }
 interface DetalleRpc { estado: string; n: number; total: number | string }
-interface ResumenRpc { conteos: ConteoEstado[]; grupos: GrupoRpc[]; facturados: FacturadoRpc[]; total: number; excluidos: number; /** 018 */ excluidos_no_factura?: number; no_facturan?: NoFacturaRpc[]; /** 019 */ detalles?: DetalleRpc[] }
+interface ResumenRpc { conteos: ConteoEstado[]; grupos: GrupoRpc[]; facturados: FacturadoRpc[]; total: number; excluidos: number; /** 018 */ excluidos_no_factura?: number; no_facturan?: NoFacturaRpc[]; /** 019 */ detalles?: DetalleRpc[]; /** 024 */ pendientes?: number; pendientes_expedientes?: number; parciales?: number; por_prueba?: boolean }
 
 const rpcNoExiste = (e: { code?: string; message: string }) => e.code === 'PGRST202' || /could not find the function|function .* does not exist/i.test(e.message);
 /** Filtro PostgREST de "en cola" (misma regla que enCola() y que facturacion_agenda_cobro_pendiente(status, pago) en SQL). */
@@ -469,31 +527,58 @@ const enColaSql = <T extends Filtrable>(q: T, arranque: ReadonlyMap<string, stri
 const vigenteSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq('cancelado', false).eq('eliminado', false);
 const ESTADOS: EstadoTarifa[] = ['resuelta', 'sin_tarifa', 'cliente_sin_mapear', 'excluido_psicometrica', 'excluido_no_factura'];
 
-/** Fallback sin la 017: los mismos agregados con consultas livianas (counts por HEAD + solo las filas de la cola facturable). */
+/** Fila de facturacion_componente con su expediente embebido (fallback sin RPC). */
+interface CompJoin { id: string; expediente_id: string; servicio: string; situacion: Situacion; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; detalle_id: string | null; factura_id: string | null; facturacion_expediente: { nit_resuelto: string | null; empresa_id_externo: string | null; empresa_nombre_externo: string | null; estado_tarifa: EstadoTarifa; terminado: boolean; cancelado: boolean; eliminado: boolean; fecha_ingreso: string | null; cobro_megapaca: number | string | null; status_cobro_externo: string | null; estatus_pago_externo: string | null } }
+const EXP_EMBED = 'facturacion_expediente!inner(nit_resuelto, empresa_id_externo, empresa_nombre_externo, estado_tarifa, terminado, cancelado, eliminado, fecha_ingreso, cobro_megapaca, status_cobro_externo, estatus_pago_externo)';
+
+/**
+ * Fallback sin la RPC de la 017/024: los mismos agregados con consultas livianas sobre las PRUEBAS
+ * (counts por HEAD + solo las pruebas 'cobra' sin factura con su expediente embebido). Misma regla
+ * de cola que facturacion_componente_en_cola.
+ */
 async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>, arranque: ReadonlyMap<string, string> = new Map()): Promise<ResumenRpc> {
-  const sel = (cols: string, head = false): QCola => (head ? sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }) : sb.from('facturacion_expediente').select(cols)).eq('fuente', FUENTE) as unknown as QCola;
-  const cuenta = async (arma: (q: QCola) => QCola): Promise<number> => { const { count, error } = await arma(sel('id', true)); if (error) throw new Error(error.message); return count ?? 0; };
+  const selExp = (cols: string, head = false): QCola => (head ? sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }) : sb.from('facturacion_expediente').select(cols)).eq('fuente', FUENTE) as unknown as QCola;
+  const cuentaExp = async (arma: (q: QCola) => QCola): Promise<number> => { const { count, error } = await arma(selExp('id', true)); if (error) throw new Error(error.message); return count ?? 0; };
+  const cuentaComp = async (arma: (q: QCola) => QCola): Promise<number> => { const { count, error } = await arma(sb.from('facturacion_componente').select('id', { count: 'exact', head: true }).eq('fuente', FUENTE) as unknown as QCola); if (error) { if (/facturacion_componente/.test(error.message)) return 0; throw new Error(error.message); } return count ?? 0; };
+  // Pruebas cobrables sin factura, con su expediente: de acá sale la cola (en memoria: arranque, cobro pendiente, detalle vivo).
+  let comps: CompJoin[] = [];
+  try {
+    comps = await paginar<CompJoin>(() => sb.from('facturacion_componente').select(`id, expediente_id, servicio, situacion, estado_tarifa, monto_calculado, detalle_id, factura_id, ${EXP_EMBED}`).eq('fuente', FUENTE).eq('situacion', 'cobra').is('factura_id', null).eq('facturacion_expediente.eliminado', false).order('id'), 'cola (pruebas)');
+  } catch (e) { if (!/facturacion_componente/.test(e instanceof Error ? e.message : String(e))) throw e; }
+  const detallesVivos = new Set<string>(); const anulados = new Set<string>();
+  const idsDet = [...new Set(comps.map(c => c.detalle_id).filter((x): x is string => !!x))];
+  if (idsDet.length) { const { data } = await sb.from('detalle_facturacion').select('id, estado').in('id', idsDet); for (const d of (data ?? []) as { id: string; estado: string }[]) (d.estado === 'anulada' ? anulados : d.estado === 'facturada' ? new Set<string>() : detallesVivos).add(d.id); }
+  const { cobroPendiente } = await import('@/lib/facturacion-agenda/mapeo');
+  const enColaDe = (c: CompJoin): boolean => { const e = c.facturacion_expediente; const d = arranque.get(e.empresa_id_externo ?? ''); return (!c.detalle_id || anulados.has(c.detalle_id)) && !['excluido_psicometrica', 'excluido_no_factura'].includes(e.estado_tarifa) && cobroPendiente(e.status_cobro_externo, e.estatus_pago_externo) && !(d && antesDelArranque(e.fecha_ingreso, d)) && (servicioPorEstado(c.servicio) || (e.terminado && !e.cancelado)); };
+  const cola = comps.filter(enColaDe);
   const conteos: ConteoEstado[] = [];
   for (const estado of ESTADOS) {
-    const [total, en_cola] = await Promise.all([cuenta(q => q.eq('estado_tarifa', estado)), cuenta(q => enColaSql(q.eq('estado_tarifa', estado), arranque))]);
-    conteos.push({ estado_tarifa: estado, total, en_cola, empresas_en_cola: 0 });
+    const total = await cuentaComp(q => q.eq('estado_tarifa', estado));
+    const enC = cola.filter(c => c.estado_tarifa === estado);
+    conteos.push({ estado_tarifa: estado, total, en_cola: enC.length, empresas_en_cola: new Set(enC.map(c => c.facturacion_expediente.empresa_id_externo ?? '')).size });
   }
-  const sinMapear = await paginar<{ empresa_id_externo: string | null }>(() => enColaSql(sel('empresa_id_externo').eq('estado_tarifa', 'cliente_sin_mapear'), arranque).order('id_externo'), 'sin mapear');
-  const c = conteos.find(x => x.estado_tarifa === 'cliente_sin_mapear'); if (c) c.empresas_en_cola = new Set(sinMapear.map(r => r.empresa_id_externo ?? '')).size;
-  const colaRows = await paginarTolerante<{ nit_resuelto: string | null; empresa_id_externo: string | null; empresa_nombre_externo: string | null; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; cobro_megapaca: number | string | null; fecha_ingreso: string | null; detalle_id?: string | null }>(() =>
-    enColaSql(sel('nit_resuelto, empresa_id_externo, empresa_nombre_externo, estado_tarifa, monto_calculado, cobro_megapaca, fecha_ingreso, detalle_id').in('estado_tarifa', ['resuelta', 'sin_tarifa']), arranque).order('id_externo'), 'cola');
   const grupos = new Map<string, GrupoRpc>();
-  for (const r of colaRows) {
-    if (!r.nit_resuelto) continue;
-    const g = grupos.get(r.nit_resuelto) ?? { nit_resuelto: r.nit_resuelto, empresa_id_externo: r.empresa_id_externo, empresa_nombre_externo: r.empresa_nombre_externo, listos: 0, total_sin_iva: 0, sin_tarifa: 0, con_megapaca: 0, en_detalle: 0, fecha_mas_antigua: null };
-    if (r.detalle_id) g.en_detalle = (g.en_detalle ?? 0) + 1;
-    if (r.estado_tarifa === 'resuelta' && Number(r.monto_calculado ?? 0) > 0) { g.listos++; g.total_sin_iva = Math.round((Number(g.total_sin_iva) + Number(r.monto_calculado)) * 100) / 100; }
-    if (r.estado_tarifa === 'sin_tarifa') g.sin_tarifa++;
-    if (Number(r.cobro_megapaca ?? 0) > 0) g.con_megapaca++;
-    if (r.fecha_ingreso && (!g.fecha_mas_antigua || r.fecha_ingreso < g.fecha_mas_antigua)) g.fecha_mas_antigua = r.fecha_ingreso;
-    grupos.set(r.nit_resuelto, g);
+  const expsPorNit = new Map<string, Set<string>>(); const megaPorNit = new Map<string, Set<string>>();
+  for (const c of cola) {
+    const e = c.facturacion_expediente; const nit = e.nit_resuelto;
+    if (!nit || !['resuelta', 'sin_tarifa'].includes(c.estado_tarifa)) continue;
+    const g = grupos.get(nit) ?? { nit_resuelto: nit, empresa_id_externo: e.empresa_id_externo, empresa_nombre_externo: e.empresa_nombre_externo, listos: 0, total_sin_iva: 0, sin_tarifa: 0, con_megapaca: 0, en_detalle: 0, fecha_mas_antigua: null, pendientes: 0, expedientes: 0 };
+    if (g.empresa_id_externo === null || (e.empresa_id_externo && e.empresa_id_externo < g.empresa_id_externo)) { g.empresa_id_externo = e.empresa_id_externo; }
+    if (g.empresa_nombre_externo === null || (e.empresa_nombre_externo && e.empresa_nombre_externo < g.empresa_nombre_externo)) g.empresa_nombre_externo = e.empresa_nombre_externo;
+    if (c.estado_tarifa === 'resuelta' && Number(c.monto_calculado ?? 0) > 0) { g.listos++; g.total_sin_iva = Math.round((Number(g.total_sin_iva) + Number(c.monto_calculado)) * 100) / 100; }
+    if (c.estado_tarifa === 'sin_tarifa') g.sin_tarifa++;
+    (expsPorNit.get(nit) ?? expsPorNit.set(nit, new Set()).get(nit)!).add(c.expediente_id);
+    if (Number(e.cobro_megapaca ?? 0) > 0) (megaPorNit.get(nit) ?? megaPorNit.set(nit, new Set()).get(nit)!).add(c.expediente_id);
+    if (e.fecha_ingreso && (!g.fecha_mas_antigua || e.fecha_ingreso < g.fecha_mas_antigua)) g.fecha_mas_antigua = e.fecha_ingreso;
+    grupos.set(nit, g);
   }
-  const factRows = await paginar<{ nit_resuelto: string | null; writeback_estado: string | null; cobro_megapaca: number | string | null }>(() => vigenteSql(sel('nit_resuelto, writeback_estado, cobro_megapaca').not('factura_id', 'is', null)).order('id_externo'), 'facturados');
+  for (const [nit, g] of grupos) { g.expedientes = expsPorNit.get(nit)?.size ?? 0; g.con_megapaca = megaPorNit.get(nit)?.size ?? 0; }
+  for (const c of comps) { const nit = c.facturacion_expediente.nit_resuelto; const g = nit ? grupos.get(nit) : null; if (g && c.detalle_id && detallesVivos.has(c.detalle_id)) g.en_detalle = (g.en_detalle ?? 0) + 1; }
+  // Pendientes de resultado (informativo), por NIT y total.
+  let pendRows: { expediente_id: string; facturacion_expediente: { nit_resuelto: string | null; eliminado: boolean } }[] = [];
+  try { pendRows = await paginar(() => sb.from('facturacion_componente').select('expediente_id, facturacion_expediente!inner(nit_resuelto, eliminado)').eq('fuente', FUENTE).eq('situacion', 'pendiente').is('factura_id', null).eq('facturacion_expediente.eliminado', false).order('id'), 'pendientes'); } catch { /* sin la 024 */ }
+  for (const r of pendRows) { const g = r.facturacion_expediente.nit_resuelto ? grupos.get(r.facturacion_expediente.nit_resuelto) : null; if (g) g.pendientes = (g.pendientes ?? 0) + 1; }
+  const factRows = await paginar<{ nit_resuelto: string | null; writeback_estado: string | null; cobro_megapaca: number | string | null }>(() => selExp('nit_resuelto, writeback_estado, cobro_megapaca').eq('eliminado', false).not('factura_id', 'is', null).order('id_externo'), 'facturados');
   const fact = new Map<string, FacturadoRpc>();
   for (const r of factRows) {
     const k = r.nit_resuelto ?? '';
@@ -501,10 +586,10 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>, arran
     f.facturados++; if (!r.writeback_estado || !['confirmado', 'omitido'].includes(r.writeback_estado)) f.writeback_pendiente++; if (Number(r.cobro_megapaca ?? 0) > 0) f.con_megapaca++;
     fact.set(k, f);
   }
-  const [total, excluidos, excluidosNoFactura] = await Promise.all([cuenta(q => q), cuenta(q => vigenteSql(q.eq('estado_tarifa', 'excluido_psicometrica'))), cuenta(q => vigenteSql(q.eq('estado_tarifa', 'excluido_no_factura')))]);
+  const [total, excluidos, excluidosNoFactura, parciales] = await Promise.all([cuentaExp(q => q), cuentaExp(q => vigenteSql(q.eq('estado_tarifa', 'excluido_psicometrica'))), cuentaExp(q => vigenteSql(q.eq('estado_tarifa', 'excluido_no_factura'))), cuentaExp(q => q.eq('writeback_estado', 'parcial'))]);
   const noFacturan: NoFacturaRpc[] = [];
   for (const m of (await getMapeos()).filter(m => m.activo && m.noFactura)) {
-    noFacturan.push({ empresa_id_externo: m.empresaIdExterno, empresa_nombre_externo: m.empresaNombreExterno, motivo_no_factura: m.motivoNoFactura, creado_por: m.creadoPor, updated_at: null, expedientes: await cuenta(q => vigenteSql(q.eq('estado_tarifa', 'excluido_no_factura').eq('empresa_id_externo', m.empresaIdExterno))) });
+    noFacturan.push({ empresa_id_externo: m.empresaIdExterno, empresa_nombre_externo: m.empresaNombreExterno, motivo_no_factura: m.motivoNoFactura, creado_por: m.creadoPor, updated_at: null, expedientes: await cuentaExp(q => vigenteSql(q.eq('estado_tarifa', 'excluido_no_factura').eq('empresa_id_externo', m.empresaIdExterno))) });
   }
   noFacturan.sort((a, b) => b.expedientes - a.expedientes || (a.empresa_nombre_externo ?? '').localeCompare(b.empresa_nombre_externo ?? '', 'es'));
   const detalles: DetalleRpc[] = [];
@@ -512,7 +597,7 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>, arran
     const { data } = await sb.from('detalle_facturacion').select('estado, total').eq('fuente', FUENTE).limit(5000);
     for (const d of (data ?? []) as { estado: string; total: number | string }[]) { const x = detalles.find(y => y.estado === d.estado) ?? (detalles.push({ estado: d.estado, n: 0, total: 0 }), detalles[detalles.length - 1]); x.n++; x.total = Math.round((Number(x.total) + Number(d.total)) * 100) / 100; }
   } catch { /* sin la 019 */ }
-  return { conteos, grupos: [...grupos.values()], facturados: [...fact.values()], total, excluidos, excluidos_no_factura: excluidosNoFactura, no_facturan: noFacturan, detalles };
+  return { conteos, grupos: [...grupos.values()], facturados: [...fact.values()], total, excluidos, excluidos_no_factura: excluidosNoFactura, no_facturan: noFacturan, detalles, pendientes: pendRows.length, pendientes_expedientes: new Set(pendRows.map(r => r.expediente_id)).size, parciales, por_prueba: true };
 }
 
 /**
@@ -536,12 +621,12 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
   const porNit = new Map<string, GrupoCliente>();
   const base = (nit: string | null, emp: string | null, nombreExt: string | null): GrupoCliente => ({
     clave: nit ? `n-${nit}` : `e-${emp ?? ''}`, nit, empresaIdExterno: emp ?? '', nombre: (nit && razon.get(nit)) || nombreExt || emp || '—', nombreExterno: nombreExt ?? '',
-    expedientes: 0, listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, facturados: 0, writebackPendiente: 0, conMegapaca: 0, enDetalle: 0, fechaIngresoMasAntigua: null,
+    expedientes: 0, listos: 0, totalSinIva: 0, totalConIva: 0, sinTarifa: 0, sinMapear: 0, facturados: 0, writebackPendiente: 0, conMegapaca: 0, enDetalle: 0, pendientes: 0, fechaIngresoMasAntigua: null,
   });
   for (const g of r.grupos) {
     const x = porNit.get(g.nit_resuelto) ?? base(g.nit_resuelto, g.empresa_id_externo, g.empresa_nombre_externo);
-    x.listos += Number(g.listos); x.totalSinIva = Math.round((x.totalSinIva + Number(g.total_sin_iva)) * 100) / 100; x.sinTarifa += Number(g.sin_tarifa); x.conMegapaca += Number(g.con_megapaca); x.enDetalle += Number(g.en_detalle ?? 0);
-    x.expedientes += Number(g.listos) + Number(g.sin_tarifa);
+    x.listos += Number(g.listos); x.totalSinIva = Math.round((x.totalSinIva + Number(g.total_sin_iva)) * 100) / 100; x.sinTarifa += Number(g.sin_tarifa); x.conMegapaca += Number(g.con_megapaca); x.enDetalle += Number(g.en_detalle ?? 0); x.pendientes += Number(g.pendientes ?? 0);
+    x.expedientes += g.expedientes !== undefined ? Number(g.expedientes) : Number(g.listos) + Number(g.sin_tarifa);
     if (g.fecha_mas_antigua && (!x.fechaIngresoMasAntigua || g.fecha_mas_antigua < x.fechaIngresoMasAntigua)) x.fechaIngresoMasAntigua = g.fecha_mas_antigua;
     porNit.set(g.nit_resuelto, x);
   }
@@ -566,6 +651,7 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
     writebackPendiente: r.facturados.reduce((s, f) => s + Number(f.writeback_pendiente), 0),
     clientes: grupos.length,
     clientesSinMapear: Number(c('cliente_sin_mapear')?.empresas_en_cola ?? 0),
+    pendientes: Number(r.pendientes ?? 0), pendientesExpedientes: Number(r.pendientes_expedientes ?? 0), parciales: Number(r.parciales ?? 0),
   };
   const noFacturan: EmpresaNoFactura[] = (r.no_facturan ?? []).map(n => ({ empresaIdExterno: n.empresa_id_externo, empresaNombreExterno: n.empresa_nombre_externo ?? '', motivo: n.motivo_no_factura ?? '', expedientes: Number(n.expedientes ?? 0), marcadoPor: n.creado_por ?? '', marcadoEn: n.updated_at ?? null }));
   const agenda = nombresAgendaPorNit(mapeos);
@@ -593,10 +679,14 @@ export async function empresasSinMapear(opts: { q?: string; limite?: number; des
     }
     if (error && !rpcNoExiste(error)) console.error('facturacion_agenda_sin_mapear:', error.message);
   }
-  // Fallback sin la 017: solo 3 columnas de las filas sin mapear en cola, agregadas en memoria (022: respeta el corte de arranque).
+  // Fallback sin la RPC: las pruebas 'cobra' sin mapear con su expediente, agregadas en memoria por empresa (misma regla de cola; 022: respeta el corte).
   const arranque = arranquePorEmpresa(await getMapeos());
-  const rows = await paginar<{ empresa_id_externo: string | null; empresa_nombre_externo: string | null; fecha_ingreso: string | null }>(() =>
-    enColaSql((sb.from('facturacion_expediente').select('empresa_id_externo, empresa_nombre_externo, fecha_ingreso').eq('fuente', FUENTE) as unknown as QCola).eq('estado_tarifa', 'cliente_sin_mapear'), arranque).order('id_externo'), 'sin mapear');
+  const { cobroPendiente } = await import('@/lib/facturacion-agenda/mapeo');
+  let comps: CompJoin[] = [];
+  try { comps = await paginar<CompJoin>(() => sb.from('facturacion_componente').select(`id, expediente_id, servicio, situacion, estado_tarifa, monto_calculado, detalle_id, factura_id, ${EXP_EMBED}`).eq('fuente', FUENTE).eq('situacion', 'cobra').eq('estado_tarifa', 'cliente_sin_mapear').is('factura_id', null).is('detalle_id', null).eq('facturacion_expediente.eliminado', false).order('id'), 'sin mapear (pruebas)'); } catch { /* sin la 024 */ }
+  const vistos = new Set<string>();
+  const rows = comps.filter(c => { const e = c.facturacion_expediente; const d = arranque.get(e.empresa_id_externo ?? ''); return cobroPendiente(e.status_cobro_externo, e.estatus_pago_externo) && !(d && antesDelArranque(e.fecha_ingreso, d)) && (servicioPorEstado(c.servicio) || (e.terminado && !e.cancelado)); })
+    .filter(c => !vistos.has(c.expediente_id) && vistos.add(c.expediente_id)).map(c => c.facturacion_expediente);
   const emp = new Map<string, EmpresaSinMapear>();
   for (const r of rows) {
     const k = r.empresa_id_externo ?? '';
@@ -668,11 +758,29 @@ export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
 
 // ── Emitir la factura ───────────────────────────────────────────────────────
 
-export interface EmitirInput { idsExternos: string[]; noFactura: string; fechaEmision: string; /** tipo de prueba canónico → centro de costo (id de app) elegido en el diálogo */ centroPorTipo?: Record<string, string>; /** 019: detalle APROBADO por el cliente del que salen exactamente estos expedientes (obligatorio). */ detalleId?: string }
+export interface EmitirInput {
+  /** Compatibilidad: expedientes elegidos → TODAS sus pruebas facturables del detalle. */
+  idsExternos?: string[];
+  /** 024: las pruebas (facturacion_componente.id) que cubre la factura: exactamente las del detalle. */
+  componenteIds?: string[];
+  noFactura: string; fechaEmision: string;
+  /** tipo de prueba canónico → centro de costo (id de app) elegido en el diálogo */
+  centroPorTipo?: Record<string, string>;
+  /** 019: detalle APROBADO por el cliente del que salen exactamente estas pruebas (obligatorio). */
+  detalleId?: string;
+}
 export interface WritebackResultado { estado: WritebackEstado; detalle: string }
 export type EmitirResult =
-  | { ok: true; noFactura: string; facturaAppId: string; expedientes: number; lineas: number; subtotal: number; iva: number; total: number; writeback: WritebackResultado }
+  | { ok: true; noFactura: string; facturaAppId: string; expedientes: number; /** 024: pruebas facturadas y expedientes que quedaron completos */ pruebas: number; completos: number; lineas: number; subtotal: number; iva: number; total: number; writeback: WritebackResultado }
   | { ok: false; error: string };
+
+/** 024: pruebas reservadas en un detalle (facturacion_componente.detalle_id). */
+export async function pruebasDeDetalle(detalleId: string): Promise<PruebaLocal[]> {
+  const sb = supabase(); if (!sb || !detalleId) return [];
+  const { data, error } = await sb.from('facturacion_componente').select('*').eq('detalle_id', detalleId).order('id_externo').order('servicio');
+  if (error) { if (/facturacion_componente/.test(error.message)) return []; throw new Error(`facturacion_componente: ${error.message}`); }
+  return ((data ?? []) as PruebaRow[]).map(rowToPrueba);
+}
 
 export async function emitirFacturaAgenda(input: EmitirInput, actor: string, opts: { api?: AgendaApi } = {}): Promise<EmitirResult> {
   const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
@@ -682,26 +790,32 @@ export async function emitirFacturaAgenda(input: EmitirInput, actor: string, opt
   const fecha = String(input.fechaEmision ?? '').trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(fecha) || Number.isNaN(Date.parse(fecha))) return { ok: false, error: 'La fecha de la factura debe ser AAAA-MM-DD.' };
   if (fecha > obtenerFechaHoyGuatemala()) return { ok: false, error: 'La fecha de la factura no puede ser futura.' };
-  const ids = [...new Set((input.idsExternos ?? []).map(s => String(s).trim()).filter(Boolean))];
-  if (!ids.length) return { ok: false, error: 'Elegí al menos un expediente.' };
-  if (ids.length > 200) return { ok: false, error: 'Una factura cubre hasta 200 expedientes (límite de la Agenda).' };
-
-  const exps = await listarExpedientesLocal({ idsExternos: ids });
-  if (exps.length !== ids.length) return { ok: false, error: 'Algún expediente ya no está en la cola: recargá la pantalla.' };
-  // 019: todo lo de la Agenda se factura desde un DETALLE aprobado por el cliente, y con exactamente sus expedientes.
+  // 019: todo lo de la Agenda se factura desde un DETALLE aprobado por el cliente, y con exactamente sus pruebas (024).
   if (!input.detalleId) return { ok: false, error: 'Los expedientes de la Agenda se facturan desde un detalle de facturación aprobado por el cliente.' };
-  const { data: det, error: errDet } = await sb!.from('detalle_facturacion').select('id, estado, correlativo').eq('id', input.detalleId).maybeSingle();
+  const { data: det, error: errDet } = await sb.from('detalle_facturacion').select('id, estado, correlativo').eq('id', input.detalleId).maybeSingle();
   const detalle = det as { id: string; estado: string; correlativo: string } | null;
   if (errDet || !detalle) return { ok: false, error: 'El detalle de facturación no existe.' };
   if (detalle.estado !== 'aprobada') return { ok: false, error: `El detalle ${detalle.correlativo} está en "${detalle.estado}": solo se factura un detalle aprobado por el cliente.` };
-  const enDetalle = await listarExpedientesLocal({ detalleId: detalle.id });
-  const setDet = new Set(enDetalle.map(e => e.idExterno));
-  if (enDetalle.length !== ids.length || !ids.every(id => setDet.has(id))) return { ok: false, error: `La factura debe cubrir exactamente los ${enDetalle.length} expedientes del detalle ${detalle.correlativo}.` };
-  for (const e of exps) {
-    if (!conPrecio(e)) return { ok: false, error: `${e.persona || e.idExterno}: ${e.facturaId ? `ya está en la factura ${e.noFactura}` : ETIQUETA_ESTADO_TARIFA[e.estadoTarifa] + (e.estadoTarifa === 'resuelta' ? ' (sin monto o con cobro ya resuelto en la Agenda)' : '')}. Solo se facturan expedientes resueltos y en cola.` };
+  const enDetalle = await pruebasDeDetalle(detalle.id);
+  if (!enDetalle.length) return { ok: false, error: `El detalle ${detalle.correlativo} no tiene pruebas reservadas.` };
+  const setDet = new Set(enDetalle.map(p => p.id));
+  const pedidas = input.componenteIds ? [...new Set(input.componenteIds.map(String))] : input.idsExternos ? enDetalle.filter(p => input.idsExternos!.includes(p.idExterno)).map(p => p.id) : [...setDet];
+  if (!pedidas.length) return { ok: false, error: 'Elegí al menos una prueba.' };
+  if (pedidas.length > 200) return { ok: false, error: 'Una factura cubre hasta 200 pruebas (límite de la Agenda).' };
+  if (pedidas.length !== enDetalle.length || !pedidas.every(id => setDet.has(id))) return { ok: false, error: `La factura debe cubrir exactamente las ${enDetalle.length} pruebas del detalle ${detalle.correlativo}.` };
+  const exps = await listarExpedientesLocal({ idsExternos: [...new Set(enDetalle.map(p => p.idExterno))] });
+  const porId = new Map(exps.map(e => [e.idExterno, e]));
+  const pruebas: PruebaParaFactura[] = [];
+  for (const p0 of enDetalle) {
+    const e = porId.get(p0.idExterno);
+    const p = e?.pruebas.find(x => x.id === p0.id);
+    if (!e || !p) return { ok: false, error: 'Alguna prueba ya no está en el espejo: recargá la pantalla.' };
+    const cobrable = p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 && pruebaEnCola({ ...p, detalleId: null }, e);
+    if (!cobrable) return { ok: false, error: `${e.persona || e.idExterno} · ${p.servicio}: ${p.facturaId ? `ya está en la factura ${p.noFactura}` : p.situacion !== 'cobra' ? `${p.situacion === 'pendiente' ? 'sin resultado todavía' : 'no se cobra'} (${p.motivo})` : p.estadoTarifa !== 'resuelta' ? 'sin tarifa' : 'el cobro ya no está pendiente en la Agenda'}. Solo se facturan pruebas con resultado, precio y en cola.` };
+    pruebas.push({ id: p.id, idExterno: p.idExterno, servicio: p.servicio, estadoPrueba: p.estadoPrueba, categoria: p.categoria, territorio: p.territorio, montoCalculado: p.montoCalculado, persona: e.persona });
   }
   const nits = new Set(exps.map(e => e.nitResuelto));
-  if (nits.size !== 1 || !exps[0].nitResuelto) return { ok: false, error: 'Una factura es de UN cliente: los expedientes elegidos pertenecen a clientes distintos.' };
+  if (nits.size !== 1 || !exps[0].nitResuelto) return { ok: false, error: 'Una factura es de UN cliente: las pruebas elegidas pertenecen a clientes distintos.' };
   const nit = exps[0].nitResuelto;
 
   // Cliente de financiero: el del mapeo (uuid) o el activo con ese NIT.
@@ -715,7 +829,7 @@ export async function emitirFacturaAgenda(input: EmitirInput, actor: string, opt
 
   const centros = await getCentrosCostoActivos();
   const centroDe = (tipo: string) => input.centroPorTipo?.[tipo] || centroPorServicio(tipo, centros);
-  const f = armarFactura(exps, centroDe);
+  const f = armarFactura(pruebas, centroDe);
   if (f.sinCentro.length) return { ok: false, error: `Elegí el centro de costo para: ${f.sinCentro.join(', ')}.` };
   const ccUuid = new Map<string, string>();
   for (const id of new Set(f.detalle.map(d => d.centroCostoId))) {
@@ -724,24 +838,28 @@ export async function emitirFacturaAgenda(input: EmitirInput, actor: string, opt
   }
   const cfg = configAgenda();
   const wbInicial: WritebackEstado = cfg.writeback && cfg.apiKey ? 'pendiente' : 'omitido';
-  let r: { factura_id: string; factura_app_id: string; no_factura: string; lineas: number; expedientes: number };
+  let r: { factura_id: string; factura_app_id: string; no_factura: string; lineas: number; expedientes: number; pruebas?: number; completos?: number };
   try {
     r = await rpc('facturacion_agenda_emitir', {
       p_actor: actor,
       p_factura: { no_factura: nf, cliente_id: clienteUuid, fecha_emision: fecha, writeback_estado: wbInicial },
       p_lineas: f.lineas.map(l => ({ airtable_id: nuevoIdEscritura(), centro_costo_id: ccUuid.get(l.centroCostoId), subtotal: l.subtotal, iva: l.iva, total: l.total })),
-      p_detalle: f.detalle.map(d => ({ id_externo: d.idExterno, tipo_prueba: d.tipoPrueba, categoria: d.categoria, territorio: d.territorio, monto: d.monto, centro_costo_id: ccUuid.get(d.centroCostoId) })),
+      p_detalle: f.detalle.map(d => ({ componente_id: d.componenteId, id_externo: d.idExterno, tipo_prueba: d.tipoPrueba, categoria: d.categoria, territorio: d.territorio, monto: d.monto, centro_costo_id: ccUuid.get(d.centroCostoId), resultado: d.resultado })),
     }, ['facturas_clientes']);
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
     if (/FACTURA_DUPLICADA/.test(m)) return { ok: false, error: `La factura ${nf} ya existe. No se creó para evitar un duplicado.` };
-    if (/EXPEDIENTE_NO_FACTURABLE|EXPEDIENTE_DESCONOCIDO/.test(m)) return { ok: false, error: 'Algún expediente cambió mientras facturabas (ya tiene factura o dejó de estar resuelto). Recargá y volvé a elegir.' };
+    if (/EXPEDIENTE_NO_FACTURABLE|EXPEDIENTE_DESCONOCIDO/.test(m)) return { ok: false, error: 'Alguna prueba cambió mientras facturabas (ya tiene factura o dejó de tener resultado). Recargá y volvé a elegir.' };
     return { ok: false, error: m };
   }
+  const completos = Number(r.completos ?? 0);
+  // Write-back: solo los expedientes que quedaron COMPLETOS (todas sus pruebas cobrables facturadas, ninguna pendiente).
   const writeback: WritebackResultado = wbInicial === 'omitido'
     ? { estado: 'omitido', detalle: cfg.apiKey ? 'FACTURAR_WRITEBACK está apagado: la factura quedó en financiero y NO se escribió a la Agenda.' : 'Este deploy no tiene llave de la Agenda: la factura quedó solo en financiero.' }
-    : await escribirFacturaEnAgenda(nf, actor, { api: opts.api });
-  return { ok: true, noFactura: r.no_factura, facturaAppId: r.factura_app_id, expedientes: r.expedientes, lineas: r.lineas, subtotal: f.subtotal, iva: f.iva, total: f.total, writeback };
+    : completos === 0
+      ? { estado: 'parcial', detalle: `Cobro parcial: ${r.expedientes} expediente(s) tienen otra prueba pendiente o por cobrar; a la Agenda se escribe cuando queden completos.` }
+      : await escribirFacturaEnAgenda(nf, actor, { api: opts.api });
+  return { ok: true, noFactura: r.no_factura, facturaAppId: r.factura_app_id, expedientes: r.expedientes, pruebas: Number(r.pruebas ?? pruebas.length), completos, lineas: r.lineas, subtotal: f.subtotal, iva: f.iva, total: f.total, writeback };
 }
 
 // ── Write-back a la Agenda ──────────────────────────────────────────────────
@@ -785,13 +903,26 @@ export async function escribirFacturaEnAgenda(noFactura: string, actor: string, 
   const api = opts.api ?? apiAgenda({ actor });
   const rows = (await listarExpedientesLocal({ noFactura })).filter(r => !r.eliminado && r.writebackEstado && ['pendiente', 'conflicto', 'error'].includes(r.writebackEstado) && (!opts.soloIds || opts.soloIds.includes(r.idExterno)));
   if (!rows.length) return { estado: 'confirmado', detalle: 'No hay expedientes pendientes de enviar a la Agenda.' };
+  if (!api) { await marcarWriteback(rows.map(r => r.idExterno), 'omitido', 'Sin llave de la Agenda en este deploy.'); return { estado: 'omitido', detalle: ETIQUETA_WRITEBACK.omitido }; }
+  // 024: el cobro de la Agenda es por EXPEDIENTE. Cada uno va con TODAS sus facturas ("F-123 / F-140") y la suma de lo
+  // facturado; se agrupan por número combinado porque POST /facturas lleva un solo numeroFactura.
+  const grupos = new Map<string, ExpedienteLocal[]>();
+  for (const r of rows) { const n = facturasDelExpediente(r).numero || noFactura; (grupos.get(n) ?? grupos.set(n, []).get(n)!).push(r); }
+  const resultados: WritebackResultado[] = [];
+  for (const [numero, filas] of grupos) resultados.push(await postearFactura(numero, noFactura, filas, actor, api));
+  return resultados.find(r => r.estado !== 'confirmado') ?? resultados[0];
+}
+
+/** POST /facturas de un grupo de expedientes que comparten el número combinado. */
+async function postearFactura(numeroFactura: string, noFacturaFecha: string, rows: ExpedienteLocal[], actor: string, api: AgendaApi): Promise<WritebackResultado> {
   const ids = rows.map(r => r.idExterno);
-  if (!api) { await marcarWriteback(ids, 'omitido', 'Sin llave de la Agenda en este deploy.'); return { estado: 'omitido', detalle: ETIQUETA_WRITEBACK.omitido }; }
   const sb = supabase()!;
-  const { data: fac } = await sb.from('facturas_clientes').select('fecha_emision').eq('no_factura', noFactura).limit(1).maybeSingle();
+  const { data: fac } = await sb.from('facturas_clientes').select('fecha_emision').eq('no_factura', noFacturaFecha).limit(1).maybeSingle();
   const fechaFactura = String((fac as { fecha_emision?: string } | null)?.fecha_emision ?? obtenerFechaHoyGuatemala());
   const cfg = configAgenda();
-  const body = { numeroFactura: noFactura, fechaFactura, statusCobro: 'FACTURADO', expedientes: rows.map(r => ({ id: r.idExterno, monto: montoParaAgenda(r.montoCalculado ?? 0, cfg.montoModo), ...(siActualizadoEnDe(r) ? { siActualizadoEn: siActualizadoEnDe(r) } : {}) })) };
+  const noFactura = numeroFactura.slice(0, 100);   // largo a confirmar con la Agenda (hoy el número simple va hasta 60)
+  const body = { numeroFactura: noFactura, fechaFactura, statusCobro: 'FACTURADO', expedientes: rows.map(r => ({ id: r.idExterno, monto: montoParaAgenda(facturasDelExpediente(r).montoSinIva, cfg.montoModo), ...(siActualizadoEnDe(r) ? { siActualizadoEn: siActualizadoEnDe(r) } : {}) })) };
+  void actor;
   try {
     const r = await api.crearFactura(body);
     const devueltos = Array.isArray(r.body?.expedientes) ? r.body.expedientes : [];
@@ -825,6 +956,26 @@ export async function escribirFacturaEnAgenda(noFactura: string, actor: string, 
     await marcarWriteback(ids, estado, `${e.status || 'red'} · ${det}`);
     return { estado, detalle: estado === 'error' ? `La Agenda rechazó el pedido (${e.status}): ${det}` : `La Agenda no respondió (${e.status || 'red'}). La factura quedó en financiero; reintentá el envío más tarde.` };
   }
+}
+
+/**
+ * 024: cierra los expedientes 'parcial' que ya quedaron completos (p. ej. el socio pasó a no_cobra después de facturar
+ * el polígrafo): la RPC les pone la última factura y writeback 'pendiente'; acá se escribe a la Agenda con todos sus
+ * números (o quedan 'omitido' sin llave / flag apagado). Nunca lanza; lo llama reclasificar (sync y re-resolver).
+ */
+export async function cerrarParciales(opts: { api?: AgendaApi; actor?: string } = {}): Promise<number> {
+  const sb = supabase(); if (!sb) return 0;
+  const { data, error } = await sb.rpc('facturacion_agenda_cerrar_parciales', { p_fuente: FUENTE });
+  if (error) { if (!rpcNoExiste(error)) console.error('cerrar_parciales:', error.message); return 0; }
+  const cerrados = (Array.isArray(data) ? data : []) as { id_externo: string; no_factura: string | null }[];
+  if (!cerrados.length) return 0;
+  const cfg = configAgenda();
+  const api = opts.api ?? (cfg.writeback && cfg.apiKey ? apiAgenda({ actor: opts.actor ?? 'cron' }) : null);
+  if (!api) { await marcarWriteback(cerrados.map(c => c.id_externo), 'omitido', cfg.apiKey ? 'Expediente completo; FACTURAR_WRITEBACK apagado: no se escribe a la Agenda.' : 'Expediente completo; este deploy no tiene llave de la Agenda.'); return cerrados.length; }
+  for (const nf of new Set(cerrados.map(c => c.no_factura).filter((x): x is string => !!x))) {
+    await escribirFacturaEnAgenda(nf, opts.actor ?? 'cron', { api, soloIds: cerrados.filter(c => c.no_factura === nf).map(c => c.id_externo) }).catch(e => console.error('write-back parciales:', e));
+  }
+  return cerrados.length;
 }
 
 /**
@@ -868,9 +1019,17 @@ export async function notificarCobroAgenda(noFactura: string, actor: string, opt
     if (!cfg.writeback) return { enviados: 0, estado: 'omitido', detalle: 'FACTURAR_WRITEBACK apagado.' };
     const api = opts.api ?? apiAgenda({ actor });
     if (!api) return { enviados: 0, estado: 'omitido', detalle: 'Sin llave.' };
-    const rows = (await listarExpedientesLocal({ noFactura })).filter(r => !r.eliminado && r.writebackEstado === 'confirmado' && r.cobroWritebackEstado !== 'confirmado');
+    let rows = (await listarExpedientesLocal({ noFactura })).filter(r => !r.eliminado && r.writebackEstado === 'confirmado' && r.cobroWritebackEstado !== 'confirmado');
     if (!rows.length) return { enviados: 0, estado: 'nada', detalle: 'La factura no tiene expedientes de la Agenda pendientes de marcar PAGADO.' };
     const sb = supabase()!; const ahora = new Date().toISOString();
+    // 024: un expediente cobrado en DOS facturas solo se marca PAGADO cuando TODAS están cobradas (si no, el socio saldría de la cola por la 021).
+    const otras = [...new Set(rows.flatMap(r => r.pruebas.filter(p => p.noFactura && p.noFactura !== noFactura).map(p => p.noFactura!)))];
+    if (otras.length) {
+      const { data: facs } = await sb.from('facturas_clientes').select('no_factura, estado').in('no_factura', otras);
+      const cobradas = new Set(((facs ?? []) as { no_factura: string; estado: string | null }[]).filter(f => /^COBRAD[OA]$/i.test(String(f.estado ?? ''))).map(f => f.no_factura));
+      rows = rows.filter(r => r.pruebas.every(p => !p.noFactura || p.noFactura === noFactura || cobradas.has(p.noFactura)));
+      if (!rows.length) return { enviados: 0, estado: 'nada', detalle: 'Los expedientes de esta factura tienen otra factura todavía por cobrar: se marcan PAGADO en la Agenda cuando se cobren todas.' };
+    }
     const ids = rows.map(r => r.idExterno);
     try {
       const r = await api.lote(rows.map(x => ({ id: x.idExterno, statusCobro: 'PAGADO', estatusPago: 'PAGADO', ...(siActualizadoEnDe(x) ? { siActualizadoEn: siActualizadoEnDe(x) } : {}) })));
@@ -896,9 +1055,9 @@ export async function notificarCobroAgenda(noFactura: string, actor: string, opt
 
 // ── Detalle de factura ──────────────────────────────────────────────────────
 
-interface DetRow { id: string; no_factura: string; id_externo: string; tipo_prueba: string | null; categoria: string | null; territorio: string | null; monto: number | string; centro_costo_id: string | null; persona: string | null }
+interface DetRow { id: string; no_factura: string; id_externo: string; tipo_prueba: string | null; categoria: string | null; territorio: string | null; monto: number | string; centro_costo_id: string | null; persona: string | null; componente_id?: string | null; resultado?: string | null }
 
-export interface ProcesosDeFactura { detalle: DetalleFacturaExpediente[]; expedientes: ExpedienteLocal[]; subtotal: number; writeback: { confirmados: number; pendientes: number; conflictos: number; errores: number; omitidos: number }; /** 019: el detalle de facturación (pre-liquidación) del que salió, para "Imprimir detalle". */ detalleFacturacion: { id: string; correlativo: string; aprobadoPor: string; aprobadaEn: string | null } | null }
+export interface ProcesosDeFactura { detalle: DetalleFacturaExpediente[]; expedientes: ExpedienteLocal[]; subtotal: number; writeback: { confirmados: number; pendientes: number; conflictos: number; errores: number; omitidos: number; /** 024: expedientes con otra prueba por cobrar */ parciales: number }; /** 019: el detalle de facturación (pre-liquidación) del que salió, para "Imprimir detalle". */ detalleFacturacion: { id: string; correlativo: string; aprobadoPor: string; aprobadaEn: string | null } | null }
 
 /** Qué procesos de la Agenda cubre una factura de financiero (vacío si no viene de la Agenda o falta la 016). */
 export async function procesosDeFactura(noFactura: string): Promise<ProcesosDeFactura | null> {
@@ -907,12 +1066,12 @@ export async function procesosDeFactura(noFactura: string): Promise<ProcesosDeFa
     // Primero el detalle: si la 016 no está en esta base (o la factura no viene de la Agenda) se corta acá, sin ruido en el log.
     const rows = await fetchAll<DetRow>('factura_detalle_expediente', { eq: { no_factura: nf }, order: { column: 'created_at', ascending: true } });
     if (!rows.length) return null;
-    const exps = await listarExpedientesLocal({ noFactura: nf });
+    const exps = await listarExpedientesLocal({ idsExternos: [...new Set(rows.map(r => r.id_externo))] });
     const centros = await fetchAll<{ id: string; nombre: string | null }>('centros_costo', { select: 'id, nombre' });
     const nombreCC = new Map(centros.map(c => [c.id, (c.nombre ?? '').trim()]));
-    const detalle = rows.map(r => ({ id: r.id, noFactura: r.no_factura, idExterno: r.id_externo, tipoPrueba: r.tipo_prueba ?? '', categoria: r.categoria ?? '', territorio: r.territorio ?? '', monto: Number(r.monto), centroCostoId: r.centro_costo_id, centroNombre: (r.centro_costo_id && nombreCC.get(r.centro_costo_id)) || '', persona: r.persona ?? '' }));
-    const wb = { confirmados: 0, pendientes: 0, conflictos: 0, errores: 0, omitidos: 0 };
-    for (const e of exps) { if (e.writebackEstado === 'confirmado') wb.confirmados++; else if (e.writebackEstado === 'conflicto') wb.conflictos++; else if (e.writebackEstado === 'error') wb.errores++; else if (e.writebackEstado === 'omitido') wb.omitidos++; else wb.pendientes++; }
+    const detalle = rows.map(r => ({ id: r.id, noFactura: r.no_factura, idExterno: r.id_externo, tipoPrueba: r.tipo_prueba ?? '', categoria: r.categoria ?? '', territorio: r.territorio ?? '', monto: Number(r.monto), centroCostoId: r.centro_costo_id, centroNombre: (r.centro_costo_id && nombreCC.get(r.centro_costo_id)) || '', persona: r.persona ?? '', componenteId: r.componente_id ?? null, resultado: r.resultado ?? '' }));
+    const wb = { confirmados: 0, pendientes: 0, conflictos: 0, errores: 0, omitidos: 0, parciales: 0 };
+    for (const e of exps) { if (e.writebackEstado === 'confirmado') wb.confirmados++; else if (e.writebackEstado === 'conflicto') wb.conflictos++; else if (e.writebackEstado === 'error') wb.errores++; else if (e.writebackEstado === 'omitido') wb.omitidos++; else if (e.writebackEstado === 'parcial') wb.parciales++; else wb.pendientes++; }
     let detalleFacturacion: ProcesosDeFactura['detalleFacturacion'] = null;
     try { const { data } = await supabase()!.from('detalle_facturacion').select('id, correlativo, aprobado_por, aprobada_en').eq('no_factura', nf).maybeSingle(); const d = data as { id: string; correlativo: string; aprobado_por: string | null; aprobada_en: string | null } | null; if (d) detalleFacturacion = { id: d.id, correlativo: d.correlativo, aprobadoPor: d.aprobado_por ?? '', aprobadaEn: d.aprobada_en }; } catch { /* sin la 019 */ }
     return { detalle, expedientes: exps, subtotal: Math.round(detalle.reduce((s, d) => s + d.monto, 0) * 100) / 100, writeback: wb, detalleFacturacion };
