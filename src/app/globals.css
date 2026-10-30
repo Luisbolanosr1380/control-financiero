@@ -536,6 +536,25 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
 }
 .table tbody tr:hover td.col-acciones { background: var(--paper-tint); }
 .table tbody tr:last-child td { border-bottom: none; }
+
+/* FIX DETALLE CLIENTE (Por facturar · Agenda): la tabla de expedientes es más
+   ancha que la tarjeta (.card tiene overflow hidden) y se cortaba a la derecha.
+   .table-scroll desplaza la tabla DENTRO de su tarjeta (la página no se ensancha:
+   .main ya tiene min-width 0); selección + persona quedan fijas a la izquierda y
+   la columna de factura/acciones a la derecha (col-acciones). */
+.table-scroll { overflow-x: auto; max-width: 100%; min-width: 0; -webkit-overflow-scrolling: touch; }
+.table th.col-sel, .table td.col-sel { position: sticky; left: 0; z-index: 2; background: var(--paper); width: 56px; min-width: 56px; max-width: 56px; }
+.table th.col-persona, .table td.col-persona { position: sticky; left: var(--col-persona-left, 0px); z-index: 2; background: var(--paper); max-width: 260px; box-shadow: 8px 0 8px -8px rgba(0, 0, 0, 0.12); }
+.table thead th.col-sel, .table thead th.col-persona, .table thead th.col-acciones { background: var(--bg-2); z-index: 3; }
+/* la columna de factura (fija a la derecha) no puede ser más ancha que la tarjeta: ancho acotado, el texto largo con puntos suspensivos */
+.table td.col-acciones { max-width: 240px; white-space: normal; }
+.table tbody tr:hover td.col-sel, .table tbody tr:hover td.col-persona { background: var(--paper-tint); }
+.table tbody tr.selected td.col-sel, .table tbody tr.selected td.col-persona { background: var(--bg-2); }
+/* celdas de dos líneas (servicio + proceso): mantienen el salto con un ancho razonable */
+.table td.col-servicio { white-space: normal; min-width: 180px; max-width: 280px; line-height: 1.35; padding-top: 6px; padding-bottom: 6px; }
+/* texto largo en una línea con puntos suspensivos (el title lleva el texto completo) */
+.cell-ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 230px; }
+
 .table tbody tr.clickable { cursor: pointer; }
 .table tbody tr.selected td { background: var(--bg-2); }
 
@@ -1176,3 +1195,27 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   margin: 2em 0;
 }
 .ayuda-prose input[type="checkbox"] { margin-right: 6px; }
+
+/* ============ Pantallas angostas ============ */
+/* En teléfono (el shell deja "ver igual" el escritorio) la página usa 16 px de margen
+   lateral y las tablas anchas desplazan dentro de su tarjeta (.table-scroll). */
+@media (max-width: 768px) {
+  /* el shell apila: menú arriba (sin pegarse) y el contenido con todo el ancho */
+  .app, .app.ai-open { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; max-height: none; border-right: none; border-bottom: 1px solid var(--line); }
+  .topbar { height: auto; min-height: 56px; flex-wrap: wrap; padding: 8px 16px; }
+  .page { padding: 16px 16px 80px; }
+  .page-header { flex-wrap: wrap; gap: 12px; }
+  .page-actions { margin-left: 0; flex-wrap: wrap; }
+  .page-title { font-size: 24px; }
+  /* los KPIs de 4 y 5 columnas (estilo en línea) pasan a 2 por fila */
+  .kpi-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  /* tabla de expedientes en teléfono: persona fija pero angosta, servicio más compacto y la
+     columna de factura deja de ser fija (no hay ancho para dos columnas pegadas) */
+  .table th.col-persona, .table td.col-persona { max-width: 150px; }
+  .table td.col-persona .cell-ellipsis { max-width: 122px; }
+  .table td.col-servicio { min-width: 150px; max-width: 220px; }
+  .table th.col-acciones, .table td.col-acciones { position: static; box-shadow: none; }
+  .table td.col-acciones { max-width: 180px; }
+  .table td.col-acciones .cell-ellipsis { max-width: 150px; }
+}

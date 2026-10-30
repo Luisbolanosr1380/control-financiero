@@ -111,17 +111,20 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
         </div>
       </div>
 
+      {/* FIX OVERFLOW: la tabla desplaza dentro de la tarjeta (no la página); selección + persona fijas a la izquierda, factura a la derecha. */}
       <div className="card" style={{ marginBottom: sel.size ? 70 : 0 }}>
-        <table className="table">
-          <thead><tr>
-            {puedeFacturar && <th style={{ width: 28 }}><input type="checkbox" checked={todosSel} onChange={toggleTodos} aria-label="Seleccionar todos los facturables visibles" disabled={facturablesVisibles.length === 0} /></th>}
-            <th>Persona</th><th>Ingreso</th><th>Servicio</th><th>Categoría</th><th>Territorio</th><th className="num">Precio sin IVA</th><th>Cobro en Agenda</th><th>Factura</th>
-          </tr></thead>
-          <tbody>
-            {filas.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>Ningún expediente con esos filtros.</td></tr>}
-            {filas.map(e => <FilaExpediente key={e.idExterno} e={e} puede={puedeFacturar} sel={sel.has(e.idExterno)} onToggle={() => toggle(e.idExterno)} />)}
-          </tbody>
-        </table>
+        <div className="table-scroll" data-tabla-expedientes>
+          <table className="table" style={{ '--col-persona-left': puedeFacturar ? '56px' : '0px' } as React.CSSProperties}>
+            <thead><tr>
+              {puedeFacturar && <th className="col-sel"><input type="checkbox" checked={todosSel} onChange={toggleTodos} aria-label="Seleccionar todos los facturables visibles" disabled={facturablesVisibles.length === 0} /></th>}
+              <th className="col-persona">Persona</th><th>Ingreso</th><th>Servicio</th><th>Categoría</th><th>Territorio</th><th className="num">Precio sin IVA</th><th>Cobro en Agenda</th><th className="col-acciones">Factura</th>
+            </tr></thead>
+            <tbody>
+              {filas.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>Ningún expediente con esos filtros.</td></tr>}
+              {filas.map(e => <FilaExpediente key={e.idExterno} e={e} puede={puedeFacturar} sel={sel.has(e.idExterno)} onToggle={() => toggle(e.idExterno)} />)}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {sel.size > 0 && puedeFacturar && (
@@ -166,10 +169,13 @@ function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede
   const estadoCobro = [e.statusCobroExterno, e.estatusPagoExterno].filter(Boolean).join(' · ') || 'sin estado';
   return (
     <tr data-expediente={e.idExterno} style={{ opacity: !enCola(e) && !e.facturaId ? 0.65 : 1 }}>
-      {puede && <td><input type="checkbox" checked={sel} onChange={onToggle} disabled={!esFacturable} aria-label={`Seleccionar ${e.persona || e.idExterno}`} /></td>}
-      <td><div className="cell-strong">{e.persona || '—'}</div><div className="cell-mute" style={{ fontSize: 11 }}>{e.puesto || e.idExterno}{e.statusProceso ? ` · ${e.statusProceso}` : ''}</div></td>
+      {puede && <td className="col-sel"><input type="checkbox" checked={sel} onChange={onToggle} disabled={!esFacturable} aria-label={`Seleccionar ${e.persona || e.idExterno}`} /></td>}
+      <td className="col-persona">
+        <span className="cell-strong cell-ellipsis" title={e.persona || e.idExterno}>{e.persona || '—'}</span>
+        <span className="cell-mute cell-ellipsis" style={{ fontSize: 11 }} title={`${e.puesto || e.idExterno}${e.statusProceso ? ` · ${e.statusProceso}` : ''}${e.solicitante ? ` · solicita ${e.solicitante}` : ''}`}>{e.puesto || e.idExterno}{e.statusProceso ? ` · ${e.statusProceso}` : ''}</span>
+      </td>
       <td className="num" style={{ fontSize: 12 }}>{e.fechaIngreso ?? '—'}</td>
-      <td><ServicioCell e={e} /></td>
+      <td className="col-servicio"><ServicioCell e={e} /></td>
       <td title={e.categoriaPrueba || 'sin categoría'}>{e.categoriaCanon || <span className="cell-mute">—</span>}</td>
       <td title={e.deptoVisita || 'sin depto. de visita'}>{e.territorioResuelto || <span className="cell-mute">no indicado</span>}</td>
       <td className="num">
@@ -183,7 +189,7 @@ function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede
         {e.montoExterno !== null && <div className="cell-mute num" style={{ fontSize: 11 }} title="Monto registrado en la Agenda">Agenda: {Q(e.montoExterno)}</div>}
         {(e.cobroMegapaca ?? 0) > 0 && <span className="badge badge-outline" style={{ fontSize: 10 }} title="Cobro aparte de Megapaca: no se mezcla con el monto normal">Megapaca {Q(e.cobroMegapaca)}</span>}
       </td>
-      <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+      <td className="col-acciones" style={{ fontSize: 12 }}>
         {e.facturaId && e.noFactura
           ? <>
               <Link href={`/facturacion/${e.facturaAppId ?? ''}`} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{e.noFactura}</Link>
@@ -192,7 +198,7 @@ function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede
               {e.cobroWritebackEstado && <div className="cell-mute" style={{ fontSize: 10 }} title={e.cobroWritebackDetalle || undefined}>cobro → Agenda: {e.cobroWritebackEstado}</div>}
             </>
           : e.detalleId ? <Link href={`/por-facturar/detalle/${e.detalleId}`} className="badge badge-warn" style={{ fontSize: 10, textDecoration: 'none' }} title="Reservado en un detalle de facturación (pre-liquidación)">En detalle →</Link>
-          : e.numeroFacturaExterno ? <span className="cell-mute" title="Facturado fuera de la app (número que tiene la Agenda)">{e.numeroFacturaExterno}</span> : <span className="cell-mute">—</span>}
+          : e.numeroFacturaExterno ? <span className="cell-mute cell-ellipsis" title={`Facturado fuera de la app (número que tiene la Agenda): ${e.numeroFacturaExterno}`}>{e.numeroFacturaExterno}</span> : <span className="cell-mute">—</span>}
       </td>
     </tr>
   );
