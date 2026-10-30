@@ -6,15 +6,17 @@ import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
-import { armarFactura, centroPorServicio } from '@/lib/facturacion-agenda/mapeo';
-import type { ExpedienteLocal, WritebackEstado } from '@/lib/facturacion-agenda/tipos';
+import { armarFactura, centroPorServicio, type PruebaParaFactura } from '@/lib/facturacion-agenda/mapeo';
+import { resultadoLegible } from '@/lib/facturacion-agenda/situacion';
+import type { WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import type { CentroCosto } from '@/lib/db/centros';
 
 export interface FacturarInput { noFactura: string; fechaEmision: string; centroPorTipo: Record<string, string> }
 export type FacturarResultado = { ok: true; noFactura: string; facturaAppId: string; total: number; expedientes: number; writeback: { estado: WritebackEstado; detalle: string } } | { ok: false; error: string };
 
 interface DialogoProps {
-  seleccion: ExpedienteLocal[]; centros: CentroCosto[]; cliente: string; writeback: boolean; configurada: boolean; montoModo: 'con_iva' | 'sin_iva';
+  /** 024: las PRUEBAS que cubre la factura (una línea por prueba). */
+  seleccion: PruebaParaFactura[]; centros: CentroCosto[]; cliente: string; writeback: boolean; configurada: boolean; montoModo: 'con_iva' | 'sin_iva';
   /** Título de contexto (ej. "detalle DET-0001 aprobado por …"). */
   contexto?: string;
   onClose: () => void;
@@ -32,7 +34,7 @@ export function FacturarDialogo({ seleccion, centros, cliente, writeback, config
   const [noFactura, setNoFactura] = useState('');
   const [fecha, setFecha] = useState(obtenerFechaHoyGuatemala());
   const [loading, setLoading] = useState(false);
-  const tipos = useMemo(() => [...new Set(seleccion.flatMap(e => (e.componentes.length ? e.componentes.map(c => c.tipoPrueba) : [e.tipoCobrado])))], [seleccion]);
+  const tipos = useMemo(() => [...new Set(seleccion.map(p => p.servicio))], [seleccion]);
   const [centroPorTipo, setCentroPorTipo] = useState<Record<string, string>>(() => Object.fromEntries(tipos.map(t => [t, centroPorServicio(t, centros) ?? ''])));
   const f = useMemo(() => armarFactura(seleccion, t => centroPorTipo[t] || null), [seleccion, centroPorTipo]);
   const nombreCC = (id: string) => centros.find(c => c.id === id)?.nombre ?? '—';
@@ -64,7 +66,7 @@ export function FacturarDialogo({ seleccion, centros, cliente, writeback, config
       <div onClick={e => e.stopPropagation()} role="dialog" aria-label="Facturar expedientes" style={{ width: 'min(760px, 96vw)', maxHeight: '92vh', background: 'var(--paper)', borderRadius: 'var(--r-3)', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.35)' }}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--line-2)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <I.Receipt size={15} style={{ color: 'var(--ink-3)' }} />
-          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>Facturar {seleccion.length} expediente{seleccion.length === 1 ? '' : 's'} de {cliente}{contexto ? <span className="cell-mute" style={{ fontSize: 12, marginLeft: 8 }}>{contexto}</span> : null}</div>
+          <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--ink)' }}>Facturar {seleccion.length} prueba{seleccion.length === 1 ? '' : 's'} de {cliente}{contexto ? <span className="cell-mute" style={{ fontSize: 12, marginLeft: 8 }}>{contexto}</span> : null}</div>
           <button type="button" className="btn btn-ghost" style={{ marginLeft: 'auto' }} onClick={onClose} disabled={loading} title="Cerrar (Esc)"><I.X size={15} /></button>
         </div>
         <div style={{ padding: '18px 22px', overflowY: 'auto', fontSize: 13 }}>
@@ -102,11 +104,11 @@ export function FacturarDialogo({ seleccion, centros, cliente, writeback, config
           </div>
 
           <div className="card">
-            <div className="card-head"><div className="card-title">Expedientes</div></div>
+                        <div className="card-head"><div className="card-title">Pruebas</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>una línea por prueba, con su resultado</span></div></div>
             <table className="table">
-              <thead><tr><th>Persona</th><th>Servicio</th><th>Categoría · territorio</th><th className="num">Sin IVA</th></tr></thead>
+              <thead><tr><th>Persona</th><th>Prueba</th><th>Categoría · territorio</th><th className="num">Sin IVA</th></tr></thead>
               <tbody>
-                {seleccion.map(e => <tr key={e.idExterno}><td>{e.persona || e.idExterno}</td><td>{e.tipoCobrado}{e.componentes.length > 1 ? <span className="cell-mute" style={{ fontSize: 11 }}> ({e.componentes.map(c => `${c.tipoPrueba} ${Q(c.monto)}`).join(' + ')})</span> : null}</td><td className="cell-mute" style={{ fontSize: 12 }}>{e.categoriaCanon} · {e.territorioResuelto || 'no indicado'}</td><td className="num">{Q(e.montoCalculado ?? 0)}</td></tr>)}
+                {seleccion.map(p => <tr key={p.id} data-prueba={p.id}><td>{p.persona || p.idExterno}</td><td>{resultadoLegible(p.servicio, p.estadoPrueba)}</td><td className="cell-mute" style={{ fontSize: 12 }}>{[p.categoria, p.territorio].filter(x => x && x !== 'UNICA').join(' · ') || '—'}</td><td className="num">{Q(p.montoCalculado ?? 0)}</td></tr>)}
               </tbody>
             </table>
           </div>

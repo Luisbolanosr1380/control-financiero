@@ -23,7 +23,8 @@
 import { canonCategoria, canonTipoPrueba, conIva, formaPrecio, normalizarTexto, round2, usaCategoria } from '@/lib/tarifario/canon';
 import { resolverTarifa, type Tarifa } from '@/lib/tarifario/lookup';
 import { nitComparable } from '@/lib/clientes/nit';
-import { ESTADOS_EXCLUIDOS, STATUS_COBRO_POR_FACTURAR, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal } from './tipos';
+import { ESTADOS_EXCLUIDOS, STATUS_COBRO_POR_FACTURAR, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type PruebaLocal, type Situacion } from './tipos';
+import { resultadoLegible, servicioPorEstado, situacionDePruebas } from './situacion';
 
 const compacto = (s: string | null | undefined) => normalizarTexto(s).replace(/[^A-Z0-9]/g, '');
 
@@ -81,17 +82,29 @@ export interface ContextoPrecio {
   noFacturaEmpresas?: ReadonlyMap<string, string>;
 }
 
+/** 024: una prueba calculada (situación + precio), tal como va a facturacion_componente. */
+export interface PruebaCalculada {
+  servicio: string; estadoPrueba: string; situacion: Situacion; motivo: string;
+  categoria: string; territorio: string; monto: number | null; estadoTarifa: EstadoTarifa; detalleTarifa: string; tarifarioId: string | null; aprobada: boolean | null;
+}
+
 export interface Clasificacion {
   estado: EstadoTarifa;
   nit: string | null;
   tipoCobrado: string;
   categoriaCanon: string;
   territorio: string;
-  /** Sin IVA. null si no está resuelta. */
+  /** Sin IVA. null si no está resuelta. (Resolución de precio de TODOS los servicios de la fila, sin mirar estados.) */
   monto: number | null;
   componentes: ComponentePrecio[];
   detalle: string;
+  /** 024: las pruebas con su situación (cobra / pendiente / no_cobra) y su precio individual. */
+  pruebas: PruebaCalculada[];
 }
+
+/** Huella de las pruebas calculadas: si no cambia, re-resolver no reescribe el expediente. */
+export const firmaPruebas = (pruebas: readonly PruebaCalculada[]): string =>
+  pruebas.map(p => [p.servicio, p.situacion, p.estadoPrueba, p.monto ?? '', p.estadoTarifa, p.detalleTarifa, p.tarifarioId ?? '', p.aprobada ?? ''].join('|')).join(';');
 
 /** Clasifica un expediente de la Agenda contra el mapeo de clientes y el tarifario (motor existente). */
 export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio): Clasificacion {
@@ -99,34 +112,51 @@ export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio)
   const tipo = servicios.join(' + ');
   const cat = canonCategoria(categoriaDe(exp));
   const ter = territorioDesdeDepto(exp.deptoVisita);
+  // 024: situación de cada prueba (el socio cancelado con visita realizada se vuelve el FEE).
+  const decisiones = situacionDePruebas(exp, servicios);
+  const sinPrecio = (estadoTarifa: EstadoTarifa, detalleTarifa: string): PruebaCalculada[] => decisiones.map(d => ({ ...d, categoria: cat, territorio: ter, monto: null, estadoTarifa, detalleTarifa, tarifarioId: null, aprobada: null }));
   const base = { tipoCobrado: tipo, categoriaCanon: cat, territorio: ter, componentes: [] as ComponentePrecio[] };
-  if (esPsicometrica(exp)) return { ...base, estado: 'excluido_psicometrica', nit: null, monto: null, detalle: 'PSICOMETRICAS no se factura individual: trato aparte.' };
+  if (esPsicometrica(exp)) { const detalle = 'PSICOMETRICAS no se factura individual: trato aparte.'; return { ...base, estado: 'excluido_psicometrica', nit: null, monto: null, detalle, pruebas: sinPrecio('excluido_psicometrica', detalle) }; }
   const empresaId = String(exp.empresa?.id ?? '').trim();
-  if (empresaId && ctx.noFacturaEmpresas?.has(empresaId)) return { ...base, estado: 'excluido_no_factura', nit: null, monto: null, detalle: `La empresa está marcada como "no se factura" por este flujo (${ctx.noFacturaEmpresas.get(empresaId) || 'interno / no aplica'}).` };
+  if (empresaId && ctx.noFacturaEmpresas?.has(empresaId)) { const detalle = `La empresa está marcada como "no se factura" por este flujo (${ctx.noFacturaEmpresas.get(empresaId) || 'interno / no aplica'}).`; return { ...base, estado: 'excluido_no_factura', nit: null, monto: null, detalle, pruebas: sinPrecio('excluido_no_factura', detalle) }; }
   const nit = empresaId ? (ctx.nitPorEmpresa.get(empresaId) ?? null) : null;
-  if (!nit) return { ...base, estado: 'cliente_sin_mapear', nit: null, monto: null, detalle: empresaId ? `La empresa "${exp.empresa?.nombre ?? empresaId}" no está mapeada a un cliente de financiero.` : 'El expediente no trae empresa.' };
+  if (!nit) { const detalle = empresaId ? `La empresa "${exp.empresa?.nombre ?? empresaId}" no está mapeada a un cliente de financiero.` : 'El expediente no trae empresa.'; return { ...base, estado: 'cliente_sin_mapear', nit: null, monto: null, detalle, pruebas: sinPrecio('cliente_sin_mapear', detalle) }; }
   if (!servicios.length) {
     // "COMPLETO" suelto no es un servicio: cada mitad viene en su propia fila con POLIGRAFO o SOCIOECONOMICO.
     const detalle = compacto(exp.procesoSolicitado).includes('COMPLET')
       ? 'La fila dice COMPLETO pero no trae el servicio (tipoPrueba): cada mitad de un completo viene en su propia fila como POLIGRAFO o SOCIOECONOMICO. Dato a revisar en la Agenda; no se cobra a ciegas.'
       : 'El expediente no trae tipo de prueba ni proceso solicitado.';
-    return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle };
+    return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle, pruebas: [] };
   }
-  // Cada servicio de la fila se cotiza por separado y se SUMA solo si la fila trae varios (lista en tipoPrueba).
+  // Precio de UN servicio (forma de precio del servicio; categoría/territorio del expediente).
+  const precioDe = (s: string): { ok: true; partes: Tarifa[]; avisos: string[] } | { ok: false; mensaje: string } => {
+    // Solo las formas con categoría (matriz y SOCIO VIRTUAL) la exigen: SOCIO EMPRESARIAL / FEE (por territorio) e INFORNET (único) resuelven sin ella.
+    if (usaCategoria(formaPrecio(s)) && !cat) return { ok: false, mensaje: `${s} se cobra por categoría y el expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO).` };
+    const r = resolverTarifa(ctx.tarifas, { nit, tipoPrueba: s, categoria: cat, territorio: ter || undefined });
+    if (r.estado !== 'ok') return { ok: false, mensaje: r.mensaje };
+    return { ok: true, partes: r.componentes ?? [r.tarifa], avisos: r.avisos };
+  };
+  // 024: cada prueba con su propio precio (el FEE con su tarifa; sin tarifa no bloquea a las demás).
+  const pruebas: PruebaCalculada[] = decisiones.map(d => {
+    const p = precioDe(d.servicio);
+    if (!p.ok) return { ...d, categoria: cat, territorio: ter, monto: null, estadoTarifa: 'sin_tarifa', detalleTarifa: p.mensaje, tarifarioId: null, aprobada: null };
+    const t = p.partes[0];
+    return { ...d, categoria: canonCategoria(t.categoria), territorio: normalizarTexto(t.territorio), monto: round2(p.partes.reduce((a, x) => a + Number(x.monto), 0)), estadoTarifa: 'resuelta', detalleTarifa: [...new Set(p.avisos)].join(' '), tarifarioId: t.id, aprobada: !!t.aprobadoEn };
+  });
+  // Resolución de precio del expediente entero (como antes del cobro por prueba): cada servicio de la fila se cotiza y se SUMA solo si la fila trae varios.
   const partes: Tarifa[] = []; const avisos: string[] = [];
   const prefijo = (s: string) => (servicios.length > 1 ? `${s}: ` : '');
   for (const s of servicios) {
-    // Solo las formas con categoría (matriz y SOCIO VIRTUAL) la exigen: SOCIO EMPRESARIAL (por territorio) e INFORNET (único) resuelven sin ella.
-    if (usaCategoria(formaPrecio(s)) && !cat) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: `${s} se cobra por categoría y el expediente no trae categoría de prueba (PRE EMPLEO / RUTINA / ESPECIFICO).` };
-    const r = resolverTarifa(ctx.tarifas, { nit, tipoPrueba: s, categoria: cat, territorio: ter || undefined });
-    if (r.estado !== 'ok') return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: prefijo(s) + r.mensaje };
-    partes.push(...(r.componentes ?? [r.tarifa])); avisos.push(...r.avisos);
+    const r = precioDe(s);
+    if (!r.ok) return { ...base, estado: 'sin_tarifa', nit, monto: null, detalle: prefijo(s) + r.mensaje, pruebas };
+    partes.push(...r.partes); avisos.push(...r.avisos);
   }
   const monto = round2(partes.reduce((s, t) => s + Number(t.monto), 0));
   return {
     ...base, estado: 'resuelta', nit, monto,
     componentes: partes.map(t => ({ tipoPrueba: canonTipoPrueba(t.tipoPrueba), categoria: canonCategoria(t.categoria), territorio: normalizarTexto(t.territorio), monto: Number(t.monto), tarifarioId: t.id, aprobada: !!t.aprobadoEn })),
     detalle: [...new Set(avisos)].join(' '),
+    pruebas,
   };
 }
 
@@ -143,26 +173,44 @@ export function cobroPendiente(statusCobro: string | null | undefined, estatusPa
   return statusPendiente && normalizarTexto(estatusPago) !== 'PAGADO';
 }
 
+export type ExpedienteCola = Pick<ExpedienteLocal, 'terminado' | 'cancelado' | 'eliminado' | 'estadoTarifa' | 'statusCobroExterno' | 'estatusPagoExterno' | 'arranqueExcluido' | 'pruebas'>;
+
 /**
- * Listo para la cola "Por facturar": terminado, vigente, sin factura local, con cobro pendiente (y no pagado) en la
- * Agenda y (022) no anterior al arranque del cliente (`arranqueExcluido`, anotado al leer desde cliente_externo.facturar_desde).
+ * 024: el EXPEDIENTE deja pasar a la cola: vigente (no eliminado, no excluido), con cobro pendiente (y no pagado)
+ * en la Agenda (021) y (022) no anterior al arranque del cliente. `terminado` ya no va acá: lo exige cada prueba
+ * según su servicio (pruebaEnCola). Misma regla que facturacion_componente_en_cola en SQL.
  */
-export function enCola(e: Pick<ExpedienteLocal, 'terminado' | 'cancelado' | 'eliminado' | 'estadoTarifa' | 'facturaId' | 'statusCobroExterno' | 'estatusPagoExterno' | 'arranqueExcluido'>): boolean {
-  return e.terminado && !e.cancelado && !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && !e.facturaId && cobroPendiente(e.statusCobroExterno, e.estatusPagoExterno) && !e.arranqueExcluido;
+export function expedienteEnCola(e: Omit<ExpedienteCola, 'pruebas'>): boolean {
+  return !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && cobroPendiente(e.statusCobroExterno, e.estatusPagoExterno) && !e.arranqueExcluido;
 }
+
+/** 024: la PRUEBA está en cola: cobra, sin factura, sin detalle vivo; POLIGRAFO/SOCIO/FEE no exigen `terminado`, los demás sí. */
+export function pruebaEnCola(p: Pick<PruebaLocal, 'servicio' | 'situacion' | 'facturaId' | 'detalleId'>, e: Omit<ExpedienteCola, 'pruebas'>): boolean {
+  return expedienteEnCola(e) && p.situacion === 'cobra' && !p.facturaId && !p.detalleId && (servicioPorEstado(p.servicio) || (e.terminado && !e.cancelado));
+}
+export const pruebasEnCola = <T extends ExpedienteCola>(e: T): T['pruebas'] => e.pruebas.filter(p => pruebaEnCola(p, e));
+/** Pruebas que se pueden facturar hoy: en cola, con precio resuelto > 0. */
+export const pruebasFacturables = <T extends ExpedienteCola>(e: T): T['pruebas'] => pruebasEnCola(e).filter(p => p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0);
+/** Pruebas que esperan resultado (informativo). */
+export const pruebasPendientes = (e: Pick<ExpedienteLocal, 'pruebas'>): PruebaLocal[] => e.pruebas.filter(p => p.situacion === 'pendiente' && !p.facturaId);
+
+/** En cola "Por facturar": el expediente tiene al menos una prueba en cola (024). */
+export function enCola(e: ExpedienteCola): boolean { return pruebasEnCola(e).length > 0; }
 
 /** 022: ¿la fecha de ingreso es anterior al arranque del cliente? ('YYYY-MM-DD' compara bien como texto; sin fecha → no se excluye). */
 export function antesDelArranque(fechaIngreso: string | null | undefined, facturarDesde: string | null | undefined): boolean {
   return !!facturarDesde && !!fechaIngreso && fechaIngreso.slice(0, 10) < facturarDesde.slice(0, 10);
 }
 
-/** Con precio y en cola (entra al flujo de facturación). */
-export const conPrecio = (e: ExpedienteLocal): boolean => enCola(e) && e.estadoTarifa === 'resuelta' && (e.montoCalculado ?? 0) > 0;
-/** Se puede meter en un detalle nuevo: con precio, en cola y NO reservado por otro detalle (019). */
-export const facturable = (e: ExpedienteLocal): boolean => conPrecio(e) && !e.detalleId;
+/** Con precio y en cola: alguna prueba se puede facturar hoy (024). */
+export const conPrecio = (e: ExpedienteCola): boolean => pruebasFacturables(e).length > 0;
+/** Se puede meter en un detalle nuevo (las reservadas en otro detalle ya no cuentan como en cola). */
+export const facturable = (e: ExpedienteCola): boolean => conPrecio(e);
+/** Monto sin IVA cobrable hoy del expediente (suma de sus pruebas facturables). */
+export const montoFacturable = (e: ExpedienteCola): number => round2(pruebasFacturables(e).reduce((s, p) => s + (p.montoCalculado ?? 0), 0));
 
 /** Un expediente de la Agenda → la fila que se guarda (sin id ni timestamps). */
-export function expedienteALocal(exp: ExpedienteAgenda, c: Clasificacion): Omit<ExpedienteLocal, 'id' | 'facturaId' | 'facturaAppId' | 'noFactura' | 'facturadoEn' | 'facturadoPor' | 'writebackEstado' | 'writebackDetalle' | 'writebackEn' | 'cobroWritebackEstado' | 'cobroWritebackDetalle' | 'detalleId' | 'updatedAt'> {
+export function expedienteALocal(exp: ExpedienteAgenda, c: Clasificacion): Omit<ExpedienteLocal, 'id' | 'facturaId' | 'facturaAppId' | 'noFactura' | 'facturadoEn' | 'facturadoPor' | 'writebackEstado' | 'writebackDetalle' | 'writebackEn' | 'cobroWritebackEstado' | 'cobroWritebackDetalle' | 'detalleId' | 'updatedAt' | 'pruebas'> & { pruebas: PruebaLocal[]; pruebasFirma: string } {
   const cobro = exp.cobro ?? {};
   const num = (v: unknown): number | null => (v === null || v === undefined || v === '' ? null : Number.isFinite(Number(v)) ? Number(v) : null);
   const txt = (v: unknown): string => String(v ?? '').trim();
@@ -201,6 +249,10 @@ export function expedienteALocal(exp: ExpedienteAgenda, c: Clasificacion): Omit<
     estadoTarifa: c.estado,
     detalleTarifa: c.detalle,
     componentes: c.componentes,
+    estadoPoligrafo: txt(exp.estadoPoligrafo) || null,
+    estadoSocio: txt(exp.estadoSocio) || null,
+    pruebas: [],
+    pruebasFirma: firmaPruebas(c.pruebas),
     creadoEnExterno: exp.creadoEn || null,
     actualizadoEnExterno: exp.actualizadoEn || null,
     actualizadoEnExternoCrudo: exp.actualizadoEn || null,
@@ -227,24 +279,32 @@ export function centroPorServicio(tipoPrueba: string, centros: readonly CentroCo
 }
 
 export interface LineaFactura { centroCostoId: string; subtotal: number; iva: number; total: number }
-export interface DetalleFactura { idExterno: string; tipoPrueba: string; categoria: string; territorio: string; monto: number; centroCostoId: string; persona: string }
+export interface DetalleFactura { idExterno: string; componenteId: string; tipoPrueba: string; categoria: string; territorio: string; monto: number; centroCostoId: string; persona: string; /** 024: "Polígrafo — aprobó" */ resultado: string }
+/** 024: una prueba elegida para facturar, con los datos del expediente que necesita la factura. */
+export interface PruebaParaFactura extends Pick<PruebaLocal, 'id' | 'idExterno' | 'servicio' | 'estadoPrueba' | 'categoria' | 'territorio' | 'montoCalculado'> { persona: string }
+
+/** Una prueba cualquiera (p. ej. reservada en un detalle) con la persona, lista para armar la factura. */
+export const pruebaParaFactura = (p: PruebaLocal, persona: string): PruebaParaFactura => ({ id: p.id, idExterno: p.idExterno, servicio: p.servicio, estadoPrueba: p.estadoPrueba, categoria: p.categoria, territorio: p.territorio, montoCalculado: p.montoCalculado, persona });
+
+/** Pruebas facturables de una lista de expedientes, con la persona (lo que entra al detalle / a la factura). */
+export function pruebasParaFactura(expedientes: readonly ExpedienteLocal[], filtro?: (p: PruebaLocal) => boolean): PruebaParaFactura[] {
+  const out: PruebaParaFactura[] = [];
+  for (const e of expedientes) for (const p of pruebasFacturables(e)) if (!filtro || filtro(p)) out.push({ id: p.id, idExterno: p.idExterno, servicio: p.servicio, estadoPrueba: p.estadoPrueba, categoria: p.categoria, territorio: p.territorio, montoCalculado: p.montoCalculado, persona: e.persona });
+  return out;
+}
 
 /**
- * Arma la factura de un grupo de expedientes de UN cliente: un renglón de
- * detalle por servicio (una fila con lista "POLIGRAFO + SOCIOECONOMICO" → dos
- * renglones; cada MITAD de un completo ya es su propia fila) y una línea por centro
- * de costo con subtotal (sin IVA) + IVA 12 % + total. `centroDe(tipo)` decide
- * el centro de cada servicio; si devuelve null, se reporta en `sinCentro`.
+ * Arma la factura de un grupo de PRUEBAS de UN cliente (024): un renglón de detalle por
+ * prueba (persona + servicio + resultado legible) y una línea por centro de costo con
+ * subtotal (sin IVA) + IVA 12 % + total. `centroDe(servicio)` decide el centro de cada
+ * servicio; si devuelve null, se reporta en `sinCentro`.
  */
-export function armarFactura(expedientes: readonly ExpedienteLocal[], centroDe: (tipoPrueba: string) => string | null): { lineas: LineaFactura[]; detalle: DetalleFactura[]; subtotal: number; iva: number; total: number; sinCentro: string[] } {
+export function armarFactura(pruebas: readonly PruebaParaFactura[], centroDe: (tipoPrueba: string) => string | null): { lineas: LineaFactura[]; detalle: DetalleFactura[]; subtotal: number; iva: number; total: number; sinCentro: string[] } {
   const detalle: DetalleFactura[] = []; const sinCentro = new Set<string>();
-  for (const e of expedientes) {
-    const partes = e.componentes.length ? e.componentes : [{ tipoPrueba: e.tipoCobrado, categoria: e.categoriaCanon, territorio: e.territorioResuelto, monto: e.montoCalculado ?? 0 }];
-    for (const p of partes) {
-      const cc = centroDe(p.tipoPrueba);
-      if (!cc) sinCentro.add(p.tipoPrueba);
-      detalle.push({ idExterno: e.idExterno, tipoPrueba: p.tipoPrueba, categoria: p.categoria, territorio: p.territorio, monto: round2(Number(p.monto)), centroCostoId: cc ?? '', persona: e.persona });
-    }
+  for (const p of pruebas) {
+    const cc = centroDe(p.servicio);
+    if (!cc) sinCentro.add(p.servicio);
+    detalle.push({ idExterno: p.idExterno, componenteId: p.id, tipoPrueba: p.servicio, categoria: p.categoria, territorio: p.territorio, monto: round2(Number(p.montoCalculado ?? 0)), centroCostoId: cc ?? '', persona: p.persona, resultado: resultadoLegible(p.servicio, p.estadoPrueba) });
   }
   const porCentro = new Map<string, number>();
   for (const d of detalle) porCentro.set(d.centroCostoId, round2((porCentro.get(d.centroCostoId) ?? 0) + d.monto));
@@ -253,6 +313,14 @@ export function armarFactura(expedientes: readonly ExpedienteLocal[], centroDe: 
   const iva = round2(lineas.reduce((s, l) => s + l.iva, 0));
   const total = round2(lineas.reduce((s, l) => s + l.total, 0));
   return { lineas, detalle, subtotal, iva, total, sinCentro: [...sinCentro] };
+}
+
+/** 024: los números de factura de un expediente (todas sus pruebas facturadas, en orden) unidos con " / ", y el monto sin IVA facturado. */
+export function facturasDelExpediente(e: Pick<ExpedienteLocal, 'pruebas' | 'noFactura' | 'montoCalculado'>): { numero: string; montoSinIva: number } {
+  const fact = e.pruebas.filter(p => p.facturaId && p.noFactura).sort((a, b) => (a.facturadoEn ?? '').localeCompare(b.facturadoEn ?? '') || a.servicio.localeCompare(b.servicio));
+  const numeros = [...new Set(fact.map(p => p.noFactura!))];
+  if (!numeros.length) return { numero: e.noFactura ?? '', montoSinIva: e.montoCalculado ?? 0 };
+  return { numero: numeros.join(' / '), montoSinIva: Math.round(fact.reduce((s, p) => s + (p.montoCalculado ?? 0), 0) * 100) / 100 };
 }
 
 /** Monto que se escribe de vuelta a la Agenda por expediente: con IVA (como lo registra Golden hoy) o sin IVA. */

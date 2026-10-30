@@ -16,9 +16,10 @@ import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
 import { crearDetalleAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
-import { armarFactura, centroPorServicio, enCola, esMitadDeCompleto, facturable } from '@/lib/facturacion-agenda/mapeo';
+import { armarFactura, centroPorServicio, enCola, esMitadDeCompleto, facturable, montoFacturable, pruebaEnCola, pruebasEnCola, pruebasFacturables, pruebasParaFactura, pruebasPendientes } from '@/lib/facturacion-agenda/mapeo';
+import { ETIQUETA_SITUACION, ICONO_SITUACION, resultadoLegible } from '@/lib/facturacion-agenda/situacion';
 import { filtrarExpedientes, mesesDisponibles, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
-import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
+import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type PruebaLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import type { GrupoDetalle } from '@/lib/db/facturacion-agenda';
 import { ReintentarWritebackButton } from './reintentar-writeback-button';
 import { GenerarTarifas } from '@/components/tarifario/generar-tarifas';
@@ -29,8 +30,8 @@ import type { Customer } from '@/lib/types';
 
 interface Props { datos: GrupoDetalle; writeback: boolean; configurada: boolean; montoModo: 'con_iva' | 'sin_iva'; /** abrir "Generar tarifas" de entrada (llega de crear cliente + mapear) */ generarInicial?: boolean }
 
-const WB_BADGE: Record<WritebackEstado, string> = { confirmado: 'badge-olive', omitido: 'badge-mute', pendiente: 'badge-warn', conflicto: 'badge-wine', error: 'badge-wine' };
-const WB_TEXTO: Record<WritebackEstado, string> = { confirmado: 'En Agenda', omitido: 'Sin enviar', pendiente: 'Falta confirmar', conflicto: 'Conflicto', error: 'Error' };
+const WB_BADGE: Record<WritebackEstado, string> = { confirmado: 'badge-olive', omitido: 'badge-mute', pendiente: 'badge-warn', conflicto: 'badge-wine', error: 'badge-wine', parcial: 'badge-warn' };
+const WB_TEXTO: Record<WritebackEstado, string> = { confirmado: 'En Agenda', omitido: 'Sin enviar', pendiente: 'Falta confirmar', conflicto: 'Conflicto', error: 'Error', parcial: 'Cobro parcial' };
 
 export function GrupoDetalleView({ datos, writeback, configurada, montoModo, generarInicial = false }: Props) {
   const router = useRouter();
@@ -46,29 +47,32 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
   const exps = datos.expedientes;
   const meses = useMemo(() => mesesDisponibles(exps), [exps]);
   const filas = useMemo(() => filtrarExpedientes(exps, { mes: mes || undefined, cobro, soloListos }), [exps, mes, cobro, soloListos]);
-  const listos = exps.filter(facturable);
-  const totalListo = Math.round(listos.reduce((s, e) => s + (e.montoCalculado ?? 0), 0) * 100) / 100;
-  const sinTarifa = exps.filter(e => enCola(e) && e.estadoTarifa === 'sin_tarifa').length;
-  const sinMapear = exps.filter(e => enCola(e) && e.estadoTarifa === 'cliente_sin_mapear').length;
-  const facturados = exps.filter(e => e.facturaId).length;
-  const seleccion = exps.filter(e => sel.has(e.idExterno) && facturable(e));
+  // 024: la unidad es la PRUEBA. Listos / total / sin tarifa / pendientes se cuentan por prueba (misma regla que la cola en SQL).
+  const listos = exps.flatMap(pruebasFacturables);
+  const totalListo = Math.round(exps.reduce((s, e) => s + montoFacturable(e), 0) * 100) / 100;
+  const sinTarifa = exps.reduce((n, e) => n + pruebasEnCola(e).filter(p => p.estadoTarifa === 'sin_tarifa').length, 0);
+  const sinMapear = exps.reduce((n, e) => n + pruebasEnCola(e).filter(p => p.estadoTarifa === 'cliente_sin_mapear').length, 0);
+  const pendientes = exps.flatMap(pruebasPendientes);
+  const facturados = exps.filter(e => e.facturaId || e.pruebas.some(p => p.facturaId)).length;
+  const parciales = exps.filter(e => e.writebackEstado === 'parcial').length;
+  const seleccion = useMemo(() => pruebasParaFactura(exps, p => sel.has(p.id)), [exps, sel]);
   const preview = useMemo(() => armarFactura(seleccion, t => centroPorServicio(t, datos.centros)), [seleccion, datos.centros]);
-  const facturablesVisibles = filas.filter(facturable);
-  const todosSel = facturablesVisibles.length > 0 && facturablesVisibles.every(e => sel.has(e.idExterno));
+  const facturablesVisibles = filas.flatMap(pruebasFacturables);
+  const todosSel = facturablesVisibles.length > 0 && facturablesVisibles.every(p => sel.has(p.id));
 
   const generarDetalle = async () => {
     if (!seleccion.length) return;
     setCreando(true);
     try {
-      const r = await crearDetalleAction({ idsExternos: seleccion.map(e => e.idExterno) });
+      const r = await crearDetalleAction({ componenteIds: seleccion.map(p => p.id) });
       if (!r.ok) { toast.error(r.error); return; }
-      toast.success(`Detalle ${r.detalle.correlativo} generado en borrador · ${r.detalle.expedientes} expediente(s) · ${Q(r.detalle.total)} con IVA`);
+      toast.success(`Detalle ${r.detalle.correlativo} generado en borrador · ${r.detalle.pruebas || r.detalle.expedientes} prueba(s) de ${r.detalle.expedientes} candidato(s) · ${Q(r.detalle.total)} con IVA`);
       setSel(new Set());
       router.push(`/por-facturar/detalle/${r.detalle.id}`);
     } finally { setCreando(false); }
   };
   const toggle = (id: string) => setSel(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
-  const toggleTodos = () => setSel(s => { const n = new Set(s); if (todosSel) facturablesVisibles.forEach(e => n.delete(e.idExterno)); else facturablesVisibles.forEach(e => n.add(e.idExterno)); return n; });
+  const toggleTodos = () => setSel(s => { const n = new Set(s); if (todosSel) facturablesVisibles.forEach(p => n.delete(p.id)); else facturablesVisibles.forEach(p => n.add(p.id)); return n; });
 
   return (
     <div className="page">
@@ -94,8 +98,9 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
       {!datos.nit && !datos.noFactura && puedeFacturar && <MapearCliente datos={datos} />}
       {!datos.nit && !datos.noFactura && !puedeFacturar && <div className="card" role="status" style={{ borderColor: 'var(--wine)', marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Esta empresa de la Agenda todavía no está mapeada a un cliente: un admin o contador tiene que mapearla antes de facturar.</div></div>}
 
-      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)', marginBottom: 14 }}>
-        <div className="kpi" data-kpi="listos"><div className="kpi-label">Listos para facturar</div><div className="kpi-value">{listos.length}</div><div className="kpi-delta"><span className="vs">de {exps.filter(enCola).length} en cola</span></div></div>
+      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)', marginBottom: 14 }}>
+        <div className="kpi" data-kpi="listos"><div className="kpi-label">Cobrable ahora</div><div className="kpi-value">{listos.length}</div><div className="kpi-delta"><span className="vs">prueba{listos.length === 1 ? '' : 's'} con resultado y precio · {exps.filter(enCola).length} candidato{exps.filter(enCola).length === 1 ? '' : 's'} en cola</span></div></div>
+        <div className="kpi" data-kpi="pendientes" title="Pruebas que esperan resultado en la Agenda: se cobran cuando lo carguen"><div className="kpi-label">Pendiente de resultado</div><div className="kpi-value" style={{ color: 'var(--ink-3)' }}>{pendientes.length}</div><div className="kpi-delta"><span className="vs">{parciales ? `${parciales} candidato${parciales === 1 ? '' : 's'} con cobro parcial` : 'esperan a la Agenda'}</span></div></div>
         <div className="kpi" data-kpi="total"><div className="kpi-label">Total sin IVA</div><div className="kpi-value">{Q(totalListo)}</div><div className="kpi-delta"><span className="vs">con IVA {Q(Math.round(totalListo * 112) / 100)}</span></div></div>
         <div className="kpi" data-kpi="sin-tarifa"><div className="kpi-label">Sin tarifa</div><div className="kpi-value" style={{ color: sinTarifa ? 'var(--burnt, #b5651d)' : undefined }}>{sinTarifa}</div><div className="kpi-delta"><span className="vs">{sinTarifa ? 'cargá la tarifa y se resuelve solo' : 'todas con precio'}</span></div></div>
         <div className="kpi" data-kpi="sin-mapear"><div className="kpi-label">Cliente sin mapear</div><div className="kpi-value" style={{ color: sinMapear ? 'var(--wine)' : undefined }}>{sinMapear}</div><div className="kpi-delta"><span className="vs">{sinMapear ? 'mapeá la empresa' : 'mapeado'}</span></div></div>
@@ -106,8 +111,8 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
         <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
           <select className="input" value={mes} onChange={e => setMes(e.target.value)} aria-label="Mes de ingreso" title="Mes de ingreso"><option value="">Todos los meses</option>{meses.map(m => <option key={m} value={m}>{m}</option>)}</select>
           <select className="input" value={cobro} onChange={e => setCobro(e.target.value as FiltroCobro)} aria-label="Estado de cobro" title="Estado de cobro"><option value="por_facturar">Por facturar (cobro pendiente en Agenda)</option><option value="facturados">Facturados / resueltos</option><option value="todos">Todos</option></select>
-          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={soloListos} onChange={e => setSoloListos(e.target.checked)} aria-label="Solo con precio resuelto" /> Solo con precio resuelto</label>
-          <span style={{ marginLeft: 'auto', color: 'var(--ink-4)' }}>{filas.length} expediente{filas.length === 1 ? '' : 's'}</span>
+          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={soloListos} onChange={e => setSoloListos(e.target.checked)} aria-label="Solo lo cobrable ahora" /> Solo lo cobrable ahora</label>
+          <span style={{ marginLeft: 'auto', color: 'var(--ink-4)' }}>{filas.length} candidato{filas.length === 1 ? '' : 's'} · {filas.reduce((n, e) => n + (soloListos ? pruebasFacturables(e).length : Math.max(e.pruebas.length, 1)), 0)} prueba(s)</span>
         </div>
       </div>
 
@@ -117,11 +122,16 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
           <table className="table" style={{ '--col-persona-left': puedeFacturar ? '56px' : '0px' } as React.CSSProperties}>
             <thead><tr>
               {puedeFacturar && <th className="col-sel"><input type="checkbox" checked={todosSel} onChange={toggleTodos} aria-label="Seleccionar todos los facturables visibles" disabled={facturablesVisibles.length === 0} /></th>}
-              <th className="col-persona">Persona</th><th>Ingreso</th><th>Servicio</th><th>Categoría</th><th>Territorio</th><th className="num">Precio sin IVA</th><th>Cobro en Agenda</th><th className="col-acciones">Factura</th>
+              <th className="col-persona">Persona</th><th>Ingreso</th><th>Prueba · estado</th><th>Categoría</th><th>Territorio</th><th className="num">Precio sin IVA</th><th>Cobro en Agenda</th><th className="col-acciones">Factura</th>
             </tr></thead>
             <tbody>
               {filas.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>Ningún expediente con esos filtros.</td></tr>}
-              {filas.map(e => <FilaExpediente key={e.idExterno} e={e} puede={puedeFacturar} sel={sel.has(e.idExterno)} onToggle={() => toggle(e.idExterno)} />)}
+              {filas.flatMap(e => {
+                // 024: una fila por PRUEBA del candidato (✅ cobrada · 🟡 por cobrar · ⏳ pendiente · ⛔ no se cobra); sin pruebas calculadas → la fila del expediente como antes.
+                const pruebas = soloListos ? pruebasFacturables(e) : e.pruebas;
+                if (!pruebas.length) return [<FilaExpediente key={e.idExterno} e={e} p={null} primera puede={puedeFacturar} sel={false} onToggle={() => undefined} />];
+                return pruebas.map((p, i) => <FilaExpediente key={p.id} e={e} p={p} primera={i === 0} puede={puedeFacturar} sel={sel.has(p.id)} onToggle={() => toggle(p.id)} />);
+              })}
             </tbody>
           </table>
         </div>
@@ -130,7 +140,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
       {sel.size > 0 && puedeFacturar && (
         <div role="region" aria-label="Selección para el detalle" style={{ position: 'fixed', left: 0, right: 0, bottom: 0, zIndex: 50, background: 'var(--paper)', borderTop: '1px solid var(--line-2)', boxShadow: '0 -8px 24px rgba(0,0,0,0.08)' }}>
           <div style={{ maxWidth: 1400, margin: '0 auto', padding: '10px 24px', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
-            <div><strong>{seleccion.length}</strong> expediente{seleccion.length === 1 ? '' : 's'} seleccionado{seleccion.length === 1 ? '' : 's'}</div>
+            <div><strong>{seleccion.length}</strong> prueba{seleccion.length === 1 ? '' : 's'} seleccionada{seleccion.length === 1 ? '' : 's'} <span className="cell-mute">({new Set(seleccion.map(p => p.idExterno)).size} candidato{new Set(seleccion.map(p => p.idExterno)).size === 1 ? '' : 's'})</span></div>
             <div className="num">Subtotal <strong>{Q(preview.subtotal)}</strong> · IVA {Q(preview.iva)} · Total <strong>{Q(preview.total)}</strong></div>
             <button className="btn btn-ghost" onClick={() => setSel(new Set())}>Limpiar</button>
             <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => void generarDetalle()} disabled={seleccion.length === 0 || creando} data-accion="generar-detalle"><I.Receipt size={13} /> {creando ? 'Generando…' : 'Generar detalle'}</button>
@@ -164,46 +174,68 @@ function ServicioCell({ e }: { e: ExpedienteLocal }) {
   );
 }
 
-function FilaExpediente({ e, puede, sel, onToggle }: { e: ExpedienteLocal; puede: boolean; sel: boolean; onToggle: () => void }) {
-  const esFacturable = facturable(e);
+function FilaExpediente({ e, p, primera, puede, sel, onToggle }: { e: ExpedienteLocal; p: PruebaLocal | null; primera: boolean; puede: boolean; sel: boolean; onToggle: () => void }) {
+  const esFacturable = p ? pruebaEnCola(p, e) && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 : facturable(e);
   const estadoCobro = [e.statusCobroExterno, e.estatusPagoExterno].filter(Boolean).join(' · ') || 'sin estado';
+  const cobrada = !!p?.facturaId;
+  const enColaP = !!p && pruebaEnCola(p, e);
+  const icono = cobrada ? '✅' : p ? (enColaP ? '🟡' : ICONO_SITUACION[p.situacion]) : '';
+  const etiqueta = cobrada ? `cobrada · factura ${p!.noFactura ?? ''}` : p ? (p.situacion === 'cobra' ? (enColaP ? 'por cobrar' : 'con resultado · fuera de la cola') : ETIQUETA_SITUACION[p.situacion].toLowerCase()) : '';
+  const atenuada = p ? (!enColaP && !cobrada) : (!enCola(e) && !e.facturaId);
+  const cat = p ? p.categoria : e.categoriaCanon, ter = p ? p.territorio : e.territorioResuelto;
   return (
-    <tr data-expediente={e.idExterno} style={{ opacity: !enCola(e) && !e.facturaId ? 0.65 : 1 }}>
-      {puede && <td className="col-sel"><input type="checkbox" checked={sel} onChange={onToggle} disabled={!esFacturable} aria-label={`Seleccionar ${e.persona || e.idExterno}`} /></td>}
+    <tr data-expediente={e.idExterno} data-prueba={p?.id ?? ''} data-situacion={p ? (cobrada ? 'cobrada' : enColaP ? 'en_cola' : p.situacion) : ''} style={{ opacity: atenuada ? 0.65 : 1 }}>
+      {puede && <td className="col-sel">{p ? <input type="checkbox" checked={sel} onChange={onToggle} disabled={!esFacturable} aria-label={`Seleccionar ${e.persona || e.idExterno} · ${p.servicio}`} /> : null}</td>}
       <td className="col-persona">
-        <span className="cell-strong cell-ellipsis" title={e.persona || e.idExterno}>{e.persona || '—'}</span>
-        <span className="cell-mute cell-ellipsis" style={{ fontSize: 11 }} title={`${e.puesto || e.idExterno}${e.statusProceso ? ` · ${e.statusProceso}` : ''}${e.solicitante ? ` · solicita ${e.solicitante}` : ''}`}>{e.puesto || e.idExterno}{e.statusProceso ? ` · ${e.statusProceso}` : ''}</span>
+        {primera ? <>
+          <span className="cell-strong cell-ellipsis" title={e.persona || e.idExterno}>{e.persona || '—'}</span>
+          <span className="cell-mute cell-ellipsis" style={{ fontSize: 11 }} title={`${e.puesto || e.idExterno}${e.statusProceso ? ` · ${e.statusProceso}` : ''}${e.solicitante ? ` · solicita ${e.solicitante}` : ''}`}>{e.puesto || e.idExterno}{e.statusProceso ? ` · ${e.statusProceso}` : ''}</span>
+        </> : <span className="cell-mute" style={{ fontSize: 11 }}>└ mismo candidato</span>}
       </td>
-      <td className="num" style={{ fontSize: 12 }}>{e.fechaIngreso ?? '—'}</td>
-      <td className="col-servicio"><ServicioCell e={e} /></td>
-      <td title={e.categoriaPrueba || 'sin categoría'}>{e.categoriaCanon || <span className="cell-mute">—</span>}</td>
-      <td title={e.deptoVisita || 'sin depto. de visita'}>{e.territorioResuelto || <span className="cell-mute">no indicado</span>}</td>
+      <td className="num" style={{ fontSize: 12 }}>{primera ? e.fechaIngreso ?? '—' : ''}</td>
+      <td className="col-servicio">
+        {p ? <>
+          <div data-servicio={p.servicio}>{icono} {p.servicio === 'FEE VISITA SOCIO CANCELADO' ? resultadoLegible(p.servicio, p.estadoPrueba) : p.servicio}</div>
+          <div className="cell-mute" style={{ fontSize: 11 }} title={p.motivo}>{etiqueta}{p.estadoPrueba ? ` · ${p.estadoPrueba}` : ''}</div>
+          {primera && esMitadDeCompleto(e) && <div className="cell-mute" style={{ fontSize: 11 }} title="La Agenda parte un completo en dos expedientes: esta fila cobra solo su prueba; la otra mitad es su propia fila.">COMPLETO · mitad</div>}
+        </> : <ServicioCell e={e} />}
+      </td>
+      <td title={e.categoriaPrueba || 'sin categoría'}>{cat && cat !== 'UNICA' ? cat : <span className="cell-mute">—</span>}</td>
+      <td title={e.deptoVisita || 'sin depto. de visita'}>{ter && ter !== 'UNICA' ? ter : <span className="cell-mute">{p ? '—' : 'no indicado'}</span>}</td>
       <td className="num">
-        {e.estadoTarifa === 'resuelta' && e.montoCalculado !== null
-          ? <span className="cell-strong" title={e.componentes.length > 1 ? e.componentes.map(c => `${c.tipoPrueba} ${Q(c.monto)}`).join(' + ') : e.detalleTarifa || undefined}>{Q(e.montoCalculado)}{e.componentes.some(c => !c.aprobada) && <span className="badge badge-warn" style={{ fontSize: 9, marginLeft: 4 }} title="La tarifa no está aprobada en el tarifario">no aprobada</span>}</span>
-          : <span className={'badge ' + (e.estadoTarifa === 'cliente_sin_mapear' ? 'badge-wine' : e.estadoTarifa === 'excluido_psicometrica' || e.estadoTarifa === 'excluido_no_factura' ? 'badge-mute' : 'badge-warn')} style={{ fontSize: 10 }} title={e.detalleTarifa || undefined}>{ETIQUETA_ESTADO_TARIFA[e.estadoTarifa]}</span>}
+        {p
+          ? (p.estadoTarifa === 'resuelta' && p.montoCalculado !== null
+              ? <span className="cell-strong" title={p.detalleTarifa || undefined}>{Q(p.montoCalculado)}{p.aprobada === false && <span className="badge badge-warn" style={{ fontSize: 9, marginLeft: 4 }} title="La tarifa no está aprobada en el tarifario">no aprobada</span>}</span>
+              : p.situacion === 'cobra'
+                ? <span className={'badge ' + (p.estadoTarifa === 'cliente_sin_mapear' ? 'badge-wine' : p.estadoTarifa.startsWith('excluido') ? 'badge-mute' : 'badge-warn')} style={{ fontSize: 10 }} title={p.detalleTarifa || undefined}>{ETIQUETA_ESTADO_TARIFA[p.estadoTarifa]}</span>
+                : <span className="cell-mute" title={p.motivo}>—</span>)
+          : (e.estadoTarifa === 'resuelta' && e.montoCalculado !== null
+              ? <span className="cell-strong" title={e.detalleTarifa || undefined}>{Q(e.montoCalculado)}</span>
+              : <span className={'badge ' + (e.estadoTarifa === 'cliente_sin_mapear' ? 'badge-wine' : e.estadoTarifa === 'excluido_psicometrica' || e.estadoTarifa === 'excluido_no_factura' ? 'badge-mute' : 'badge-warn')} style={{ fontSize: 10 }} title={e.detalleTarifa || undefined}>{ETIQUETA_ESTADO_TARIFA[e.estadoTarifa]}</span>)}
       </td>
       <td style={{ fontSize: 12 }}>
-        <div>{estadoCobro}</div>
-        {e.arranqueExcluido && <span className="badge badge-mute" data-antes-arranque style={{ fontSize: 10 }} title="Ingreso anterior al arranque de la facturación de este cliente: fuera de la cola, sigue en la data para conciliar">antes del arranque</span>}
-        {e.montoExterno !== null && <div className="cell-mute num" style={{ fontSize: 11 }} title="Monto registrado en la Agenda">Agenda: {Q(e.montoExterno)}</div>}
-        {(e.cobroMegapaca ?? 0) > 0 && <span className="badge badge-outline" style={{ fontSize: 10 }} title="Cobro aparte de Megapaca: no se mezcla con el monto normal">Megapaca {Q(e.cobroMegapaca)}</span>}
+        {primera && <>
+          <div>{estadoCobro}</div>
+          {e.arranqueExcluido && <span className="badge badge-mute" data-antes-arranque style={{ fontSize: 10 }} title="Ingreso anterior al arranque de la facturación de este cliente: fuera de la cola, sigue en la data para conciliar">antes del arranque</span>}
+          {e.montoExterno !== null && <div className="cell-mute num" style={{ fontSize: 11 }} title="Monto registrado en la Agenda">Agenda: {Q(e.montoExterno)}</div>}
+          {(e.cobroMegapaca ?? 0) > 0 && <span className="badge badge-outline" style={{ fontSize: 10 }} title="Cobro aparte de Megapaca: no se mezcla con el monto normal">Megapaca {Q(e.cobroMegapaca)}</span>}
+        </>}
       </td>
       <td className="col-acciones" style={{ fontSize: 12 }}>
-        {e.facturaId && e.noFactura
+        {p && cobrada
           ? <>
-              <Link href={`/facturacion/${e.facturaAppId ?? ''}`} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{e.noFactura}</Link>
-              {e.writebackEstado && <span className={'badge ' + WB_BADGE[e.writebackEstado]} style={{ fontSize: 10, marginLeft: 6 }} title={e.writebackDetalle || ETIQUETA_WRITEBACK[e.writebackEstado]}>{WB_TEXTO[e.writebackEstado]}</span>}
-              {e.writebackEstado && ['pendiente', 'conflicto', 'error'].includes(e.writebackEstado) && <div style={{ marginTop: 4 }}><ReintentarWritebackButton noFactura={e.noFactura} compacto /></div>}
-              {e.cobroWritebackEstado && <div className="cell-mute" style={{ fontSize: 10 }} title={e.cobroWritebackDetalle || undefined}>cobro → Agenda: {e.cobroWritebackEstado}</div>}
+              {e.facturaAppId && e.noFactura === p.noFactura ? <Link href={`/facturacion/${e.facturaAppId}`} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{p.noFactura}</Link> : <span className="cell-strong">{p.noFactura}</span>}
+              {primera && e.writebackEstado && <span className={'badge ' + WB_BADGE[e.writebackEstado]} style={{ fontSize: 10, marginLeft: 6 }} title={e.writebackDetalle || ETIQUETA_WRITEBACK[e.writebackEstado]}>{WB_TEXTO[e.writebackEstado]}</span>}
+              {primera && e.writebackEstado && ['pendiente', 'conflicto', 'error'].includes(e.writebackEstado) && e.noFactura && <div style={{ marginTop: 4 }}><ReintentarWritebackButton noFactura={e.noFactura} compacto /></div>}
+              {primera && e.cobroWritebackEstado && <div className="cell-mute" style={{ fontSize: 10 }} title={e.cobroWritebackDetalle || undefined}>cobro → Agenda: {e.cobroWritebackEstado}</div>}
             </>
-          : e.detalleId ? <Link href={`/por-facturar/detalle/${e.detalleId}`} className="badge badge-warn" style={{ fontSize: 10, textDecoration: 'none' }} title="Reservado en un detalle de facturación (pre-liquidación)">En detalle →</Link>
-          : e.numeroFacturaExterno ? <span className="cell-mute cell-ellipsis" title={`Facturado fuera de la app (número que tiene la Agenda): ${e.numeroFacturaExterno}`}>{e.numeroFacturaExterno}</span> : <span className="cell-mute">—</span>}
+          : p && p.detalleId ? <Link href={`/por-facturar/detalle/${p.detalleId}`} className="badge badge-warn" style={{ fontSize: 10, textDecoration: 'none' }} title="Reservada en un detalle de facturación (pre-liquidación)">En detalle →</Link>
+          : !p && e.facturaId && e.noFactura ? <Link href={`/facturacion/${e.facturaAppId ?? ''}`} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{e.noFactura}</Link>
+          : primera && e.numeroFacturaExterno ? <span className="cell-mute cell-ellipsis" title={`Facturado fuera de la app (número que tiene la Agenda): ${e.numeroFacturaExterno}`}>{e.numeroFacturaExterno}</span> : <span className="cell-mute">—</span>}
       </td>
     </tr>
   );
 }
-
 function NoFacturaBanner({ datos, puede }: { datos: GrupoDetalle; puede: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);

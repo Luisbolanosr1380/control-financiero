@@ -206,7 +206,7 @@ export async function crearTarifa(input: TarifaInput, actor: string): Promise<Ta
 /** Tipos de prueba que la empresa pide en la Agenda (expedientes vigentes del NIT, incluidos los ya facturados). */
 async function tiposAgendaDeNit(nit: string): Promise<string[]> {
   const sb = supabase(); if (!sb) return [];
-  const { data, error } = await sb.from('facturacion_expediente').select('tipo_cobrado, componentes').eq('fuente', 'agenda').eq('nit_resuelto', nit).eq('terminado', true).eq('cancelado', false).eq('eliminado', false).limit(2000);
+  const { data, error } = await sb.from('facturacion_expediente').select('id_externo, tipo_cobrado, componentes').eq('fuente', 'agenda').eq('nit_resuelto', nit).eq('cancelado', false).eq('eliminado', false).limit(2000);
   if (error || !data) return [];
   const tipos = new Set<string>();
   for (const r of data as { tipo_cobrado: string | null; componentes: { tipoPrueba?: string }[] | null }[]) {
@@ -217,6 +217,11 @@ async function tiposAgendaDeNit(nit: string): Promise<string[]> {
     }
     for (const c of r.componentes ?? []) { const ct = canonTipoPrueba(c?.tipoPrueba); if (ct && ct !== 'COMPLETO') tipos.add(ct); }
   }
+  // 024: el FEE (socio cancelado con visita realizada) no es un tipo de la Agenda: aparece como PRUEBA; si el cliente tiene alguna, entra al plan.
+  try {
+    const { data: fee } = await sb.from('facturacion_componente').select('servicio').eq('fuente', 'agenda').eq('servicio', 'FEE VISITA SOCIO CANCELADO').in('id_externo', (data as { id_externo?: string }[]).map(r => r.id_externo ?? '').filter(Boolean)).limit(1);
+    if ((fee ?? []).length) tipos.add('FEE VISITA SOCIO CANCELADO');
+  } catch { /* sin la 024 */ }
   return [...tipos].sort();
 }
 

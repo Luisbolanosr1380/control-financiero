@@ -29,6 +29,9 @@ export interface ExpedienteAgenda {
   terminado?: boolean | null;
   cancelado?: boolean | null;
   fechaEntrega?: string | null;
+  /** 024 (doc 29-oct): estado de cada prueba. null = el proceso no lleva esa prueba o todavía no tiene estado. */
+  estadoPoligrafo?: string | null;
+  estadoSocio?: string | null;
   cobro?: {
     statusCobro?: string | null;
     estatusPago?: string | null;
@@ -49,7 +52,7 @@ export interface ExpedienteAgenda {
 export type EstadoTarifa = 'resuelta' | 'sin_tarifa' | 'cliente_sin_mapear' | 'excluido_psicometrica' | 'excluido_no_factura';
 /** Estados que nunca entran a la cola ni se cotizan: solo se cuentan. */
 export const ESTADOS_EXCLUIDOS: readonly EstadoTarifa[] = ['excluido_psicometrica', 'excluido_no_factura'];
-export type WritebackEstado = 'omitido' | 'pendiente' | 'confirmado' | 'conflicto' | 'error';
+export type WritebackEstado = 'omitido' | 'pendiente' | 'confirmado' | 'conflicto' | 'error' | 'parcial';
 
 export const ETIQUETA_ESTADO_TARIFA: Record<EstadoTarifa, string> = {
   resuelta: 'Precio resuelto',
@@ -65,7 +68,38 @@ export const ETIQUETA_WRITEBACK: Record<WritebackEstado, string> = {
   confirmado: 'Confirmado en Agenda',
   conflicto: 'Conflicto: el expediente cambió en la Agenda',
   error: 'Error al escribir en la Agenda',
+  parcial: 'Cobro parcial: se facturó una prueba y falta otra; no se escribe a la Agenda hasta completar',
 };
+
+/** 024: situación de una prueba (componente) según el estado que manda la Agenda. */
+export type Situacion = 'cobra' | 'pendiente' | 'no_cobra';
+
+/** 024: una PRUEBA de un expediente (facturacion_componente): lo que se cobra, se espera o no se cobra, con su precio y su factura. */
+export interface PruebaLocal {
+  id: string;
+  expedienteId: string;
+  idExterno: string;
+  /** Servicio canónico (POLIGRAFO, SOCIOECONOMICO, FEE VISITA SOCIO CANCELADO, INFORNET…). */
+  servicio: string;
+  /** Texto de la Agenda que decidió (estadoPoligrafo / estadoSocio / statusProceso). */
+  estadoPrueba: string;
+  situacion: Situacion;
+  motivo: string;
+  categoria: string;
+  territorio: string;
+  /** Sin IVA. null si no está resuelta. */
+  montoCalculado: number | null;
+  estadoTarifa: EstadoTarifa;
+  detalleTarifa: string;
+  tarifarioId: string | null;
+  aprobada: boolean | null;
+  /** Reserva en un detalle de facturación (null o un detalle anulado = libre). */
+  detalleId: string | null;
+  facturaId: string | null;
+  noFactura: string | null;
+  facturadoEn: string | null;
+  facturadoPor: string | null;
+}
 
 /** Un servicio dentro del precio resuelto (un COMPLETO trae dos). Monto SIN IVA. */
 export interface ComponentePrecio {
@@ -112,11 +146,16 @@ export interface ExpedienteLocal {
   fechaFacturaExterno: string | null;
   cobroMegapaca: number | null;
   costoVisita: number | null;
-  /** Sin IVA, del tarifario. null si no está resuelta. */
+  /** Sin IVA, del tarifario: la suma de TODOS los servicios de la fila (resolución de precio, sin mirar estados). null si no está resuelta. */
   montoCalculado: number | null;
   estadoTarifa: EstadoTarifa;
   detalleTarifa: string;
   componentes: ComponentePrecio[];
+  /** 024: estado de cada prueba tal como lo manda la Agenda. */
+  estadoPoligrafo: string | null;
+  estadoSocio: string | null;
+  /** 024: las PRUEBAS del expediente (facturacion_componente): la cola, el detalle y la factura van por acá. */
+  pruebas: PruebaLocal[];
   creadoEnExterno: string | null;
   actualizadoEnExterno: string | null;
   /** El `actualizadoEn` tal cual lo mandó la Agenda (para `siActualizadoEn`: la base lo reformatea). */
@@ -179,6 +218,9 @@ export interface DetalleFacturaExpediente {
   centroCostoId: string | null;
   centroNombre: string;
   persona: string;
+  /** 024: prueba (componente) facturada y su resultado legible. */
+  componenteId: string | null;
+  resultado: string;
 }
 
 /** Estados de cobro de la Agenda que siguen "por facturar". El resto ya se resolvió del lado de Golden. */
