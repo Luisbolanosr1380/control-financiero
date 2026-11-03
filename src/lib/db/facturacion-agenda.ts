@@ -25,8 +25,10 @@ import { AgendaApiError, crearAgendaApi, idsDe, resumirCuerpo, type AgendaApi, t
 import { antesDelArranque, armarFactura, centroPorServicio, clasificarExpediente, expedienteALocal, facturasDelExpediente, montoParaAgenda, pruebaEnCola, type ContextoPrecio, type PruebaCalculada, type PruebaParaFactura } from '@/lib/facturacion-agenda/mapeo';
 export { facturasDelExpediente };
 import { agruparPorCliente, kpisPorFacturar, parseClave, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
-import { ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type EmpresaNoFactura, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type PruebaLocal, type Situacion, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
+import { ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type EmpresaNoFactura, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type FuenteFechaResultado, type PruebaLocal, type Situacion, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import { servicioPorEstado } from '@/lib/facturacion-agenda/situacion';
+import { parseProduccion, type ProduccionMensual } from '@/lib/facturacion-agenda/produccion';
+import type { CambioAviso } from '@/lib/facturacion-agenda/aviso';
 import { getTarifario } from './tarifario';
 import { getClientes } from './clientes';
 import { getCentrosCostoActivos, type CentroCosto } from './centros';
@@ -48,6 +50,7 @@ interface ExpRow {
   writeback_estado: WritebackEstado | null; writeback_detalle: string | null; writeback_en: string | null; cobro_writeback_estado: string | null; cobro_writeback_detalle: string | null;
   detalle_id?: string | null;
   /** 024 */ estado_poligrafo?: string | null; estado_socio?: string | null; pruebas_firma?: string | null;
+  /** 025 */ fecha_resultado_poligrafo?: string | null; fecha_resultado_socio?: string | null;
   raw: unknown; updated_at: string | null;
 }
 
@@ -56,11 +59,13 @@ interface PruebaRow {
   id: string; expediente_id: string; id_externo: string; servicio: string; estado_prueba: string | null; situacion: Situacion; motivo: string | null; categoria: string | null; territorio: string | null;
   monto_calculado: number | string | null; estado_tarifa: EstadoTarifa; detalle_tarifa: string | null; tarifario_id: string | null; aprobada: boolean | null;
   detalle_id: string | null; factura_id: string | null; no_factura: string | null; facturado_en: string | null; facturado_por: string | null;
+  /** 025 */ fecha_resultado?: string | null; fecha_resultado_fuente?: FuenteFechaResultado | null;
 }
 const rowToPrueba = (r: PruebaRow): PruebaLocal => ({
   id: r.id, expedienteId: r.expediente_id, idExterno: r.id_externo, servicio: r.servicio, estadoPrueba: r.estado_prueba ?? '', situacion: r.situacion, motivo: r.motivo ?? '', categoria: r.categoria ?? '', territorio: r.territorio ?? '',
   montoCalculado: num(r.monto_calculado), estadoTarifa: r.estado_tarifa, detalleTarifa: r.detalle_tarifa ?? '', tarifarioId: r.tarifario_id, aprobada: r.aprobada,
   detalleId: r.detalle_id, facturaId: r.factura_id, noFactura: r.no_factura, facturadoEn: r.facturado_en, facturadoPor: r.facturado_por,
+  fechaResultado: r.fecha_resultado ?? null, fechaResultadoFuente: r.fecha_resultado_fuente ?? null,
 });
 const num = (v: number | string | null | undefined): number | null => (v === null || v === undefined ? null : Number(v));
 const txt = (v: string | null | undefined): string => v ?? '';
@@ -80,6 +85,7 @@ export const rowToLocal = (r: ExpRow): ExpedienteLocal => ({
   writebackEstado: r.writeback_estado, writebackDetalle: r.writeback_detalle, writebackEn: r.writeback_en, cobroWritebackEstado: r.cobro_writeback_estado, cobroWritebackDetalle: r.cobro_writeback_detalle,
   detalleId: r.detalle_id ?? null,
   estadoPoligrafo: r.estado_poligrafo ?? null, estadoSocio: r.estado_socio ?? null, pruebas: [],
+  fechaResultadoPoligrafo: r.fecha_resultado_poligrafo ?? null, fechaResultadoSocio: r.fecha_resultado_socio ?? null,
   updatedAt: r.updated_at,
 });
 
@@ -93,7 +99,12 @@ const espejoARow = (l: FilaEspejo): Record<string, unknown> => ({
   monto_calculado: l.montoCalculado, estado_tarifa: l.estadoTarifa, detalle_tarifa: l.detalleTarifa || null, componentes: l.componentes,
   creado_en_externo: l.creadoEnExterno, actualizado_en_externo: l.actualizadoEnExterno, raw: l.raw, updated_at: new Date().toISOString(),
   estado_poligrafo: l.estadoPoligrafo, estado_socio: l.estadoSocio, pruebas_firma: l.pruebasFirma,
+  fecha_resultado_poligrafo: l.fechaResultadoPoligrafo, fecha_resultado_socio: l.fechaResultadoSocio,
 });
+/** 025: columnas que solo existen con la migración 025 (si la base no la tiene, el upsert se reintenta sin ellas). */
+const COLUMNAS_025 = ['fecha_resultado_poligrafo', 'fecha_resultado_socio'];
+const sinColumnas025 = (row: Record<string, unknown>): Record<string, unknown> => Object.fromEntries(Object.entries(row).filter(([k]) => !COLUMNAS_025.includes(k)));
+const falta025 = (msg: string): boolean => /fecha_resultado|cambios|id_externo.*facturacion_webhook_evento/.test(msg);
 
 type Consulta = { range(a: number, b: number): PromiseLike<{ data: unknown; error: { message: string } | null }> };
 /** Agota la paginación de PostgREST (cap de 1000) para una consulta con filtros arbitrarios. */
@@ -267,9 +278,11 @@ export async function upsertExpedientes(filas: FilaEspejo[]): Promise<number> {
   for (let i = 0; i < filas.length; i += 200) {
     const parte = filas.slice(i, i + 200);
     const lote = parte.map(espejoARow);
-    const { error } = await sb.from('facturacion_expediente').upsert(lote, { onConflict: 'fuente,id_externo' });
+    let { error } = await sb.from('facturacion_expediente').upsert(lote, { onConflict: 'fuente,id_externo' });
+    if (error && falta025(error.message)) ({ error } = await sb.from('facturacion_expediente').upsert(lote.map(sinColumnas025), { onConflict: 'fuente,id_externo' }));   // sin la 025: el espejo se guarda sin las fechas de la Agenda
     if (error) throw new Error(`facturacion_expediente upsert: ${error.message}`);
-    const items = parte.map(f => ({ id_externo: f.idExterno, componentes: f.pruebasCalc.map(p => ({ servicio: p.servicio, estado_prueba: p.estadoPrueba, situacion: p.situacion, motivo: p.motivo, categoria: p.categoria, territorio: p.territorio, monto_calculado: p.monto, estado_tarifa: p.estadoTarifa, detalle_tarifa: p.detalleTarifa, tarifario_id: p.tarifarioId, aprobada: p.aprobada })) }));
+    // 025: la fecha de resultado candidata viaja con cada prueba; la RPC decide si la fija (nunca pisa una ya fijada; 'agenda' siempre gana).
+    const items = parte.map(f => ({ id_externo: f.idExterno, componentes: f.pruebasCalc.map(p => ({ servicio: p.servicio, estado_prueba: p.estadoPrueba, situacion: p.situacion, motivo: p.motivo, categoria: p.categoria, territorio: p.territorio, monto_calculado: p.monto, estado_tarifa: p.estadoTarifa, detalle_tarifa: p.detalleTarifa, tarifario_id: p.tarifarioId, aprobada: p.aprobada, fecha_resultado: p.fechaResultado, fecha_resultado_fuente: p.fechaResultadoFuente })) }));
     const { error: eC } = await sb.rpc('facturacion_componentes_sincronizar', { p_fuente: FUENTE, p_items: items });
     if (eC && !rpcNoExiste(eC)) throw new Error(`facturacion_componentes_sincronizar: ${eC.message}`);   // sin la 024: el espejo queda sin pruebas (la pantalla avisa)
     n += lote.length;
@@ -277,12 +290,15 @@ export async function upsertExpedientes(filas: FilaEspejo[]): Promise<number> {
   return n;
 }
 
-/** Clasifica (mapeo + tarifario + situación de cada prueba) y guarda expedientes tal como vienen de la Agenda. */
-export async function procesarExpedientes(exps: readonly ExpedienteAgenda[], ctx: Contexto): Promise<number> {
+/**
+ * Clasifica (mapeo + tarifario + situación de cada prueba) y guarda expedientes tal como vienen de la Agenda.
+ * `opts.detectadoEn` (025): `ocurrido` del aviso del webhook → fecha "detectada" de las pruebas que pasan a tener resultado.
+ */
+export async function procesarExpedientes(exps: readonly ExpedienteAgenda[], ctx: Contexto, opts: { detectadoEn?: string | null } = {}): Promise<number> {
   const filas: FilaEspejo[] = [];
   for (const e of exps) {
     if (!e || typeof e !== 'object' || !e.id) continue;
-    const c = clasificarExpediente(e, ctx);
+    const c = clasificarExpediente(e, ctx, opts);
     filas.push({ ...expedienteALocal(e, c), clienteId: ctx.clienteUuidPorEmpresa.get(String(e.empresa?.id ?? '')) ?? null, raw: e, pruebasCalc: c.pruebas });
   }
   return filas.length ? upsertExpedientes(filas) : 0;
@@ -1080,13 +1096,32 @@ export async function procesosDeFactura(noFactura: string): Promise<ProcesosDeFa
 
 // ── Webhook ─────────────────────────────────────────────────────────────────
 
-/** Registra el id del aviso; false si ya se había recibido (ignorar el repetido). */
-export async function registrarEventoWebhook(id: string, tipo: string, ocurrido: string | null): Promise<boolean> {
+/**
+ * Registra el id del aviso; false si ya se había recibido (ignorar el repetido).
+ * 025: guarda también qué expediente (`id_externo`) y qué cambió (`cambios` normalizado), si vienen.
+ */
+export async function registrarEventoWebhook(id: string, tipo: string, ocurrido: string | null, extra: { idExterno?: string | null; cambios?: CambioAviso[] | null } = {}): Promise<boolean> {
   const sb = supabase(); if (!sb) return false;
-  const { error } = await sb.from('facturacion_webhook_evento').insert({ id, fuente: FUENTE, tipo: tipo || null, ocurrido: ocurrido && !Number.isNaN(Date.parse(ocurrido)) ? ocurrido : null });
+  const base = { id, fuente: FUENTE, tipo: tipo || null, ocurrido: ocurrido && !Number.isNaN(Date.parse(ocurrido)) ? ocurrido : null };
+  let { error } = await sb.from('facturacion_webhook_evento').insert({ ...base, id_externo: extra.idExterno ?? null, cambios: extra.cambios ?? null });
+  if (error && error.code !== '23505' && /id_externo|cambios/.test(error.message)) ({ error } = await sb.from('facturacion_webhook_evento').insert(base));   // sin la 025
   if (!error) return true;
   if (error.code === '23505') return false;
   throw new Error(`facturacion_webhook_evento: ${error.message}`);
+}
+
+// ── 025 · Producción por mes de terminación ─────────────────────────────────
+
+/**
+ * Reporte por mes de `fecha_resultado` (RPC facturacion_produccion_mensual): terminado / facturado /
+ * cobrado / backlog / fuera de la cola / no se cobra, con cortes por línea y por cliente, y la
+ * completitud del dato (sin fecha, por fuente). `desde` / `hasta` = 'YYYY-MM-DD'. null si falta la 025.
+ */
+export async function produccionMensual(rango: { desde: string; hasta: string }): Promise<ProduccionMensual | null> {
+  const sb = supabase(); if (!sb) return null;
+  const { data, error } = await sb.rpc('facturacion_produccion_mensual', { p_desde: rango.desde, p_hasta: rango.hasta, p_fuente: FUENTE });
+  if (error) { if (rpcNoExiste(error)) return null; throw new Error(`facturacion_produccion_mensual: ${error.message}`); }
+  return parseProduccion(data);
 }
 
 export const etiquetaEstadoCobro = (s: string | null | undefined): string => (s ? normalizarTexto(s) : 'Sin estado');

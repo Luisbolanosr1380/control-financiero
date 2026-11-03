@@ -6,7 +6,8 @@
 import { conIva, normalizarTexto, round2 } from '@/lib/tarifario/canon';
 import { conPrecio, enCola, facturable, montoFacturable, pruebasEnCola, pruebasFacturables, pruebasPendientes } from './mapeo';
 import { servicioPorEstado } from './situacion';
-import { ESTADOS_EXCLUIDOS, type ExpedienteLocal } from './tipos';
+import { mesGuatemala } from './fecha-resultado';
+import { ESTADOS_EXCLUIDOS, type ExpedienteLocal, type PruebaLocal } from './tipos';
 
 export interface GrupoCliente {
   /** `n-<nit>` (mapeado) o `e-<empresa.id>` (sin mapear). */
@@ -113,10 +114,11 @@ export const mesDe = (fecha: string | null | undefined): string => (fecha ?? '')
 
 export type FiltroCobro = 'por_facturar' | 'facturados' | 'todos';
 
-export function filtrarExpedientes(exps: readonly ExpedienteLocal[], f: { mes?: string; cobro?: FiltroCobro; soloListos?: boolean }): ExpedienteLocal[] {
+export function filtrarExpedientes(exps: readonly ExpedienteLocal[], f: { mes?: string; cobro?: FiltroCobro; soloListos?: boolean; /** 025: solo candidatos con alguna prueba terminada en ese mes (YYYY-MM, Guatemala) */ mesResultado?: string }): ExpedienteLocal[] {
   return exps.filter(e => {
     if (!vigente(e)) return false;
     if (f.mes && mesDe(e.fechaIngreso) !== f.mes) return false;
+    if (f.mesResultado && !pruebasTerminadasEn(e, f.mesResultado).length) return false;
     const cobro = f.cobro ?? 'por_facturar';
     // 024: "por facturar" = con alguna prueba en cola O con pruebas pendientes de resultado (se ven ⏳ para saber qué falta).
     if (cobro === 'por_facturar' && !enCola(e) && !pruebasPendientes(e).length) return false;
@@ -129,4 +131,13 @@ export function filtrarExpedientes(exps: readonly ExpedienteLocal[], f: { mes?: 
 /** Meses (YYYY-MM) presentes, del más reciente al más viejo. */
 export function mesesDisponibles(exps: readonly ExpedienteLocal[]): string[] {
   return [...new Set(exps.filter(vigente).map(e => mesDe(e.fechaIngreso)).filter(Boolean))].sort().reverse();
+}
+
+/** 025: 'YYYY-MM' (Guatemala) en que la prueba tuvo resultado, o ''. */
+export const mesResultadoDe = (p: Pick<PruebaLocal, 'fechaResultado'>): string => mesGuatemala(p.fechaResultado);
+/** 025: pruebas del candidato terminadas (con resultado) en ese mes. */
+export const pruebasTerminadasEn = (e: Pick<ExpedienteLocal, 'pruebas'>, mes: string): PruebaLocal[] => e.pruebas.filter(p => mesResultadoDe(p) === mes);
+/** 025: meses (YYYY-MM) con alguna prueba terminada, del más reciente al más viejo. Para facturar por corte mensual. */
+export function mesesResultadoDisponibles(exps: readonly ExpedienteLocal[]): string[] {
+  return [...new Set(exps.filter(vigente).flatMap(e => e.pruebas.map(mesResultadoDe)).filter(Boolean))].sort().reverse();
 }
