@@ -7,13 +7,13 @@
  * tipo de prueba entre clientes). KPI de tarifas estancadas (histórico 015)
  * y aviso si la 015 falta en esta base.
  */
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { resolverTarifaAction } from '@/app/(app)/tarifario/actions';
 import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, canonTipoPrueba, esSinTarifa } from '@/lib/tarifario/canon';
 import { tarifasDuplicadas, type ResultadoLookup, type Tarifa } from '@/lib/tarifario/lookup';
-import type { EmpresaTarifario } from '@/lib/tarifario/resumen';
+import { terminosPorNit, type EmpresaTarifario } from '@/lib/tarifario/resumen';
 import { UMBRAL_ESTANCADA_MESES_DEFAULT, type AntiguedadPrecio } from '@/lib/tarifario/antiguedad';
 import { EmpresasLista } from './empresas-lista';
 import { TarifasTabla } from './tarifas-tabla';
@@ -32,6 +32,7 @@ type Modo = 'empresas' | 'todas';
 export function TarifarioClient({ disponible, tarifas, empresas, historialDisponible = true, antiguedad = {}, umbralMeses = UMBRAL_ESTANCADA_MESES_DEFAULT }: Props) {
   const [modo, setModo] = useState<Modo>('empresas');
   const [generando, setGenerando] = useState(false);
+  const clientesPorNit = useMemo(() => terminosPorNit(empresas), [empresas]);
   const activas = tarifas.filter(t => t.activo);
   const kpis = {
     empresas: empresas.length,
@@ -84,7 +85,7 @@ export function TarifarioClient({ disponible, tarifas, empresas, historialDispon
 
       {modo === 'empresas'
         ? <EmpresasLista empresas={empresas} umbralMeses={umbralMeses} />
-        : <TarifasTabla disponible={disponible} tarifas={tarifas} antiguedad={antiguedad} umbralMeses={umbralMeses} />}
+        : <TarifasTabla disponible={disponible} tarifas={tarifas} antiguedad={antiguedad} umbralMeses={umbralMeses} clientesPorNit={clientesPorNit} />}
     </div>
   );
 }

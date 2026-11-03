@@ -19,6 +19,8 @@ import { csvEscape } from '@/lib/facturacion/reporte-csv';
 import { activarTarifaAction, aprobarTarifaAction, editarTarifaAction, historialTarifaAction } from '@/app/(app)/tarifario/actions';
 import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, canonCategoria, canonTerritorio, canonTipoPrueba, dimTexto, esSinTarifa, esUnica, formaPrecio } from '@/lib/tarifario/canon';
 import { tarifasDuplicadas, type Tarifa } from '@/lib/tarifario/lookup';
+import { coincideCliente } from '@/lib/clientes/buscar';
+import { nitComparable } from '@/lib/clientes/nit';
 import { ETIQUETAS_ACCION, UMBRAL_ESTANCADA_MESES_DEFAULT, crecimiento, puntosPrecio, textoAntiguedad, type AntiguedadPrecio, type HistorialTarifa } from '@/lib/tarifario/antiguedad';
 import { TarifaForm } from './tarifa-form';
 
@@ -29,6 +31,8 @@ interface Props {
   /** id → antigüedad del precio (bitácora 015 o año de la tarifa). */
   antiguedad?: Record<string, AntiguedadPrecio>;
   umbralMeses?: number;
+  /** NIT comparable → nombre del cliente activo y sus términos de búsqueda (lista de empresas); sin esto se busca por NIT y razón social. */
+  clientesPorNit?: ReadonlyMap<string, { nombre: string; sinCliente: boolean; terminos: readonly string[] }>;
 }
 type Estado = 'activas' | 'pendientes' | 'aprobadas' | 'sin_tarifa' | 'estancadas' | 'duplicadas' | 'inactivas';
 
@@ -37,7 +41,7 @@ const fechaHora = (iso: string) => new Date(iso).toLocaleString('es-GT', { day: 
 const pct = (v: number | null) => (v === null ? '' : `${v > 0 ? '+' : ''}${v.toFixed(2)} %`);
 const QA = (v: number | null) => (v === null ? '—' : esSinTarifa(v) ? 'sin tarifa' : `Q${v.toFixed(2)}`);
 
-export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, antiguedad = {}, umbralMeses = UMBRAL_ESTANCADA_MESES_DEFAULT }: Props) {
+export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, antiguedad = {}, umbralMeses = UMBRAL_ESTANCADA_MESES_DEFAULT, clientesPorNit }: Props) {
   const router = useRouter();
   const puede = usePuede();
   const puedeEditar = puede('catalogos');
@@ -69,7 +73,15 @@ export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, an
   if (tipo)       filas = filas.filter(t => canonTipoPrueba(t.tipoPrueba) === tipo);
   if (categoria)  filas = filas.filter(t => canonCategoria(t.categoria) === categoria);
   if (territorio) filas = filas.filter(t => canonTerritorio(t.territorio) === territorio);
-  if (search.trim()) { const q = search.toLowerCase(); filas = filas.filter(t => t.nit.toLowerCase().includes(q) || t.razonSocial.toLowerCase().includes(q)); }
+  // Búsqueda por cualquier nombre del cliente (empresa, razón social, comercial, aliases) o NIT, sin tildes; sin clientes, por NIT y razón social.
+  if (search.trim()) {
+    const q = search.trim();
+    filas = filas.filter(t => {
+      const c = clientesPorNit?.get(nitComparable(t.nit));
+      return coincideCliente({ id: t.id, name: c?.nombre ?? t.razonSocial, nit: t.nit, razonSocial: t.razonSocial, aliases: c?.terminos }, q);
+    });
+  }
+  const nombreCliente = (t: Tarifa) => clientesPorNit?.get(nitComparable(t.nit))?.nombre;
 
   const descripcion = (t: Tarifa) => `${t.razonSocial || t.nit} ${canonTipoPrueba(t.tipoPrueba)} ${canonCategoria(t.categoria)} ${canonTerritorio(t.territorio)}`;
 
@@ -111,7 +123,7 @@ export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, an
     <>
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
-          {!nitFijo && <input className="input" placeholder="NIT o razón social…" value={search} onChange={e => setSearch(e.target.value)} style={{ minWidth: 220 }} />}
+          {!nitFijo && <input className="input" placeholder="Buscar por nombre, razón social o NIT…" value={search} onChange={e => setSearch(e.target.value)} style={{ minWidth: 260 }} aria-label="Buscar tarifa" data-filtro="tarifa" />}
           <select className="input" value={tipo} onChange={e => setTipo(e.target.value)} title="Tipo de prueba"><option value="">Tipo (todos)</option>{tipos.map(t => <option key={t} value={t}>{t}</option>)}</select>
           <select className="input" value={categoria} onChange={e => setCategoria(e.target.value)} title="Categoría"><option value="">Categoría (todas)</option>{categorias.map(c => <option key={c} value={c}>{esUnica(c) ? 'Única (sin categoría)' : c}</option>)}</select>
           <select className="input" value={territorio} onChange={e => setTerritorio(e.target.value)} title="Territorio"><option value="">Territorio (todos)</option>{TERRITORIOS.map(t => <option key={t} value={t}>{t}</option>)}</select>
@@ -126,8 +138,9 @@ export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, an
       </div>
 
       <div className="card">
+        <div className="table-scroll" data-tabla-tarifas>
         <table className="table">
-          <thead><tr><th>Cliente</th><th>Tipo</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th><th className="num">Con IVA</th><th>Precio desde</th><th>Aprobación</th><th></th></tr></thead>
+          <thead><tr><th className="col-empresa">Cliente</th><th>Tipo</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th><th className="num">Con IVA</th><th>Precio desde</th><th>Aprobación</th><th></th></tr></thead>
           <tbody>
             {filas.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>{tarifas.length === 0 ? 'El tarifario está vacío.' : 'Nada con esos filtros.'}{puedeEditar && disponible && tarifas.length === 0 ? ' Cargá la primera con "Nueva tarifa".' : ''}</td></tr>}
             {filas.map(t => {
@@ -137,7 +150,7 @@ export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, an
               return (
                 <Fragment key={t.id}>
                   <tr style={{ opacity: t.activo ? 1 : 0.55, background: duplicadas.has(t.id) ? 'rgba(138, 42, 42, 0.05)' : undefined }}>
-                    <td><div className="cell-strong" style={{ fontSize: 12.5 }}>{t.razonSocial || '—'}</div><div className="num cell-mute" style={{ fontSize: 11 }}>NIT {t.nit}{duplicadas.has(t.id) && <span className="badge badge-wine" style={{ fontSize: 9.5, marginLeft: 6 }}>Repetida</span>}</div></td>
+                    <td className="col-empresa"><div className="cell-strong cell-ellipsis" style={{ fontSize: 12.5, maxWidth: 'none' }} title={[nombreCliente(t), t.razonSocial].filter(Boolean).join(' · ') || t.nit}>{nombreCliente(t) || t.razonSocial || '—'}</div><div className="num cell-mute cell-ellipsis" style={{ fontSize: 11, maxWidth: 'none' }} title={`${nombreCliente(t) && t.razonSocial ? t.razonSocial + ' · ' : ''}NIT ${t.nit}`}>{nombreCliente(t) && t.razonSocial && t.razonSocial.trim().toLowerCase() !== nombreCliente(t)!.trim().toLowerCase() ? `${t.razonSocial} · ` : ''}NIT {t.nit}{duplicadas.has(t.id) && <span className="badge badge-wine" style={{ fontSize: 9.5, marginLeft: 6 }}>Repetida</span>}</div></td>
                     <td style={{ fontSize: 12 }}>{canonTipoPrueba(t.tipoPrueba)}{canonTipoPrueba(t.tipoPrueba) !== t.tipoPrueba.trim().toUpperCase() && <span className="cell-mute" style={{ fontSize: 10.5 }}> ({t.tipoPrueba})</span>}</td>
                     <td style={{ fontSize: 12 }} title={esUnica(t.categoria) ? 'Sin categoría: la forma de precio de este servicio no la usa' : undefined}>{dimTexto(t.categoria)}{!esUnica(t.categoria) && canonCategoria(t.categoria) !== t.categoria.trim().toUpperCase() && <span className="cell-mute" style={{ fontSize: 10.5 }}> ({t.categoria})</span>}</td>
                     <td style={{ fontSize: 12 }} title={esUnica(t.territorio) ? (formaPrecio(t.tipoPrueba) === 'categoria' ? 'Sin territorio: precio por categoría, el mismo en metro y depto' : 'Sin territorio: precio único por cliente') : undefined}>{dimTexto(t.territorio)}</td>
@@ -186,6 +199,7 @@ export function TarifasTabla({ disponible, tarifas, nitFijo, razonSocialFija, an
             })}
           </tbody>
         </table>
+        </div>
       </div>
       <p style={{ fontSize: 12, color: 'var(--ink-4)', marginTop: 10 }}>Una tarifa no se borra: se desactiva (queda el histórico). Cambiar el monto de una tarifa aprobada la deja pendiente de aprobación. &quot;Precio desde&quot;: último cambio registrado o, si no hay, el año de la tarifa; estancada = sin subir hace más de {umbralMeses} meses.</p>
 
