@@ -148,6 +148,7 @@ function archivosUseServer(dir: string): string[] {
     ['ver_presupuesto', 'Ver presupuesto y comparativo', true, true, true, true],
     ['presupuesto', 'Editar y aprobar presupuesto', true, true, false, false],
     ['reabrir_presupuesto', 'Reabrir presupuesto aprobado', true, false, false, false],
+    ['ver_mapa_precios', 'Mapa de precios (027, solo admin)', true, false, false, false],
     ['gestionar_usuarios', 'Gestionar usuarios', true, false, false, false],
     ['configurar_empresa', 'Configurar empresa', true, false, false, false],
   ];
