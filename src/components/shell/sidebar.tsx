@@ -101,6 +101,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
     ...(esAdmin ? [{ href: '/admin/intercompany', label: 'Intercompany', icon: 'Journal' as IconName }] : []),   // F-056.1
     ...(p('catalogos') ? [{ href: '/admin/catalogos', label: 'Catálogos', icon: 'Slider' as IconName }] : []),    // FIX-CLIENTES-ALTA
     ...(esAdmin ? [{ href: '/admin/roadmap', label: 'Roadmap', icon: 'TrendUp' as IconName }] : []),   // F-ROADMAP
+    ...(esAdmin ? [{ href: '/admin/precios', label: 'Mapa de precios', icon: 'PieChart' as IconName }] : []),   // MAPA DE PRECIOS (027): solo admin; la seguridad real está en la página y el loader
   ];
   if (adminItems.length) groups.push({ group: 'Admin', items: adminItems });
 
