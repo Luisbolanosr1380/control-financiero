@@ -67,6 +67,7 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
           <div className="page-subtitle">Expedientes de evaluación <strong>terminados</strong> con cobro pendiente en la Agenda de Golden, con su precio del tarifario (<strong>sin IVA</strong>). Psicométricas quedan fuera (trato aparte).</div>
         </div>
         <div className="page-actions">
+          {disponible && <Link href="/por-facturar/produccion" className="btn btn-ghost" data-accion="produccion" title="Producción por mes de terminación: terminado vs facturado vs cobrado, backlog y sin fecha"><I.TrendUp size={13} /> Producción por mes</Link>}
           {puedeFacturar && disponible && (
             <button className="btn btn-ghost" onClick={() => void reresolver()} disabled={busy} data-accion="re-resolver" title="Vuelve a clasificar la cola local contra el mapeo y el tarifario actuales, sin ir a la Agenda">
               <I.Coins size={13} /> Re-resolver precios

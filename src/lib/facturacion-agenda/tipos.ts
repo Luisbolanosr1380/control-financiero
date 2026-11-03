@@ -32,6 +32,7 @@ export interface ExpedienteAgenda {
   /** 024 (doc 29-oct): estado de cada prueba. null = el proceso no lleva esa prueba o todavía no tiene estado. */
   estadoPoligrafo?: string | null;
   estadoSocio?: string | null;
+  /** 025: fechaResultadoPoligrafo / fechaResultadoSocio (nombres TENTATIVOS) se leen por `CAMPO_FECHA_RESULTADO` (fecha-resultado.ts), no por nombre acá. */
   cobro?: {
     statusCobro?: string | null;
     estatusPago?: string | null;
@@ -73,6 +74,8 @@ export const ETIQUETA_WRITEBACK: Record<WritebackEstado, string> = {
 
 /** 024: situación de una prueba (componente) según el estado que manda la Agenda. */
 export type Situacion = 'cobra' | 'pendiente' | 'no_cobra';
+/** 025: de dónde salió la fecha de resultado de una prueba (ver fecha-resultado.ts). */
+export type FuenteFechaResultado = 'agenda' | 'fecha_entrega' | 'detectado' | 'sin_dato';
 
 /** 024: una PRUEBA de un expediente (facturacion_componente): lo que se cobra, se espera o no se cobra, con su precio y su factura. */
 export interface PruebaLocal {
@@ -99,6 +102,9 @@ export interface PruebaLocal {
   noFactura: string | null;
   facturadoEn: string | null;
   facturadoPor: string | null;
+  /** 025: cuándo tuvo resultado (ISO) y de dónde salió. null = pendiente o sin dato (nunca se inventa). */
+  fechaResultado: string | null;
+  fechaResultadoFuente: FuenteFechaResultado | null;
 }
 
 /** Un servicio dentro del precio resuelto (un COMPLETO trae dos). Monto SIN IVA. */
@@ -154,6 +160,9 @@ export interface ExpedienteLocal {
   /** 024: estado de cada prueba tal como lo manda la Agenda. */
   estadoPoligrafo: string | null;
   estadoSocio: string | null;
+  /** 025: fechas de resultado que manda la Agenda por expediente (espejo; null si todavía no las manda). */
+  fechaResultadoPoligrafo: string | null;
+  fechaResultadoSocio: string | null;
   /** 024: las PRUEBAS del expediente (facturacion_componente): la cola, el detalle y la factura van por acá. */
   pruebas: PruebaLocal[];
   creadoEnExterno: string | null;

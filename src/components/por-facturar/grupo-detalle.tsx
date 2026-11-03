@@ -18,7 +18,9 @@ import { Q } from '@/lib/utils';
 import { crearDetalleAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
 import { armarFactura, centroPorServicio, enCola, esMitadDeCompleto, facturable, montoFacturable, pruebaEnCola, pruebasEnCola, pruebasFacturables, pruebasParaFactura, pruebasPendientes } from '@/lib/facturacion-agenda/mapeo';
 import { ETIQUETA_SITUACION, ICONO_SITUACION, resultadoLegible } from '@/lib/facturacion-agenda/situacion';
-import { filtrarExpedientes, mesesDisponibles, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
+import { filtrarExpedientes, mesesDisponibles, mesesResultadoDisponibles, pruebasTerminadasEn, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
+import { diaGuatemala, ETIQUETA_FUENTE_FECHA } from '@/lib/facturacion-agenda/fecha-resultado';
+import { etiquetaMes } from '@/lib/facturacion-agenda/produccion';
 import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type PruebaLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import type { GrupoDetalle } from '@/lib/db/facturacion-agenda';
 import { ReintentarWritebackButton } from './reintentar-writeback-button';
@@ -38,6 +40,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
   const puede = usePuede();
   const puedeFacturar = puede('facturar_agenda');
   const [mes, setMes] = useState('');
+  const [mesResultado, setMesResultado] = useState('');   // 025: "terminadas en <mes>" para facturar por corte mensual
   const [cobro, setCobro] = useState<FiltroCobro>('por_facturar');
   const [soloListos, setSoloListos] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -46,7 +49,10 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
 
   const exps = datos.expedientes;
   const meses = useMemo(() => mesesDisponibles(exps), [exps]);
-  const filas = useMemo(() => filtrarExpedientes(exps, { mes: mes || undefined, cobro, soloListos }), [exps, mes, cobro, soloListos]);
+  const mesesTermino = useMemo(() => mesesResultadoDisponibles(exps), [exps]);
+  const filas = useMemo(() => filtrarExpedientes(exps, { mes: mes || undefined, cobro, soloListos, mesResultado: mesResultado || undefined }), [exps, mes, cobro, soloListos, mesResultado]);
+  /** Pruebas que se muestran de un candidato: solo lo cobrable si está marcado; solo las terminadas en el mes elegido (025). */
+  const pruebasVisibles = (e: ExpedienteLocal): PruebaLocal[] => { const base = soloListos ? pruebasFacturables(e) : e.pruebas; return mesResultado ? base.filter(p => pruebasTerminadasEn({ pruebas: [p] }, mesResultado).length > 0) : base; };
   // 024: la unidad es la PRUEBA. Listos / total / sin tarifa / pendientes se cuentan por prueba (misma regla que la cola en SQL).
   const listos = exps.flatMap(pruebasFacturables);
   const totalListo = Math.round(exps.reduce((s, e) => s + montoFacturable(e), 0) * 100) / 100;
@@ -57,7 +63,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
   const parciales = exps.filter(e => e.writebackEstado === 'parcial').length;
   const seleccion = useMemo(() => pruebasParaFactura(exps, p => sel.has(p.id)), [exps, sel]);
   const preview = useMemo(() => armarFactura(seleccion, t => centroPorServicio(t, datos.centros)), [seleccion, datos.centros]);
-  const facturablesVisibles = filas.flatMap(pruebasFacturables);
+  const facturablesVisibles = filas.flatMap(e => pruebasVisibles(e).filter(p => pruebaEnCola(p, e) && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0));
   const todosSel = facturablesVisibles.length > 0 && facturablesVisibles.every(p => sel.has(p.id));
 
   const generarDetalle = async () => {
@@ -109,10 +115,11 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
 
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
-          <select className="input" value={mes} onChange={e => setMes(e.target.value)} aria-label="Mes de ingreso" title="Mes de ingreso"><option value="">Todos los meses</option>{meses.map(m => <option key={m} value={m}>{m}</option>)}</select>
+          <select className="input" value={mes} onChange={e => setMes(e.target.value)} aria-label="Mes de ingreso" title="Mes de ingreso"><option value="">Ingreso: todos los meses</option>{meses.map(m => <option key={m} value={m}>Ingreso en {m}</option>)}</select>
+          <select className="input" value={mesResultado} onChange={e => setMesResultado(e.target.value)} aria-label="Mes de terminación" title="Pruebas terminadas (con resultado) en ese mes: para facturar por corte mensual" data-filtro="mes-resultado"><option value="">Terminadas: cualquier mes</option>{mesesTermino.map(m => <option key={m} value={m}>Terminadas en {etiquetaMes(m)}</option>)}</select>
           <select className="input" value={cobro} onChange={e => setCobro(e.target.value as FiltroCobro)} aria-label="Estado de cobro" title="Estado de cobro"><option value="por_facturar">Por facturar (cobro pendiente en Agenda)</option><option value="facturados">Facturados / resueltos</option><option value="todos">Todos</option></select>
           <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={soloListos} onChange={e => setSoloListos(e.target.checked)} aria-label="Solo lo cobrable ahora" /> Solo lo cobrable ahora</label>
-          <span style={{ marginLeft: 'auto', color: 'var(--ink-4)' }}>{filas.length} candidato{filas.length === 1 ? '' : 's'} · {filas.reduce((n, e) => n + (soloListos ? pruebasFacturables(e).length : Math.max(e.pruebas.length, 1)), 0)} prueba(s)</span>
+          <span style={{ marginLeft: 'auto', color: 'var(--ink-4)' }}>{filas.length} candidato{filas.length === 1 ? '' : 's'} · {filas.reduce((n, e) => n + ((soloListos || mesResultado) ? pruebasVisibles(e).length : Math.max(e.pruebas.length, 1)), 0)} prueba(s)</span>
         </div>
       </div>
 
@@ -122,13 +129,13 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
           <table className="table" style={{ '--col-persona-left': puedeFacturar ? '56px' : '0px' } as React.CSSProperties}>
             <thead><tr>
               {puedeFacturar && <th className="col-sel"><input type="checkbox" checked={todosSel} onChange={toggleTodos} aria-label="Seleccionar todos los facturables visibles" disabled={facturablesVisibles.length === 0} /></th>}
-              <th className="col-persona">Persona</th><th>Ingreso</th><th>Prueba · estado</th><th>Categoría</th><th>Territorio</th><th className="num">Precio sin IVA</th><th>Cobro en Agenda</th><th className="col-acciones">Factura</th>
+              <th className="col-persona">Persona</th><th>Ingreso</th><th>Prueba · estado</th><th title="Fecha en que la prueba tuvo resultado (producción). Pasá el cursor sobre la fecha para ver la fuente.">Terminó</th><th>Categoría</th><th>Territorio</th><th className="num">Precio sin IVA</th><th>Cobro en Agenda</th><th className="col-acciones">Factura</th>
             </tr></thead>
             <tbody>
-              {filas.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>Ningún expediente con esos filtros.</td></tr>}
+              {filas.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>Ningún expediente con esos filtros.</td></tr>}
               {filas.flatMap(e => {
                 // 024: una fila por PRUEBA del candidato (✅ cobrada · 🟡 por cobrar · ⏳ pendiente · ⛔ no se cobra); sin pruebas calculadas → la fila del expediente como antes.
-                const pruebas = soloListos ? pruebasFacturables(e) : e.pruebas;
+                const pruebas = pruebasVisibles(e);
                 if (!pruebas.length) return [<FilaExpediente key={e.idExterno} e={e} p={null} primera puede={puedeFacturar} sel={false} onToggle={() => undefined} />];
                 return pruebas.map((p, i) => <FilaExpediente key={p.id} e={e} p={p} primera={i === 0} puede={puedeFacturar} sel={sel.has(p.id)} onToggle={() => toggle(p.id)} />);
               })}
@@ -199,6 +206,13 @@ function FilaExpediente({ e, p, primera, puede, sel, onToggle }: { e: Expediente
           <div className="cell-mute" style={{ fontSize: 11 }} title={p.motivo}>{etiqueta}{p.estadoPrueba ? ` · ${p.estadoPrueba}` : ''}</div>
           {primera && esMitadDeCompleto(e) && <div className="cell-mute" style={{ fontSize: 11 }} title="La Agenda parte un completo en dos expedientes: esta fila cobra solo su prueba; la otra mitad es su propia fila.">COMPLETO · mitad</div>}
         </> : <ServicioCell e={e} />}
+      </td>
+      <td className="num" style={{ fontSize: 12 }} data-termino={p ? (p.fechaResultado ? diaGuatemala(p.fechaResultado) : p.fechaResultadoFuente ?? '') : ''}>
+        {p
+          ? (p.fechaResultado
+              ? <span title={`Fuente: ${p.fechaResultadoFuente ? ETIQUETA_FUENTE_FECHA[p.fechaResultadoFuente] : '—'}`}>{diaGuatemala(p.fechaResultado)}{p.fechaResultadoFuente && p.fechaResultadoFuente !== 'agenda' && <span className="cell-mute" style={{ fontSize: 10, marginLeft: 3 }}>{p.fechaResultadoFuente === 'detectado' ? '≈' : '~'}</span>}</span>
+              : p.situacion === 'pendiente' ? <span className="cell-mute" title="Todavía sin resultado en la Agenda">—</span> : <span className="cell-mute" title="Sin fecha confiable: la Agenda no la mandó y la entrega del expediente no sirve para esta prueba">sin dato</span>)
+          : <span className="cell-mute" title="Fecha de entrega del expediente (sin pruebas calculadas)">{e.fechaEntrega ?? '—'}</span>}
       </td>
       <td title={e.categoriaPrueba || 'sin categoría'}>{cat && cat !== 'UNICA' ? cat : <span className="cell-mute">—</span>}</td>
       <td title={e.deptoVisita || 'sin depto. de visita'}>{ter && ter !== 'UNICA' ? ter : <span className="cell-mute">{p ? '—' : 'no indicado'}</span>}</td>

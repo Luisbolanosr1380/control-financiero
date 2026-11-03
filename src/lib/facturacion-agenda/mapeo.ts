@@ -23,8 +23,9 @@
 import { canonCategoria, canonTipoPrueba, conIva, formaPrecio, normalizarTexto, round2, usaCategoria } from '@/lib/tarifario/canon';
 import { resolverTarifa, type Tarifa } from '@/lib/tarifario/lookup';
 import { nitComparable } from '@/lib/clientes/nit';
-import { ESTADOS_EXCLUIDOS, STATUS_COBRO_POR_FACTURAR, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type PruebaLocal, type Situacion } from './tipos';
+import { ESTADOS_EXCLUIDOS, STATUS_COBRO_POR_FACTURAR, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type FuenteFechaResultado, type PruebaLocal, type Situacion } from './tipos';
 import { resultadoLegible, servicioPorEstado, situacionDePruebas } from './situacion';
+import { fechaResultadoDe, fechasResultadoDeAgenda } from './fecha-resultado';
 
 const compacto = (s: string | null | undefined) => normalizarTexto(s).replace(/[^A-Z0-9]/g, '');
 
@@ -82,10 +83,11 @@ export interface ContextoPrecio {
   noFacturaEmpresas?: ReadonlyMap<string, string>;
 }
 
-/** 024: una prueba calculada (situación + precio), tal como va a facturacion_componente. */
+/** 024: una prueba calculada (situación + precio), tal como va a facturacion_componente. 025: + fecha de resultado candidata (la RPC decide si la fija). */
 export interface PruebaCalculada {
   servicio: string; estadoPrueba: string; situacion: Situacion; motivo: string;
   categoria: string; territorio: string; monto: number | null; estadoTarifa: EstadoTarifa; detalleTarifa: string; tarifarioId: string | null; aprobada: boolean | null;
+  fechaResultado: string | null; fechaResultadoFuente: FuenteFechaResultado | null;
 }
 
 export interface Clasificacion {
@@ -102,18 +104,25 @@ export interface Clasificacion {
   pruebas: PruebaCalculada[];
 }
 
-/** Huella de las pruebas calculadas: si no cambia, re-resolver no reescribe el expediente. */
+/** Huella de las pruebas calculadas: si no cambia, re-resolver no reescribe el expediente. (025: la fecha REAL de la Agenda entra en la huella; la detectada no, porque la base la fija una sola vez.) */
 export const firmaPruebas = (pruebas: readonly PruebaCalculada[]): string =>
-  pruebas.map(p => [p.servicio, p.situacion, p.estadoPrueba, p.monto ?? '', p.estadoTarifa, p.detalleTarifa, p.tarifarioId ?? '', p.aprobada ?? ''].join('|')).join(';');
+  pruebas.map(p => [p.servicio, p.situacion, p.estadoPrueba, p.monto ?? '', p.estadoTarifa, p.detalleTarifa, p.tarifarioId ?? '', p.aprobada ?? '', p.fechaResultadoFuente === 'agenda' ? p.fechaResultado ?? '' : ''].join('|')).join(';');
 
-/** Clasifica un expediente de la Agenda contra el mapeo de clientes y el tarifario (motor existente). */
-export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio): Clasificacion {
+/**
+ * Clasifica un expediente de la Agenda contra el mapeo de clientes y el tarifario (motor existente).
+ * `opts.detectadoEn`: `ocurrido` del aviso que trajo el cambio (025: fuente 'detectado' de la fecha de resultado).
+ */
+export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio, opts: { detectadoEn?: string | null } = {}): Clasificacion {
   const servicios = serviciosDe(exp.tipoPrueba, exp.procesoSolicitado);
   const tipo = servicios.join(' + ');
   const cat = canonCategoria(categoriaDe(exp));
   const ter = territorioDesdeDepto(exp.deptoVisita);
   // 024: situación de cada prueba (el socio cancelado con visita realizada se vuelve el FEE).
-  const decisiones = situacionDePruebas(exp, servicios);
+  // 025: y su fecha de resultado candidata (agenda → detectado → fecha_entrega → sin_dato; pendiente → null).
+  const decisiones = situacionDePruebas(exp, servicios).map(d => {
+    const f = fechaResultadoDe(exp, d.servicio, d.situacion, { unaPrueba: servicios.length === 1, detectadoEn: opts.detectadoEn });
+    return { ...d, fechaResultado: f.fecha, fechaResultadoFuente: f.fuente, motivo: f.inconsistencia ? `${d.motivo} · ${f.inconsistencia}` : d.motivo };
+  });
   const sinPrecio = (estadoTarifa: EstadoTarifa, detalleTarifa: string): PruebaCalculada[] => decisiones.map(d => ({ ...d, categoria: cat, territorio: ter, monto: null, estadoTarifa, detalleTarifa, tarifarioId: null, aprobada: null }));
   const base = { tipoCobrado: tipo, categoriaCanon: cat, territorio: ter, componentes: [] as ComponentePrecio[] };
   if (esPsicometrica(exp)) { const detalle = 'PSICOMETRICAS no se factura individual: trato aparte.'; return { ...base, estado: 'excluido_psicometrica', nit: null, monto: null, detalle, pruebas: sinPrecio('excluido_psicometrica', detalle) }; }
@@ -251,6 +260,8 @@ export function expedienteALocal(exp: ExpedienteAgenda, c: Clasificacion): Omit<
     componentes: c.componentes,
     estadoPoligrafo: txt(exp.estadoPoligrafo) || null,
     estadoSocio: txt(exp.estadoSocio) || null,
+    fechaResultadoPoligrafo: fechasResultadoDeAgenda(exp).poligrafo,
+    fechaResultadoSocio: fechasResultadoDeAgenda(exp).socio,
     pruebas: [],
     pruebasFirma: firmaPruebas(c.pruebas),
     creadoEnExterno: exp.creadoEn || null,

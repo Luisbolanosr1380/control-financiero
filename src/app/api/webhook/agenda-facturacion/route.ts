@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { configAgenda } from '@/lib/facturacion-agenda/config';
 import { verificarFirma } from '@/lib/facturacion-agenda/firma';
+import { normalizarCambios } from '@/lib/facturacion-agenda/aviso';
 import { cargarContexto, facturacionAgendaDisponible, procesarExpedientes, registrarEventoWebhook } from '@/lib/db/facturacion-agenda';
 import type { ExpedienteAgenda } from '@/lib/facturacion-agenda/tipos';
 
@@ -12,6 +13,9 @@ export const dynamic = 'force-dynamic';
  * cuerpo crudo (`x-golden-firma: t=…,v1=…`, rechazo si |t − ahora| > 5 min),
  * idempotente por `id` (un repetido se ignora con 200) y responde en < 10 s:
  * solo refresca el espejo del expediente que viene en el aviso.
+ * 025: del aviso se guardan también el expediente y el bloque `cambios` (campo / antes /
+ * después, sin datos personales), y su `ocurrido` es la fecha "detectada" de una prueba
+ * que pasa a tener resultado con este aviso.
  */
 export async function POST(req: NextRequest) {
   const cfg = configAgenda();
@@ -20,18 +24,20 @@ export async function POST(req: NextRequest) {
   if (motivo === 'sin_secreto') return NextResponse.json({ error: 'webhook no configurado en este deploy' }, { status: 503 });
   if (motivo !== 'ok') return NextResponse.json({ error: 'firma inválida', motivo }, { status: 401 });
 
-  let payload: { id?: unknown; tipo?: unknown; ocurrido?: unknown; expediente?: ExpedienteAgenda | null } | null = null;
+  let payload: { id?: unknown; tipo?: unknown; ocurrido?: unknown; cambios?: unknown; expediente?: ExpedienteAgenda | null } | null = null;
   try { payload = JSON.parse(cuerpo); } catch { return NextResponse.json({ error: 'cuerpo inválido' }, { status: 400 }); }
   const id = String(payload?.id ?? req.headers.get('x-golden-id') ?? '').trim();
   const tipo = String(payload?.tipo ?? req.headers.get('x-golden-evento') ?? '').trim();
   if (!id) return NextResponse.json({ error: 'aviso sin id' }, { status: 400 });
   if (!(await facturacionAgendaDisponible())) return NextResponse.json({ error: 'Falta la migración 016 en esta base' }, { status: 503 });
 
-  const nuevo = await registrarEventoWebhook(id, tipo, typeof payload?.ocurrido === 'string' ? payload.ocurrido : null);
+  const exp = payload?.expediente;
+  const ocurrido = typeof payload?.ocurrido === 'string' && !Number.isNaN(Date.parse(payload.ocurrido)) ? payload.ocurrido : null;
+  const idExterno = exp && typeof exp === 'object' && exp.id ? String(exp.id) : null;
+  const nuevo = await registrarEventoWebhook(id, tipo, ocurrido, { idExterno, cambios: normalizarCambios(payload?.cambios) });
   if (!nuevo) return NextResponse.json({ ok: true, id, repetido: true });
 
   let procesados = 0;
-  const exp = payload?.expediente;
-  if (exp && typeof exp === 'object' && exp.id) procesados = await procesarExpedientes([exp], await cargarContexto());
+  if (exp && typeof exp === 'object' && exp.id) procesados = await procesarExpedientes([exp], await cargarContexto(), { detectadoEn: ocurrido });
   return NextResponse.json({ ok: true, id, tipo, procesados });
 }

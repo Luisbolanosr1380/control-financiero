@@ -37,6 +37,7 @@ function getCrumbs(pathname: string | null): string[] {
   if (pathname.startsWith('/clientes/'))    return ['Operación', 'Clientes', 'Cliente'];
   if (pathname.startsWith('/tarifario/'))   return ['Operación', 'Tarifario', 'Empresa'];
   if (pathname.startsWith('/por-facturar/detalle/')) return ['Operación', 'Por facturar', 'Detalle de facturación'];
+  if (pathname.startsWith('/por-facturar/produccion')) return ['Operación', 'Por facturar', 'Producción por mes'];
   if (pathname.startsWith('/por-facturar/')) return ['Operación', 'Por facturar', 'Cliente'];
   return ROUTE_CRUMBS[pathname] ?? [pathname.slice(1)];
 }
