@@ -554,6 +554,14 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
 .table td.col-servicio { white-space: normal; min-width: 180px; max-width: 280px; line-height: 1.35; padding-top: 6px; padding-bottom: 6px; }
 /* texto largo en una línea con puntos suspensivos (el title lleva el texto completo) */
 .cell-ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 230px; }
+/* TARIFARIO · lista de empresas y "Ver todas": la columna de empresa queda fija a la izquierda con ancho
+   acotado (nombre largo con puntos suspensivos + title); la de estado deja que los badges hagan wrap en vez
+   de salirse por la derecha. La tabla desplaza dentro de la tarjeta (.table-scroll). */
+.table th.col-empresa, .table td.col-empresa { position: sticky; left: 0; z-index: 2; background: var(--paper); min-width: 240px; max-width: 360px; box-shadow: 8px 0 8px -8px rgba(0, 0, 0, 0.12); }
+.table thead th.col-empresa { background: var(--bg-2); z-index: 3; }
+.table tbody tr:hover td.col-empresa { background: var(--paper-tint); }
+.table th.col-estado, .table td.col-estado { white-space: normal; min-width: 170px; max-width: 240px; }
+.badges-wrap { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 
 .table tbody tr.clickable { cursor: pointer; }
 .table tbody tr.selected td { background: var(--bg-2); }
@@ -1218,4 +1226,7 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
   .table th.col-acciones, .table td.col-acciones { position: static; box-shadow: none; }
   .table td.col-acciones { max-width: 180px; }
   .table td.col-acciones .cell-ellipsis { max-width: 150px; }
+  /* tarifario en teléfono: empresa fija pero angosta; estado sigue haciendo wrap */
+  .table th.col-empresa, .table td.col-empresa { min-width: 150px; max-width: 170px; }
+  .table th.col-estado, .table td.col-estado { min-width: 130px; }
 }
