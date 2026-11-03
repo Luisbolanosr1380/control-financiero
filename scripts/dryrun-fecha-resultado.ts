@@ -30,6 +30,7 @@ for (const line of fs.readFileSync(path.join(process.cwd(), envFile), 'utf8').sp
   const { servicioPorEstado } = await import('../src/lib/facturacion-agenda/situacion');
   const { fechasResultadoDeAgenda, normalizarFecha, diaGuatemala, mesGuatemala } = await import('../src/lib/facturacion-agenda/fecha-resultado');
   const { lineaNegocio, mesesEntre, primerDia, ultimoDia } = await import('../src/lib/facturacion-agenda/produccion');
+  const { facturasCobradas } = await import('../src/lib/facturacion-agenda/estado-factura');
   const sb = supabase()!;
   const arranque = arranquePorEmpresa(await getMapeos());
 
@@ -49,11 +50,13 @@ for (const line of fs.readFileSync(path.join(process.cwd(), envFile), 'utf8').sp
   for (const c of comps) porExp.set(c.expediente_id, (porExp.get(c.expediente_id) ?? 0) + 1);
   // Facturas cobradas (todas las líneas de cada número)
   const nfs = [...new Set(comps.map(c => c.no_factura).filter((x): x is string => !!x))];
-  const noCobrada = new Set<string>();
+  const lineasFact: { no_factura: string; estado: string | null }[] = [];
   for (let i = 0; i < nfs.length; i += 200) {
     const { data } = await sb.from('facturas_clientes').select('no_factura, estado').in('no_factura', nfs.slice(i, i + 200));
-    for (const f of (data ?? []) as { no_factura: string; estado: string | null }[]) if (!/^COBRAD[OA]$/i.test(String(f.estado ?? ''))) noCobrada.add(f.no_factura);
+    lineasFact.push(...((data ?? []) as { no_factura: string; estado: string | null }[]));
   }
+  const cobradas = facturasCobradas(lineasFact);  // 026: trim + upper ("COBRADO " lleva espacio a propósito); anuladas no descalifican
+  const noCobrada = new Set(nfs.filter(nf => !cobradas.has(nf)));
   const num = (v: number | string | null | undefined) => (v === null || v === undefined ? 0 : Number(v));
   const n2 = (n: number) => Math.round(n * 100) / 100;
   const vigente = (e: Exp) => !e.eliminado && !['excluido_psicometrica', 'excluido_no_factura'].includes(e.estado_tarifa);

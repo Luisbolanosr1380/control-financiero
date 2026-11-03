@@ -28,6 +28,7 @@ import { agruparPorCliente, kpisPorFacturar, parseClave, type GrupoCliente, type
 import { ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type EmpresaNoFactura, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type FuenteFechaResultado, type PruebaLocal, type Situacion, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import { servicioPorEstado } from '@/lib/facturacion-agenda/situacion';
 import { parseProduccion, type ProduccionMensual } from '@/lib/facturacion-agenda/produccion';
+import { facturasCobradas } from '@/lib/facturacion-agenda/estado-factura';
 import type { CambioAviso } from '@/lib/facturacion-agenda/aviso';
 import { getTarifario } from './tarifario';
 import { getClientes } from './clientes';
@@ -1042,7 +1043,7 @@ export async function notificarCobroAgenda(noFactura: string, actor: string, opt
     const otras = [...new Set(rows.flatMap(r => r.pruebas.filter(p => p.noFactura && p.noFactura !== noFactura).map(p => p.noFactura!)))];
     if (otras.length) {
       const { data: facs } = await sb.from('facturas_clientes').select('no_factura, estado').in('no_factura', otras);
-      const cobradas = new Set(((facs ?? []) as { no_factura: string; estado: string | null }[]).filter(f => /^COBRAD[OA]$/i.test(String(f.estado ?? ''))).map(f => f.no_factura));
+      const cobradas = facturasCobradas((facs ?? []) as { no_factura: string; estado: string | null }[]);  // 026: trim + upper, líneas anuladas no descalifican
       rows = rows.filter(r => r.pruebas.every(p => !p.noFactura || p.noFactura === noFactura || cobradas.has(p.noFactura)));
       if (!rows.length) return { enviados: 0, estado: 'nada', detalle: 'Los expedientes de esta factura tienen otra factura todavía por cobrar: se marcan PAGADO en la Agenda cuando se cobren todas.' };
     }
