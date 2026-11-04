@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import { Fraunces, Inter_Tight, JetBrains_Mono } from 'next/font/google';
 import { ClerkProvider } from '@clerk/nextjs';
+import { headers } from 'next/headers';
 import { Toaster } from 'sonner';
 import './globals.css';
 import { RegistroSW } from '@/components/pwa/registro-sw';
@@ -46,20 +47,22 @@ export const viewport: Viewport = {
   viewportFit: 'cover',
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  return (
-    <ClerkProvider afterSignOutUrl="/sign-in">
-      <html lang="es" className={`${fraunces.variable} ${interTight.variable} ${jetbrainsMono.variable}`}>
-        <body>
-          {children}
-          <RegistroSW />
-          <Toaster position="top-right" richColors closeButton />
-        </body>
-      </html>
-    </ClerkProvider>
+  // DETALLE DIGITAL (029): la página pública del cliente (/aprobar-detalle) va sin Clerk, sin service worker y sin
+  // recursos de terceros (el middleware marca la petición). Las fuentes son de next/font: se sirven desde este dominio.
+  const publica = (await headers()).get('x-ruta-publica') === '1';
+  const html = (
+    <html lang="es" className={`${fraunces.variable} ${interTight.variable} ${jetbrainsMono.variable}`}>
+      <body>
+        {children}
+        {!publica && <RegistroSW />}
+        <Toaster position="top-right" richColors closeButton />
+      </body>
+    </html>
   );
+  return publica ? html : <ClerkProvider afterSignOutUrl="/sign-in">{html}</ClerkProvider>;
 }

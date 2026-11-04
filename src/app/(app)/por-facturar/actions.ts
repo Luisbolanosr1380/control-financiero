@@ -2,7 +2,9 @@
 
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
-import { anularDetalle, crearDetalle, facturarDetalle, marcarAprobada, marcarEnviada, type DetalleResult, type FacturarDetalleResult, editarEncabezadoDetalle } from '@/lib/db/detalle-facturacion';
+import { anularDetalle, crearDetalle, facturarDetalle, marcarAprobada, marcarEnviada, type DetalleResult, type FacturarDetalleResult, editarEncabezadoDetalle, quitarLineaDetalle, responderNotaDetalle } from '@/lib/db/detalle-facturacion';
+import { emitirLinkDetalle, revocarLinkDetalle, type EmitirLinkResult } from '@/lib/db/detalle-link';
+import { headers } from 'next/headers';
 import type { CanalAprobacion } from '@/lib/facturacion-agenda/detalle';
 import {
   empresasSinMapear, guardarMapeo, guardarMapeoLote, marcarNoFactura, marcarNoFacturaLote, quitarNoFactura, reintentarWriteback, reresolverPrecios, sincronizarAgenda,
@@ -156,4 +158,50 @@ export async function empresasSinMapearTodasAction(q: string): Promise<EmpresaRe
   await exigir('ver');
   const r = await empresasSinMapear({ q, limite: 1000, desde: 0 });
   return r.filas.map(f => ({ empresaIdExterno: f.empresaIdExterno, empresaNombreExterno: f.empresaNombreExterno }));
+}
+
+/** 029: base pública del deploy para armar el link (APP_URL si está; si no, el host de la petición). */
+async function baseUrlPublica(): Promise<string> {
+  const fija = String(process.env.APP_URL ?? '').trim().replace(/\/$/, '');
+  if (/^https?:\/\//.test(fija)) return fija;
+  const h = await headers();
+  const host = h.get('x-forwarded-host') ?? h.get('host') ?? 'localhost:3000';
+  const proto = h.get('x-forwarded-proto') ?? (host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https');
+  return `${proto}://${host}`;
+}
+
+/** 029: "Enviar al cliente" / "Enviar versión corregida": link de aprobación + correo (o texto para copiar). */
+export async function enviarDetalleAction(id: string, input: { destinatarios: string[]; cc?: string[]; asunto?: string; mensaje?: string }): Promise<EmitirLinkResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await emitirLinkDetalle(id, { email: permiso.email, nombre: permiso.nombre }, { ...input, baseUrl: await baseUrlPublica() });
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** 029: revoca el link vigente del detalle (el cliente ya no puede responder con él). */
+export async function revocarLinkDetalleAction(id: string, motivo?: string): Promise<{ ok: true; revocados: number } | { ok: false; error: string }> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await revocarLinkDetalle(id, permiso.email, motivo);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** 029: quita una línea del detalle (vuelve a la cola; opcionalmente diferida al próximo mes). */
+export async function quitarLineaDetalleAction(id: string, componenteId: string, input: { motivo?: string; diferirHasta?: string | null }): Promise<DetalleResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await quitarLineaDetalle(id, componenteId, input, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** 029: respuesta de Golden a la nota del cliente en una línea. */
+export async function responderNotaDetalleAction(id: string, componenteId: string, respuesta: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await responderNotaDetalle(id, componenteId, respuesta, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
 }

@@ -105,6 +105,8 @@ export interface PruebaLocal {
   /** 025: cuándo tuvo resultado (ISO) y de dónde salió. null = pendiente o sin dato (nunca se inventa). */
   fechaResultado: string | null;
   fechaResultadoFuente: FuenteFechaResultado | null;
+  /** 029: el cliente pidió cobrarla el próximo mes (YYYY-MM-DD): marca y filtro de pantalla, la cola no cambia. */
+  diferidaHasta?: string | null;
 }
 
 /** Un servicio dentro del precio resuelto (un COMPLETO trae dos). Monto SIN IVA. */

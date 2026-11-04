@@ -3,6 +3,8 @@ import { exigirPagina } from '@/lib/auth/guard';
 import { configAgenda } from '@/lib/facturacion-agenda/config';
 import { detallesDisponibles, getDetalle } from '@/lib/db/detalle-facturacion';
 import { DetalleView } from '@/components/por-facturar/detalle-view';
+import { correoConfigurado } from '@/lib/correo/resend';
+import { linkConfigurado } from '@/lib/detalle-link/token';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,5 +16,5 @@ export default async function DetalleFacturacionPage({ params }: { params: Promi
   const datos = await getDetalle(id);
   if (!datos) notFound();
   const cfg = configAgenda();
-  return <DetalleView datos={datos} writeback={cfg.writeback} configurada={cfg.apiKey.length > 0} montoModo={cfg.montoModo} />;
+  return <DetalleView datos={datos} writeback={cfg.writeback} configurada={cfg.apiKey.length > 0} montoModo={cfg.montoModo} correoConfigurado={correoConfigurado()} linkConfigurado={linkConfigurado()} />;
 }
