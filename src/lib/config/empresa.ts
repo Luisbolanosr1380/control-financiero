@@ -59,7 +59,7 @@ const DEFAULTS_GOLDEN: EmpresaConfig = {
   slug: 'golden',
   nombre: 'Golden Talent',
   nombreLegal: 'Golden Talent Guatemala, S.A.',
-  nit: '8439027-3',
+  nit: '10144773-6',
   direccion: 'Ciudad de Guatemala, Guatemala C.A.',
   logoUrl: null,
   moneda: 'GTQ',
