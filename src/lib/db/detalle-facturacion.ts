@@ -27,6 +27,7 @@ interface Row {
   aprobada_en: string | null; aprobado_por: string | null; aprobado_canal: CanalAprobacion | null;
   factura_id: string | null; factura_app_id: string | null; no_factura: string | null; facturado_en: string | null;
   anulada_en: string | null; anulada_por: string | null; motivo_anulacion: string | null; notas: string | null; updated_at: string | null;
+  /** 028 */ titulo?: string | null; dirigido_a?: string | null;
 }
 const rowToDetalle = (r: Row): DetalleFacturacion => ({
   id: r.id, fuente: r.fuente, clienteId: r.cliente_id, nit: r.nit, correlativo: r.correlativo, estado: r.estado,
@@ -35,6 +36,16 @@ const rowToDetalle = (r: Row): DetalleFacturacion => ({
   aprobadaEn: r.aprobada_en, aprobadoPor: r.aprobado_por ?? '', aprobadoCanal: r.aprobado_canal,
   facturaId: r.factura_id, facturaAppId: r.factura_app_id, noFactura: r.no_factura, facturadoEn: r.facturado_en,
   anuladaEn: r.anulada_en, anuladaPor: r.anulada_por ?? '', motivoAnulacion: r.motivo_anulacion ?? '', notas: r.notas ?? '', updatedAt: r.updated_at,
+  titulo: r.titulo ?? '', dirigidoA: r.dirigido_a ?? '',
+});
+
+/** 028: sin la migración, la base no tiene titulo / dirigido_a; el detalle se crea igual y el encabezado no se guarda. */
+const falta028 = (m: string) => /titulo|dirigido_a/.test(m) && /column|schema cache/i.test(m);
+
+/** Encabezado del detalle (028): título del corte y "dirigido a", limpios y acotados. */
+export const encabezadoLimpio = (input: { titulo?: string | null; dirigidoA?: string | null }) => ({
+  titulo: String(input.titulo ?? '').replace(/\s+/g, ' ').trim().slice(0, 200) || null,
+  dirigido_a: String(input.dirigidoA ?? '').replace(/\s+/g, ' ').trim().slice(0, 120) || null,
 });
 
 /** true si la 019 está aplicada en esta base. */
@@ -62,7 +73,7 @@ const errorLegible = (m: string): string => {
  * Crea el detalle en borrador y reserva sus PRUEBAS (024, RPC detalle_facturacion_crear_pruebas: todo o nada).
  * `componenteIds` = las pruebas elegidas; `idsExternos` (compatibilidad) = TODAS las pruebas facturables hoy de esos expedientes.
  */
-export async function crearDetalle(input: { idsExternos?: string[]; componenteIds?: string[]; notas?: string }, actor: string): Promise<DetalleResult> {
+export async function crearDetalle(input: { idsExternos?: string[]; componenteIds?: string[]; notas?: string; /** 028 */ titulo?: string; dirigidoA?: string }, actor: string): Promise<DetalleResult> {
   let ids = [...new Set((input.componenteIds ?? []).map(s => String(s).trim()).filter(Boolean))];
   if (!ids.length && input.idsExternos?.length) {
     const exps = await listarExpedientesLocal({ idsExternos: [...new Set(input.idsExternos.map(s => String(s).trim()).filter(Boolean))] });
@@ -74,6 +85,14 @@ export async function crearDetalle(input: { idsExternos?: string[]; componenteId
   if (ids.length > 200) return { ok: false, error: 'Un detalle cubre hasta 200 pruebas (límite de la factura en la Agenda).' };
   try {
     const r = await rpc<Row>('detalle_facturacion_crear_pruebas', { p_actor: actor, p_componente_ids: ids, p_notas: (input.notas ?? '').trim().slice(0, 500) || null });
+    // 028: título del corte y "dirigido a" (la RPC no cambia; sin la migración el detalle igual queda creado).
+    const enc = encabezadoLimpio(input);
+    if (enc.titulo || enc.dirigido_a) {
+      const sb = supabase();
+      const { data, error } = sb ? await sb.from('detalle_facturacion').update(enc).eq('id', r.id).select('*').maybeSingle() : { data: null, error: null };
+      if (error && !falta028(error.message)) console.error('crearDetalle (encabezado 028):', error.message);
+      if (data) return { ok: true, detalle: rowToDetalle(data as Row) };
+    }
     return { ok: true, detalle: rowToDetalle(r) };
   } catch (e) { return { ok: false, error: errorLegible(e instanceof Error ? e.message : String(e)) }; }
 }
@@ -113,6 +132,18 @@ async function transicion(id: string, a: EstadoDetalle, patch: Record<string, un
   const { data, error } = await sb.from('detalle_facturacion').update({ ...patch, estado: a, updated_at: new Date().toISOString() }).eq('id', id).eq('estado', d.estado).select('*').maybeSingle();
   if (error) return { ok: false, error: error.message };
   if (!data) return { ok: false, error: 'El detalle cambió de estado mientras tanto: recargá.' };
+  return { ok: true, detalle: rowToDetalle(data as Row) };
+}
+
+/** 028: editar el título del corte y "dirigido a" mientras el detalle no esté facturado ni anulado. */
+export async function editarEncabezadoDetalle(id: string, input: { titulo?: string | null; dirigidoA?: string | null }, actor: string): Promise<DetalleResult> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+  const d = await getDetalleBasico(id); if (!d) return { ok: false, error: 'El detalle no existe.' };
+  if (d.estado === 'facturada' || d.estado === 'anulada') return { ok: false, error: `El detalle ${d.correlativo} está ${d.estado}: su encabezado ya no se edita.` };
+  void actor;
+  const { data, error } = await sb.from('detalle_facturacion').update({ ...encabezadoLimpio(input), updated_at: new Date().toISOString() }).eq('id', id).select('*').maybeSingle();
+  if (error) return { ok: false, error: falta028(error.message) ? 'Falta aplicar la migración 028_detalle_titulo_dirigido en esta base.' : error.message };
+  if (!data) return { ok: false, error: 'El detalle no existe.' };
   return { ok: true, detalle: rowToDetalle(data as Row) };
 }
 

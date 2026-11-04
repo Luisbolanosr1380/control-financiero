@@ -34,10 +34,13 @@ export interface DetalleFacturacion {
   facturaId: string | null; facturaAppId: string | null; noFactura: string | null; facturadoEn: string | null;
   anuladaEn: string | null; anuladaPor: string; motivoAnulacion: string;
   notas: string; updatedAt: string | null;
+  /** 028: título del corte (qué incluye) y a quién va dirigido del lado del cliente; opcionales. */
+  titulo: string; dirigidoA: string;
 }
 
 export interface LineaDetalle {
   idExterno: string; /** 024: la prueba (facturacion_componente.id) */ componenteId: string; persona: string; puesto: string; fechaIngreso: string | null;
+  /** 028: quién pidió la evaluación del lado del cliente, normalizado (trim + mayúsculas, como en el filtro); '' si no vino. */ solicitante: string;
   servicio: string; /** 024: resultado legible para el cliente ("Polígrafo — aprobó") */ resultado: string; /** texto auxiliar (vacío en el cobro por prueba) */ componentes: string;
   categoria: string; territorio: string; monto: number;
   incluido: boolean; motivo: string;
@@ -57,7 +60,7 @@ export function documentoDetalle(expedientes: readonly ExpedienteLocal[], prueba
     const incluido = p.situacion === 'cobra' && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 && !!e && !e.eliminado;
     const motivo = incluido ? '' : !e || e.eliminado ? 'eliminado en la Agenda' : p.situacion === 'no_cobra' ? `no se cobra (${p.motivo || 'cerrado'})` : p.situacion === 'pendiente' ? `sin resultado todavía (${p.estadoPrueba || 'pendiente'})` : p.estadoTarifa === 'sin_tarifa' ? 'sin tarifa' : p.estadoTarifa === 'cliente_sin_mapear' ? 'cliente sin mapear' : p.estadoTarifa.startsWith('excluido') ? 'no se factura por este flujo' : 'sin precio';
     return {
-      idExterno: p.idExterno, componenteId: p.id, persona: e?.persona || p.idExterno, puesto: e?.puesto ?? '', fechaIngreso: e?.fechaIngreso ?? null,
+      idExterno: p.idExterno, componenteId: p.id, persona: e?.persona || p.idExterno, puesto: e?.puesto ?? '', fechaIngreso: e?.fechaIngreso ?? null, solicitante: String(e?.solicitante ?? '').replace(/\s+/g, ' ').trim().toUpperCase(),
       servicio: p.servicio, resultado: resultadoLegible(p.servicio, p.estadoPrueba), componentes: '',
       categoria: dimTexto(p.categoria), territorio: dimTexto(p.territorio), monto: incluido ? round2(p.montoCalculado ?? 0) : 0, incluido, motivo,
     };

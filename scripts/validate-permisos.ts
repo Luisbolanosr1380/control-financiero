@@ -76,6 +76,7 @@ function archivosUseServer(dir: string): string[] {
     crearClienteAction: 'emitir_factura',
     editarNombresClienteAction: 'emitir_factura',
     crearDetalleAction: 'facturar_agenda',
+    editarEncabezadoDetalleAction: 'facturar_agenda',
     marcarEnviadaAction: 'facturar_agenda',
     marcarAprobadaAction: 'facturar_agenda',
     anularDetalleAction: 'facturar_agenda',
