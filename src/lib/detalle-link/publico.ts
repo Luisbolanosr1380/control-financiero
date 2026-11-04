@@ -20,7 +20,7 @@ export const exigeNota = (d: Decision): boolean => d !== 'aprobado';
 
 export interface LineaPublica {
   ref: string; persona: string; puesto: string; solicitante: string; fechaIngreso: string | null;
-  servicio: string; resultado: string; categoria: string; territorio: string; monto: number;
+  servicio: string; resultado: string; categoria: string; territorio: string; /** 030: precio CON IVA de la prueba (como en la factura) */ monto: number;
   /** Respuesta previa (versión anterior) y lo que Golden contestó, para la versión corregida. */
   previa?: { decision: Decision; nota: string; respuestaGolden: string } | null;
   /** Respuesta de esta versión (cuando el link ya se respondió: solo lectura). */
@@ -29,6 +29,7 @@ export interface LineaPublica {
 export interface DetallePublico {
   estado: 'vigente' | 'respondido';
   correlativo: string; version: number; titulo: string; dirigidoA: string; cliente: string; emisor: string; notas: string;
+  /** 030: total = Σ precios con IVA; subtotal = base sin IVA (total / 1.12); iva = total − base */
   lineas: LineaPublica[]; subtotal: number; iva: number; total: number; expiraEn: string; huella: string;
   /** Si ya se respondió: cómo quedó. */
   resultado?: { estado: 'aprobada' | 'con_observaciones'; respondidoEn: string | null; nombre: string; cargo: string; observaciones: number } | null;

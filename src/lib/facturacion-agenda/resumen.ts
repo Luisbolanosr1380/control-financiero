@@ -3,8 +3,8 @@
  * La pantalla "Por facturar" agrupa por cliente (NIT mapeado) o, si la
  * empresa de la Agenda no está mapeada, por su empresa.id.
  */
-import { conIva, normalizarTexto, round2 } from '@/lib/tarifario/canon';
-import { conPrecio, enCola, facturable, montoFacturable, pruebasEnCola, pruebasFacturables, pruebasPendientes } from './mapeo';
+import { normalizarTexto, round2 } from '@/lib/tarifario/canon';
+import { conPrecio, enCola, facturable, montoFacturable, pruebasEnCola, pruebasFacturables, pruebasPendientes, montoFacturableConIva } from './mapeo';
 import { servicioPorEstado } from './situacion';
 import { mesGuatemala } from './fecha-resultado';
 import { ESTADOS_EXCLUIDOS, type ExpedienteLocal, type PruebaLocal } from './tipos';
@@ -67,12 +67,12 @@ export function agruparPorCliente(expedientes: readonly ExpedienteLocal[], razon
         if (p.estadoTarifa === 'cliente_sin_mapear') g.sinMapear++;
       }
       const fact = pruebasFacturables(e);
-      if (fact.length) { g.listos += fact.length; g.totalSinIva = round2(g.totalSinIva + montoFacturable(e)); }
+      if (fact.length) { g.listos += fact.length; g.totalSinIva = round2(g.totalSinIva + montoFacturable(e)); g.totalConIva = round2(g.totalConIva + montoFacturableConIva(e)); }
       if (e.fechaIngreso && (!g.fechaIngresoMasAntigua || e.fechaIngreso < g.fechaIngresoMasAntigua)) g.fechaIngresoMasAntigua = e.fechaIngreso;
     }
     if ((e.cobroMegapaca ?? 0) > 0) g.conMegapaca++;
   }
-  const out = [...grupos.values()].map(g => ({ ...g, totalConIva: conIva(g.totalSinIva).total }));
+  const out = [...grupos.values()];   // 030: totalConIva ya es la suma de precios con IVA por prueba
   // Primero lo que requiere acción (sin mapear / sin tarifa), luego por total listo, luego alfabético.
   const peso = (g: GrupoCliente) => (g.sinMapear ? 0 : g.sinTarifa ? 1 : g.listos ? 2 : 3);
   return out.sort((a, b) => peso(a) - peso(b) || b.totalSinIva - a.totalSinIva || a.nombre.localeCompare(b.nombre, 'es'));
@@ -97,9 +97,8 @@ export function kpisPorFacturar(expedientes: readonly ExpedienteLocal[]): KpisPo
       if (p.estadoTarifa === 'sin_tarifa') k.sinTarifa++;
       if (p.estadoTarifa === 'cliente_sin_mapear') { k.sinMapear++; sinMapear.add(claveGrupo(e)); }
     }
-    if (conPrecio(e)) { k.listos += pruebasFacturables(e).length; k.totalSinIva = round2(k.totalSinIva + montoFacturable(e)); }
+    if (conPrecio(e)) { k.listos += pruebasFacturables(e).length; k.totalSinIva = round2(k.totalSinIva + montoFacturable(e)); k.totalConIva = round2(k.totalConIva + montoFacturableConIva(e)); }
   }
-  k.totalConIva = conIva(k.totalSinIva).total;
   k.clientes = clientes.size; k.clientesSinMapear = sinMapear.size;
   return k;
 }

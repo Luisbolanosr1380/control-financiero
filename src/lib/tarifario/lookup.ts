@@ -24,7 +24,7 @@
  *    "sin tarifa".
  */
 import { nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
-import { UNICA, canonCategoria, canonTerritorio, canonTipoPrueba, conIva, esSinTarifa, formaPrecio, llaveTarifa, normalizarTexto, usaCategoria, usaTerritorio } from './canon';
+import { UNICA, canonCategoria, canonTerritorio, canonTipoPrueba, esSinTarifa, formaPrecio, llaveTarifa, normalizarTexto, round2, totalesFel, usaCategoria, usaTerritorio } from './canon';
 
 export interface Tarifa {
   id: string;
@@ -186,8 +186,8 @@ export function resolverTarifa(tarifas: readonly Tarifa[], exp: Expediente, clie
   }
   const sinTarifa = partes.find(p => esSinTarifa(p.monto));
   if (sinTarifa) return { estado: 'sin_tarifa', nit, tarifa: sinTarifa, componentes: partes.length > 1 ? partes : undefined, mensaje: `${etiquetaFila(sinTarifa)} está en Q0: sin tarifa definida (no es gratis). Hay que pactarla y cargarla.` };
-  const monto = partes.reduce((s, p) => s + Number(p.monto), 0);
-  const { iva, total } = conIva(monto);
+  const monto = round2(partes.reduce((s, p) => s + Number(p.monto), 0));
+  const { iva, total } = totalesFel(partes.map(p => Number(p.monto)));   // 030: con dos tarifas (COMPLETO) el IVA sale de los precios con IVA de cada una
   const aprobada = partes.every(p => !!p.aprobadoEn);
   if (!aprobada) avisos.push('La tarifa no está aprobada en el tarifario.');
   return { estado: 'ok', nit, monto, iva, total, tarifa: partes[0], componentes: partes.length > 1 ? partes : undefined, aprobada, avisos };

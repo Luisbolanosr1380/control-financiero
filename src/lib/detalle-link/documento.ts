@@ -3,8 +3,8 @@
  * (la huella corta para mostrar vive en publico.ts, que sí va al navegador).
  *
  * La huella (`documento_hash`) es el sha256 del JSON canónico de la versión que se envía: correlativo, versión,
- * NIT, las líneas (identificadas por su componente, con persona, servicio, categoría, territorio y monto) y los
- * totales. Se calcula al emitir el link (queda en el link), se recalcula al responder (si no coincide, el detalle
+ * NIT, las líneas (identificadas por su componente, con persona, servicio, categoría, territorio y su PRECIO CON IVA,
+ * 030) y los totales (regla FEL: total = Σ precios con IVA, base = total / 1.12, IVA por resta). Se calcula al emitir el link (queda en el link), se recalcula al responder (si no coincide, el detalle
  * cambió entre el envío y la respuesta: se rechaza y hay que reenviar) y es la "huella" que imprime el PDF.
  */
 import { createHash } from 'node:crypto';
