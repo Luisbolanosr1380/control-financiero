@@ -17,6 +17,11 @@ const conClerk = clerkMiddleware(async (auth, req) => {
   if (!isPublicRoute(req)) {
     await auth.protect();
   }
+  // x-ruta-publica solo lo pone este middleware en /aprobar-detalle: si llega de afuera en otra ruta, se descarta.
+  if (req.headers.has('x-ruta-publica')) {
+    const h = new Headers(req.headers); h.delete('x-ruta-publica');
+    return NextResponse.next({ request: { headers: h } });
+  }
 });
 
 export default function middleware(req: NextRequest, ev: NextFetchEvent) {
