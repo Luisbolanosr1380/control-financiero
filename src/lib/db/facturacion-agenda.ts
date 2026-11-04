@@ -61,12 +61,13 @@ interface PruebaRow {
   monto_calculado: number | string | null; estado_tarifa: EstadoTarifa; detalle_tarifa: string | null; tarifario_id: string | null; aprobada: boolean | null;
   detalle_id: string | null; factura_id: string | null; no_factura: string | null; facturado_en: string | null; facturado_por: string | null;
   /** 025 */ fecha_resultado?: string | null; fecha_resultado_fuente?: FuenteFechaResultado | null;
+  /** 029 */ diferida_hasta?: string | null;
 }
 const rowToPrueba = (r: PruebaRow): PruebaLocal => ({
   id: r.id, expedienteId: r.expediente_id, idExterno: r.id_externo, servicio: r.servicio, estadoPrueba: r.estado_prueba ?? '', situacion: r.situacion, motivo: r.motivo ?? '', categoria: r.categoria ?? '', territorio: r.territorio ?? '',
   montoCalculado: num(r.monto_calculado), estadoTarifa: r.estado_tarifa, detalleTarifa: r.detalle_tarifa ?? '', tarifarioId: r.tarifario_id, aprobada: r.aprobada,
   detalleId: r.detalle_id, facturaId: r.factura_id, noFactura: r.no_factura, facturadoEn: r.facturado_en, facturadoPor: r.facturado_por,
-  fechaResultado: r.fecha_resultado ?? null, fechaResultadoFuente: r.fecha_resultado_fuente ?? null,
+  fechaResultado: r.fecha_resultado ?? null, fechaResultadoFuente: r.fecha_resultado_fuente ?? null, diferidaHasta: r.diferida_hasta ?? null,
 });
 const num = (v: number | string | null | undefined): number | null => (v === null || v === undefined ? null : Number(v));
 const txt = (v: string | null | undefined): string => v ?? '';
@@ -500,7 +501,7 @@ export async function reresolverPrecios(): Promise<ReresolverResult> {
   try { return { ok: true, reclasificados: await reclasificar() }; }
   catch (e) { return { ok: false, error: e instanceof Error ? e.message : String(e) }; }
 }
-const DETALLES_VACIOS = (): VistaPorFacturar['detalles'] => ({ borrador: { n: 0, total: 0 }, enviada: { n: 0, total: 0 }, aprobada: { n: 0, total: 0 }, facturada: { n: 0, total: 0 }, anulada: { n: 0, total: 0 } });
+const DETALLES_VACIOS = (): VistaPorFacturar['detalles'] => ({ borrador: { n: 0, total: 0 }, enviada: { n: 0, total: 0 }, con_observaciones: { n: 0, total: 0 }, aprobada: { n: 0, total: 0 }, facturada: { n: 0, total: 0 }, anulada: { n: 0, total: 0 } });
 
 export interface VistaPorFacturar {
   /** Solo clientes con expedientes en cola resueltos o sin tarifa (nunca el universo). */
@@ -515,7 +516,7 @@ export interface VistaPorFacturar {
   /** Clientes activos de financiero (id de app, nombre, NIT) para el selector de "Mapear todas a un cliente". */
   clientes: ClienteSlim[];
   /** 019: detalles de facturación por estado (tablero "pendientes de aprobación"). */
-  detalles: Record<'borrador' | 'enviada' | 'aprobada' | 'facturada' | 'anulada', { n: number; total: number }>;
+  detalles: Record<'borrador' | 'enviada' | 'con_observaciones' | 'aprobada' | 'facturada' | 'anulada', { n: number; total: number }>;
   /** true si los agregados vinieron de la RPC de la 017 (SQL); false = fallback con consultas livianas. */
   agregadoEnSql: boolean;
 }

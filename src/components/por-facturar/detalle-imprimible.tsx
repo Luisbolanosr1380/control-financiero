@@ -2,6 +2,8 @@ import { Q } from '@/lib/utils';
 import { formatearFechaCorta } from '@/lib/utils/fechas';
 import type { DetalleCompleto } from '@/lib/db/detalle-facturacion';
 import { ImprimirBoton } from './imprimir-boton';
+import { huellaCorta } from '@/lib/detalle-link/publico';
+import { ETIQUETA_DECISION_DETALLE } from '@/lib/facturacion-agenda/detalle';
 
 /**
  * Documento imprimible (server component): encabezado del emisor y del cliente, correlativo, fecha,
@@ -19,7 +21,11 @@ const territorioCorto = (t: string): string => (/^METRO/i.test(t) ? 'Metro' : /^
 export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; emisor: { nombre: string; nit: string; direccion: string } }) {
   const { detalle: d, documento: doc } = datos;
   const facturado = d.estado === 'facturada' && d.noFactura;
-  const paraRevisar = !facturado && d.estado !== 'anulada';
+  // 029: aprobado por link → firma digital, casillas marcadas según lo que respondió el cliente
+  const digital = d.aprobadoCanal === 'link' && !!d.respondidoEn && (d.estado === 'aprobada' || d.estado === 'facturada');
+  const respuestas = new Map(datos.respuestas.filter(r => r.version === d.version).map(r => [r.componenteId, r] as const));
+  const paraRevisar = !facturado && d.estado !== 'anulada' && !digital;
+  const conCasillas = paraRevisar || digital;
   return (
     <main style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#111', maxWidth: 820, margin: '0 auto', padding: '32px 28px', background: '#fff' }} data-imprimible data-estado={d.estado}>
       <style>{`
@@ -40,7 +46,9 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
         .doc-tabla td.num, .doc-tabla th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
         .doc-tabla td.check, .doc-tabla th.check { white-space: nowrap; text-align: center; }
         .doc-mute { color: #666; font-size: 9.5px; }
-        .cb { display: inline-block; width: 9px; height: 9px; border: 1px solid #111; vertical-align: -1px; margin-right: 3px; border-radius: 1px; background: #fff; }
+        .cb { display: inline-block; width: 9px; height: 9px; border: 1px solid #111; vertical-align: -1px; margin-right: 3px; border-radius: 1px; background: #fff; position: relative; }
+        .cb.on::after { content: ''; position: absolute; left: 1px; top: 1px; width: 5px; height: 5px; background: #111; }
+        .doc-firma img { height: 54px; display: block; }
         .cb + .cb-lbl { margin-right: 7px; }
         .doc-firma { margin-top: 26px; border-top: 1px solid #111; padding-top: 10px; font-size: 11px; }
         .doc-firma .linea { display: inline-block; border-bottom: 1px solid #111; min-width: 220px; height: 16px; vertical-align: bottom; margin-left: 6px; }
@@ -73,9 +81,9 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
       <table className="doc-tabla" data-tabla-doc>
         <thead><tr>
           <th>#</th><th>Persona</th><th>Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Cat.</th><th>Terr.</th>
-          {paraRevisar && <th className="check" title="Para que el cliente marque con lapicero">Conforme</th>}
+          {conCasillas && <th className="check" title={digital ? 'Lo que respondió el cliente por link' : 'Para que el cliente marque con lapicero'}>Conforme</th>}
           <th className="num">Monto sin IVA</th>
-          {paraRevisar && <th className="obs">Observaciones</th>}
+          {conCasillas && <th className="obs">Observaciones</th>}
         </tr></thead>
         <tbody>
           {doc.incluidas.map((l, i) => (
@@ -86,17 +94,17 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
               <td className="num">{l.fechaIngreso ? formatearFechaCorta(l.fechaIngreso) : '—'}</td>
               <td className="nowrap">{l.resultado || l.servicio}</td>
               <td className="nowrap">{l.categoria}</td><td className="nowrap">{territorioCorto(l.territorio)}</td>
-              {paraRevisar && <td className="check" data-casillas><span className="cb" aria-hidden /><span className="cb-lbl">Sí</span><span className="cb" aria-hidden /><span className="cb-lbl">No</span></td>}
+              {conCasillas && (() => { const r = digital ? respuestas.get(l.componenteId) : undefined; const si = digital && r?.decision === 'aprobado'; const no = digital && !!r && r.decision !== 'aprobado'; return <td className="check" data-casillas data-marcada={si ? 'si' : no ? 'no' : ''}><span className={'cb' + (si ? ' on' : '')} aria-hidden /><span className="cb-lbl">Sí</span><span className={'cb' + (no ? ' on' : '')} aria-hidden /><span className="cb-lbl">No</span></td>; })()}
               <td className="num">{Q(l.monto)}</td>
-              {paraRevisar && <td className="obs" data-observaciones />}
+              {conCasillas && <td className="obs" data-observaciones>{digital ? (respuestas.get(l.componenteId)?.nota ?? '') : ''}</td>}
             </tr>
           ))}
-          {doc.incluidas.length === 0 && <tr><td colSpan={paraRevisar ? 10 : 8} style={{ textAlign: 'center', padding: 20, color: '#666' }}>Ningún proceso con precio en este detalle.</td></tr>}
+          {doc.incluidas.length === 0 && <tr><td colSpan={conCasillas ? 10 : 8} style={{ textAlign: 'center', padding: 20, color: '#666' }}>Ningún proceso con precio en este detalle.</td></tr>}
         </tbody>
         <tfoot>
-          <tr><td colSpan={paraRevisar ? 8 : 7} className="num" style={{ borderBottom: 'none', paddingTop: 10 }}>Subtotal sin IVA</td><td className="num" style={{ borderBottom: 'none', paddingTop: 10 }}>{Q(doc.subtotal)}</td>{paraRevisar && <td style={{ borderBottom: 'none' }} />}</tr>
-          <tr><td colSpan={paraRevisar ? 8 : 7} className="num" style={{ borderBottom: 'none' }}>IVA 12 %</td><td className="num" style={{ borderBottom: 'none' }}>{Q(doc.iva)}</td>{paraRevisar && <td style={{ borderBottom: 'none' }} />}</tr>
-          <tr><td colSpan={paraRevisar ? 8 : 7} className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 12.5 }}>Total</td><td className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 12.5 }} data-total={doc.total}>{Q(doc.total)}</td>{paraRevisar && <td style={{ borderTop: '1.5px solid #111' }} />}</tr>
+          <tr><td colSpan={conCasillas ? 8 : 7} className="num" style={{ borderBottom: 'none', paddingTop: 10 }}>Subtotal sin IVA</td><td className="num" style={{ borderBottom: 'none', paddingTop: 10 }}>{Q(doc.subtotal)}</td>{conCasillas && <td style={{ borderBottom: 'none' }} />}</tr>
+          <tr><td colSpan={conCasillas ? 8 : 7} className="num" style={{ borderBottom: 'none' }}>IVA 12 %</td><td className="num" style={{ borderBottom: 'none' }}>{Q(doc.iva)}</td>{conCasillas && <td style={{ borderBottom: 'none' }} />}</tr>
+          <tr><td colSpan={conCasillas ? 8 : 7} className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 12.5 }}>Total</td><td className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 12.5 }} data-total={doc.total}>{Q(doc.total)}</td>{conCasillas && <td style={{ borderTop: '1.5px solid #111' }} />}</tr>
         </tfoot>
       </table>
       {doc.faltantes.length > 0 && (
@@ -106,6 +114,19 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
         </section>
       )}
       {d.notas && <section style={{ marginTop: 14, fontSize: 11 }}><strong>Notas:</strong> {d.notas}</section>}
+      {digital && (
+        <section className="doc-firma" data-firma-digital data-huella={d.documentoHash ?? ''}>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>Aprobado digitalmente</div>
+          <div style={{ display: 'flex', gap: 24, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+            {d.firmaPng && /* eslint-disable-next-line @next/next/no-img-element */ <img src={d.firmaPng} alt={`Firma de ${d.respondidoPorNombre}`} />}
+            <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+              <div><strong>{d.respondidoPorNombre || d.aprobadoPor}</strong>{d.respondidoPorCargo ? ` · ${d.respondidoPorCargo}` : ''}{d.respondidoPorCorreo ? ` · ${d.respondidoPorCorreo}` : ''}</div>
+              <div>Aprobado digitalmente por {d.respondidoPorNombre || d.aprobadoPor} el {d.respondidoEn ? new Date(d.respondidoEn).toLocaleString('es-GT', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'America/Guatemala' }) : formatearFechaCorta(d.aprobadaEn ?? d.createdAt)} · versión {d.version} · huella {huellaCorta(d.documentoHash)}</div>
+              <div className="doc-mute">Las casillas reflejan lo que respondió el cliente en el link{[...respuestas.values()].some(r => r.decision !== 'aprobado') ? ` (${[...respuestas.values()].filter(r => r.decision !== 'aprobado').map(r => ETIQUETA_DECISION_DETALLE[r.decision]).join(', ')})` : ''}.</div>
+            </div>
+          </div>
+        </section>
+      )}
       {paraRevisar && (
         <section className="doc-firma" data-firma>
           <div style={{ fontWeight: 600, marginBottom: 2 }}>Autorizado por el cliente</div>

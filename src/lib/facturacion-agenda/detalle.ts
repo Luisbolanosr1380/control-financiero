@@ -10,18 +10,18 @@ import { dimTexto, conIva, round2 } from '@/lib/tarifario/canon';
 import type { ExpedienteLocal, PruebaLocal } from './tipos';
 import { resultadoLegible } from './situacion';
 
-export type EstadoDetalle = 'borrador' | 'enviada' | 'aprobada' | 'facturada' | 'anulada';
+export type EstadoDetalle = 'borrador' | 'enviada' | 'con_observaciones' | 'aprobada' | 'facturada' | 'anulada';
 export type CanalAprobacion = 'correo' | 'link' | 'otro';
 
 export const ETIQUETA_ESTADO_DETALLE: Record<EstadoDetalle, string> = {
-  borrador: 'Borrador', enviada: 'Enviada al cliente', aprobada: 'Aprobada por el cliente', facturada: 'Facturada', anulada: 'Anulada',
+  borrador: 'Borrador', enviada: 'Enviada al cliente', con_observaciones: 'Con observaciones del cliente', aprobada: 'Aprobada por el cliente', facturada: 'Facturada', anulada: 'Anulada',
 };
 export const BADGE_ESTADO_DETALLE: Record<EstadoDetalle, string> = {
-  borrador: 'badge-mute', enviada: 'badge-warn', aprobada: 'badge-olive', facturada: 'badge-outline', anulada: 'badge-wine',
+  borrador: 'badge-mute', enviada: 'badge-warn', con_observaciones: 'badge-wine', aprobada: 'badge-olive', facturada: 'badge-outline', anulada: 'badge-wine',
 };
 
 const TRANSICIONES: Record<EstadoDetalle, EstadoDetalle[]> = {
-  borrador: ['enviada', 'anulada'], enviada: ['aprobada', 'anulada'], aprobada: ['facturada', 'anulada'], facturada: [], anulada: [],
+  borrador: ['enviada', 'anulada'], enviada: ['aprobada', 'con_observaciones', 'anulada'], con_observaciones: ['enviada', 'anulada'], aprobada: ['facturada', 'anulada'], facturada: [], anulada: [],
 };
 export const transicionValida = (de: EstadoDetalle, a: EstadoDetalle): boolean => TRANSICIONES[de]?.includes(a) ?? false;
 
@@ -36,7 +36,24 @@ export interface DetalleFacturacion {
   notas: string; updatedAt: string | null;
   /** 028: título del corte (qué incluye) y a quién va dirigido del lado del cliente; opcionales. */
   titulo: string; dirigidoA: string;
+  /** 029: versión enviada al cliente, destinatarios del último envío, quién respondió y la firma / huella si aprobó por link. */
+  version: number; destinatarios: string[];
+  respondidoEn: string | null; respondidoPorNombre: string; respondidoPorCargo: string; respondidoPorCorreo: string;
+  firmaPng: string | null; documentoHash: string | null;
 }
+
+/** 029: respuesta del cliente a una línea (una por versión) y lo que Golden contestó. */
+export interface RespuestaDetalle { id: string; version: number; componenteId: string; decision: 'aprobado' | 'correccion' | 'proximo_mes' | 'no_aplica'; nota: string; respuestaGolden: string; createdAt: string }
+export const ETIQUETA_DECISION_DETALLE: Record<RespuestaDetalle['decision'], string> = { aprobado: 'Aprobado', correccion: 'Corrección', proximo_mes: 'Cobrar el próximo mes', no_aplica: 'No aplica' };
+export const BADGE_DECISION_DETALLE: Record<RespuestaDetalle['decision'], string> = { aprobado: 'badge-olive', correccion: 'badge-wine', proximo_mes: 'badge-warn', no_aplica: 'badge-mute' };
+/** Primer día del mes siguiente (YYYY-MM-DD, Guatemala) para "cobrar el próximo mes". */
+export function primerDiaMesSiguiente(hoy: Date = new Date()): string {
+  const gt = new Date(hoy.toLocaleString('en-US', { timeZone: 'America/Guatemala' }));
+  const y = gt.getFullYear(), m = gt.getMonth() + 1;
+  return m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`;
+}
+/** ¿La prueba está diferida a una fecha futura (hoy < diferida_hasta)? */
+export const diferidaVigente = (diferidaHasta: string | null | undefined, hoy: string): boolean => !!diferidaHasta && hoy < diferidaHasta.slice(0, 10);
 
 export interface LineaDetalle {
   idExterno: string; /** 024: la prueba (facturacion_componente.id) */ componenteId: string; persona: string; puesto: string; fechaIngreso: string | null;

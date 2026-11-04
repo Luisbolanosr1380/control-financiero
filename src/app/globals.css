@@ -544,14 +544,18 @@ input:focus, textarea:focus, select:focus, button:focus { outline: none; }
    la columna de factura/acciones a la derecha (col-acciones). */
 .table-scroll { overflow-x: auto; max-width: 100%; min-width: 0; -webkit-overflow-scrolling: touch; }
 .table th.col-sel, .table td.col-sel { position: sticky; left: 0; z-index: 2; background: var(--paper); width: 56px; min-width: 56px; max-width: 56px; }
-.table th.col-persona, .table td.col-persona { position: sticky; left: var(--col-persona-left, 0px); z-index: 2; background: var(--paper); max-width: 260px; box-shadow: 8px 0 8px -8px rgba(0, 0, 0, 0.12); }
+.table th.col-persona, .table td.col-persona { position: sticky; left: var(--col-persona-left, 0px); z-index: 2; background: var(--paper); max-width: 230px; box-shadow: 8px 0 8px -8px rgba(0, 0, 0, 0.12); }
 .table thead th.col-sel, .table thead th.col-persona, .table thead th.col-acciones { background: var(--bg-2); z-index: 3; }
 /* la columna de factura (fija a la derecha) no puede ser más ancha que la tarjeta: ancho acotado, el texto largo con puntos suspensivos */
-.table td.col-acciones { max-width: 240px; white-space: normal; }
+.table td.col-acciones { max-width: 180px; white-space: normal; }
 .table tbody tr:hover td.col-sel, .table tbody tr:hover td.col-persona { background: var(--paper-tint); }
 .table tbody tr.selected td.col-sel, .table tbody tr.selected td.col-persona { background: var(--bg-2); }
 /* celdas de dos líneas (servicio + proceso): mantienen el salto con un ancho razonable */
-.table td.col-servicio { white-space: normal; min-width: 180px; max-width: 280px; line-height: 1.35; padding-top: 6px; padding-bottom: 6px; }
+.table td.col-servicio { white-space: normal; min-width: 170px; max-width: 230px; line-height: 1.35; padding-top: 6px; padding-bottom: 6px; }
+/* FIX (029): a 1280 px la columna de precio quedaba tapada por la de factura (fija a la derecha): la de precio no se
+   achica (min-width) y la fija a la derecha es angosta y opaca; con eso la tabla cabe en la tarjeta a 1280 px */
+.table th.col-precio, .table td.col-precio { min-width: 118px; white-space: nowrap; }
+.table th.col-acciones, .table td.col-acciones { min-width: 120px; }
 /* texto largo en una línea con puntos suspensivos (el title lleva el texto completo) */
 .cell-ellipsis { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 230px; }
 /* TARIFARIO · lista de empresas y "Ver todas": la columna de empresa queda fija a la izquierda con ancho

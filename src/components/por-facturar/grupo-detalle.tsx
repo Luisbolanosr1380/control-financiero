@@ -23,6 +23,7 @@ import { ETIQUETA_SITUACION, ICONO_SITUACION, resultadoLegible } from '@/lib/fac
 import { filtrarExpedientes, mesesDisponibles, mesesResultadoDisponibles, pruebasTerminadasEn, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
 import { diaGuatemala, ETIQUETA_FUENTE_FECHA } from '@/lib/facturacion-agenda/fecha-resultado';
 import { etiquetaMes } from '@/lib/facturacion-agenda/produccion';
+import { diferidaVigente } from '@/lib/facturacion-agenda/detalle';
 import { SIN_SOLICITANTE, etiquetaCategoria, etiquetaServicio, etiquetaSolicitante, etiquetaTerritorio, expedienteCumple, filtrosDesdeParams, hayFiltrosPrueba, opcionesFiltros, paramsDeFiltros, pruebasQueCumplen, tituloPropuesto, type FiltrosPrueba } from '@/lib/facturacion-agenda/filtros-detalle';
 import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type PruebaLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import type { GrupoDetalle } from '@/lib/db/facturacion-agenda';
@@ -75,8 +76,12 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
   const opciones = useMemo(() => opcionesFiltros(exps), [exps]);
   const filas = useMemo(() => filtrarExpedientes(exps, { mes: mes || undefined, cobro, soloListos, mesResultado: mesResultado || undefined }).filter(e => expedienteCumple(e, fp)), [exps, mes, cobro, soloListos, mesResultado, fp]);
   /** Pruebas que se muestran de un candidato: solo lo cobrable si está marcado; solo las terminadas en el mes elegido (025); solo las que pasan los filtros de prueba (028). */
-  const pruebasVisibles = (e: ExpedienteLocal): PruebaLocal[] => { const base = soloListos ? pruebasFacturables(e) : e.pruebas; const porMes = mesResultado ? base.filter(p => pruebasTerminadasEn({ pruebas: [p] }, mesResultado).length > 0) : base; return pruebasQueCumplen(porMes, e, fp); };
+  const pruebasVisibles = (e: ExpedienteLocal): PruebaLocal[] => { const base = soloListos ? pruebasFacturables(e).filter(p => !esDiferida(p)) : e.pruebas; const porMes = mesResultado ? base.filter(p => pruebasTerminadasEn({ pruebas: [p] }, mesResultado).length > 0) : base; return pruebasQueCumplen(porMes, e, fp); };
   const conFiltrosPrueba = hayFiltrosPrueba(fp);
+  // 029: "cobrar el próximo mes" es solo una marca: "Solo cobrable" las esconde hasta ese mes; se cuentan aparte
+  const hoyGt = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
+  const esDiferida = (p: PruebaLocal) => diferidaVigente(p.diferidaHasta, hoyGt);
+  const diferidas = exps.flatMap(pruebasFacturables).filter(esDiferida);
   // 024: la unidad es la PRUEBA. Listos / total / sin tarifa / pendientes se cuentan por prueba (misma regla que la cola en SQL).
   const listos = exps.flatMap(pruebasFacturables);
   const totalListo = Math.round(exps.reduce((s, e) => s + montoFacturable(e), 0) * 100) / 100;
@@ -129,7 +134,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
       {!datos.nit && !datos.noFactura && !puedeFacturar && <div className="card" role="status" style={{ borderColor: 'var(--wine)', marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Esta empresa de la Agenda todavía no está mapeada a un cliente: un admin o contador tiene que mapearla antes de facturar.</div></div>}
 
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)', marginBottom: 14 }}>
-        <div className="kpi" data-kpi="listos"><div className="kpi-label">Cobrable ahora</div><div className="kpi-value">{listos.length}</div><div className="kpi-delta"><span className="vs">prueba{listos.length === 1 ? '' : 's'} con resultado y precio · {exps.filter(enCola).length} candidato{exps.filter(enCola).length === 1 ? '' : 's'} en cola</span></div></div>
+        <div className="kpi" data-kpi="listos"><div className="kpi-label">Cobrable ahora</div><div className="kpi-value">{listos.length}</div><div className="kpi-delta"><span className="vs">prueba{listos.length === 1 ? '' : 's'} con resultado y precio · {exps.filter(enCola).length} candidato{exps.filter(enCola).length === 1 ? '' : 's'} en cola{diferidas.length ? <> · <span className="badge badge-warn" style={{ fontSize: 10 }} data-kpi-diferidas={diferidas.length} title="El cliente pidió cobrarlas el próximo mes: 'Solo cobrable' las esconde hasta entonces">{diferidas.length} diferida{diferidas.length === 1 ? '' : 's'}</span></> : null}</span></div></div>
         <div className="kpi" data-kpi="pendientes" title="Pruebas que esperan resultado en la Agenda: se cobran cuando lo carguen"><div className="kpi-label">Pendiente de resultado</div><div className="kpi-value" style={{ color: 'var(--ink-3)' }}>{pendientes.length}</div><div className="kpi-delta"><span className="vs">{parciales ? `${parciales} candidato${parciales === 1 ? '' : 's'} con cobro parcial` : 'esperan a la Agenda'}</span></div></div>
         <div className="kpi" data-kpi="total"><div className="kpi-label">Total sin IVA</div><div className="kpi-value">{Q(totalListo)}</div><div className="kpi-delta"><span className="vs">con IVA {Q(Math.round(totalListo * 112) / 100)}</span></div></div>
         <div className="kpi" data-kpi="sin-tarifa"><div className="kpi-label">Sin tarifa</div><div className="kpi-value" style={{ color: sinTarifa ? 'var(--burnt, #b5651d)' : undefined }}>{sinTarifa}</div><div className="kpi-delta"><span className="vs">{sinTarifa ? 'cargá la tarifa y se resuelve solo' : 'todas con precio'}</span></div></div>
@@ -163,7 +168,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
           <table className="table" style={{ '--col-persona-left': puedeFacturar ? '56px' : '0px' } as React.CSSProperties}>
             <thead><tr>
               {puedeFacturar && <th className="col-sel"><input type="checkbox" checked={todosSel} onChange={toggleTodos} aria-label="Seleccionar todos los facturables visibles" disabled={facturablesVisibles.length === 0} /></th>}
-              <th className="col-persona">Persona</th><th>Ingreso</th><th>Prueba · estado</th><th title="Fecha en que la prueba tuvo resultado (producción). Pasá el cursor sobre la fecha para ver la fuente.">Terminó</th><th>Categoría</th><th>Territorio</th><th className="num">Precio sin IVA</th><th>Cobro en Agenda</th><th className="col-acciones">Factura</th>
+              <th className="col-persona">Persona</th><th>Ingreso</th><th>Prueba · estado</th><th title="Fecha en que la prueba tuvo resultado (producción). Pasá el cursor sobre la fecha para ver la fuente.">Terminó</th><th>Categoría</th><th>Territorio</th><th className="num col-precio">Precio sin IVA</th><th>Cobro en Agenda</th><th className="col-acciones">Factura</th>
             </tr></thead>
             <tbody>
               {filas.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>Ningún expediente con esos filtros.</td></tr>}
@@ -241,6 +246,7 @@ function FilaExpediente({ e, p, primera, puede, sel, onToggle }: { e: Expediente
         {p ? <>
           <div data-servicio={p.servicio}>{icono} {p.servicio === 'FEE VISITA SOCIO CANCELADO' ? resultadoLegible(p.servicio, p.estadoPrueba) : p.servicio}</div>
           <div className="cell-mute" style={{ fontSize: 11 }} title={p.motivo}>{etiqueta}{p.estadoPrueba ? ` · ${p.estadoPrueba}` : ''}</div>
+          {p.diferidaHasta && diferidaVigente(p.diferidaHasta, new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' })) && <span className="badge badge-warn" style={{ fontSize: 10 }} data-diferida={p.diferidaHasta} title="El cliente pidió cobrarla el próximo mes (quedó fuera de un detalle); sigue en la cola">Diferida a {etiquetaMes(p.diferidaHasta.slice(0, 7))}</span>}
           {primera && esMitadDeCompleto(e) && <div className="cell-mute" style={{ fontSize: 11 }} title="La Agenda parte un completo en dos expedientes: esta fila cobra solo su prueba; la otra mitad es su propia fila.">COMPLETO · mitad</div>}
         </> : <ServicioCell e={e} />}
       </td>
@@ -253,7 +259,7 @@ function FilaExpediente({ e, p, primera, puede, sel, onToggle }: { e: Expediente
       </td>
       <td title={e.categoriaPrueba || 'sin categoría'}>{cat && cat !== 'UNICA' ? cat : <span className="cell-mute">—</span>}</td>
       <td title={e.deptoVisita || 'sin depto. de visita'}>{ter && ter !== 'UNICA' ? ter : <span className="cell-mute">{p ? '—' : 'no indicado'}</span>}</td>
-      <td className="num">
+      <td className="num col-precio">
         {p
           ? (p.estadoTarifa === 'resuelta' && p.montoCalculado !== null
               ? <span className="cell-strong" title={p.detalleTarifa || undefined}>{Q(p.montoCalculado)}{p.aprobada === false && <span className="badge badge-warn" style={{ fontSize: 9, marginLeft: 4 }} title="La tarifa no está aprobada en el tarifario">no aprobada</span>}</span>

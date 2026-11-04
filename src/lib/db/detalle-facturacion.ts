@@ -10,7 +10,7 @@
 import { supabase } from '@/lib/supabase/client';
 import { rpc } from '@/lib/supabase/writes';
 import { nitComparable } from '@/lib/clientes/nit';
-import { documentoDetalle, transicionValida, type CanalAprobacion, type DetalleFacturacion, type DocumentoDetalle, type EstadoDetalle } from '@/lib/facturacion-agenda/detalle';
+import { documentoDetalle, transicionValida, type CanalAprobacion, type DetalleFacturacion, type DocumentoDetalle, type EstadoDetalle, type RespuestaDetalle } from '@/lib/facturacion-agenda/detalle';
 import type { ExpedienteLocal } from '@/lib/facturacion-agenda/tipos';
 import { emitirFacturaAgenda, listarExpedientesLocal, pruebasDeDetalle, type EmitirResult } from './facturacion-agenda';
 import type { PruebaLocal } from '@/lib/facturacion-agenda/tipos';
@@ -28,6 +28,7 @@ interface Row {
   factura_id: string | null; factura_app_id: string | null; no_factura: string | null; facturado_en: string | null;
   anulada_en: string | null; anulada_por: string | null; motivo_anulacion: string | null; notas: string | null; updated_at: string | null;
   /** 028 */ titulo?: string | null; dirigido_a?: string | null;
+  /** 029 */ version?: number | null; destinatarios?: string[] | null; respondido_en?: string | null; respondido_por_nombre?: string | null; respondido_por_cargo?: string | null; respondido_por_correo?: string | null; firma_png?: string | null; documento_hash?: string | null;
 }
 const rowToDetalle = (r: Row): DetalleFacturacion => ({
   id: r.id, fuente: r.fuente, clienteId: r.cliente_id, nit: r.nit, correlativo: r.correlativo, estado: r.estado,
@@ -37,6 +38,9 @@ const rowToDetalle = (r: Row): DetalleFacturacion => ({
   facturaId: r.factura_id, facturaAppId: r.factura_app_id, noFactura: r.no_factura, facturadoEn: r.facturado_en,
   anuladaEn: r.anulada_en, anuladaPor: r.anulada_por ?? '', motivoAnulacion: r.motivo_anulacion ?? '', notas: r.notas ?? '', updatedAt: r.updated_at,
   titulo: r.titulo ?? '', dirigidoA: r.dirigido_a ?? '',
+  version: Number(r.version ?? 1), destinatarios: Array.isArray(r.destinatarios) ? r.destinatarios.map(String) : [],
+  respondidoEn: r.respondido_en ?? null, respondidoPorNombre: r.respondido_por_nombre ?? '', respondidoPorCargo: r.respondido_por_cargo ?? '', respondidoPorCorreo: r.respondido_por_correo ?? '',
+  firmaPng: r.firma_png ?? null, documentoHash: r.documento_hash ?? null,
 });
 
 /** 028: sin la migración, la base no tiene titulo / dirigido_a; el detalle se crea igual y el encabezado no se guarda. */
@@ -65,6 +69,11 @@ const errorLegible = (m: string): string => {
   if (/EXPEDIENTE_DESCONOCIDO/.test(m)) return 'Algún expediente ya no está en la cola: recargá la pantalla.';
   if (/DETALLE_FACTURADO/.test(m)) return 'Un detalle facturado no se anula: anulá la factura.';
   if (/DETALLE_NO_EXISTE/.test(m)) return 'El detalle no existe.';
+  if (/DETALLE_NO_EDITABLE/.test(m)) return 'Solo se quitan líneas de un detalle en borrador o con observaciones.';
+  if (/LINEA_NO_ESTA/.test(m)) return 'Esa prueba ya no está en el detalle.';
+  if (/DETALLE_NO_ENVIABLE/.test(m)) return 'Solo se envía un detalle en borrador, enviado o con observaciones.';
+  if (/DETALLE_VACIO/.test(m)) return 'El detalle no tiene pruebas: no se puede enviar.';
+  if (/detalle_facturacion_link|detalle_link_|quitar_linea|diferida_hasta/.test(m) && /does not exist|Could not find|schema cache/i.test(m)) return 'Falta aplicar la migración 029_detalle_aprobacion_digital en esta base.';
   if (/detalle_facturacion.*does not exist|Could not find the (table|function)/i.test(m)) return 'Falta aplicar la migración 019_detalle_facturacion en esta base.';
   return m.replace(/^detalle_facturacion_\w+: /, '');
 };
@@ -104,15 +113,59 @@ export async function getDetalleBasico(id: string): Promise<DetalleFacturacion |
   return rowToDetalle(data as Row);
 }
 
-export interface DetalleCompleto { detalle: DetalleFacturacion; expedientes: ExpedienteLocal[]; /** 024: las pruebas reservadas en el detalle */ pruebas: PruebaLocal[]; documento: DocumentoDetalle; clienteNombre: string; clienteAppId: string | null; centros: CentroCosto[]; empresaNombreExterno: string }
+export interface LinkDetalle { id: string; version: number; creadoEn: string; expiraEn: string; revocadoEn: string | null; abiertoEn: string | null; usadoEn: string | null; vigente: boolean }
+export interface EnvioDetalle { id: string; version: number; tipo: 'envio' | 'aviso'; destinatarios: string[]; cc: string[]; asunto: string; modo: string; resultado: string; error: string; enviadoPor: string; createdAt: string }
+export interface DetalleCompleto {
+  detalle: DetalleFacturacion; expedientes: ExpedienteLocal[]; /** 024: las pruebas reservadas en el detalle */ pruebas: PruebaLocal[]; documento: DocumentoDetalle;
+  clienteNombre: string; clienteAppId: string | null; centros: CentroCosto[]; empresaNombreExterno: string;
+  /** 029: respuestas del cliente (todas las versiones), el último link y la bitácora de envíos; correos sugeridos del cliente. */
+  respuestas: RespuestaDetalle[]; link: LinkDetalle | null; envios: EnvioDetalle[]; correosCliente: string[];
+}
+
+const rowToRespuesta = (r: Record<string, unknown>): RespuestaDetalle => ({ id: String(r.id), version: Number(r.version), componenteId: String(r.componente_id), decision: r.decision as RespuestaDetalle['decision'], nota: String(r.nota ?? ''), respuestaGolden: String(r.respuesta_golden ?? ''), createdAt: String(r.created_at ?? '') });
+const rowToLink = (r: Record<string, unknown>): LinkDetalle => { const revocadoEn = (r.revocado_en as string | null) ?? null, usadoEn = (r.usado_en as string | null) ?? null, expiraEn = String(r.expira_en); return { id: String(r.id), version: Number(r.version), creadoEn: String(r.creado_en), expiraEn, revocadoEn, abiertoEn: (r.abierto_en as string | null) ?? null, usadoEn, vigente: !revocadoEn && !usadoEn && Date.parse(expiraEn) > Date.now() }; };
+const rowToEnvio = (r: Record<string, unknown>): EnvioDetalle => ({ id: String(r.id), version: Number(r.version), tipo: (r.tipo as 'envio' | 'aviso') ?? 'envio', destinatarios: Array.isArray(r.destinatarios) ? r.destinatarios.map(String) : [], cc: Array.isArray(r.cc) ? r.cc.map(String) : [], asunto: String(r.asunto ?? ''), modo: String(r.modo ?? ''), resultado: String(r.resultado ?? ''), error: String(r.error ?? ''), enviadoPor: String(r.enviado_por ?? ''), createdAt: String(r.created_at ?? '') });
+
+/** 029: respuestas del cliente de un detalle (todas las versiones, la última primero). Sin la 029 → []. */
+export async function respuestasDeDetalle(id: string): Promise<RespuestaDetalle[]> {
+  const sb = supabase(); if (!sb) return [];
+  const { data, error } = await sb.from('detalle_facturacion_respuesta').select('*').eq('detalle_id', id).order('version', { ascending: false }).order('created_at');
+  if (error) return [];
+  return ((data ?? []) as Record<string, unknown>[]).map(rowToRespuesta);
+}
+/** 029: el último link emitido del detalle (sin el token: en la base solo vive su hash). */
+export async function ultimoLinkDeDetalle(id: string): Promise<LinkDetalle | null> {
+  const sb = supabase(); if (!sb) return null;
+  const { data, error } = await sb.from('detalle_facturacion_link').select('id, version, creado_en, expira_en, revocado_en, abierto_en, usado_en').eq('detalle_id', id).order('creado_en', { ascending: false }).limit(1).maybeSingle();
+  if (error || !data) return null;
+  return rowToLink(data as Record<string, unknown>);
+}
+export async function enviosDeDetalle(id: string): Promise<EnvioDetalle[]> {
+  const sb = supabase(); if (!sb) return [];
+  const { data, error } = await sb.from('detalle_facturacion_envio').select('*').eq('detalle_id', id).order('created_at', { ascending: false }).limit(50);
+  if (error) return [];
+  return ((data ?? []) as Record<string, unknown>[]).map(rowToEnvio);
+}
+/** Correos del cliente (email_cobros / correo_cobro) para sugerir destinatarios. */
+export async function correosDelCliente(nit: string): Promise<string[]> {
+  const sb = supabase(); if (!sb) return [];
+  const { data } = await sb.from('clientes').select('nit, email_cobros, correo_cobro, activo');
+  const re = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+  const out = new Set<string>();
+  for (const c of (data ?? []) as { nit: string | null; email_cobros: string | null; correo_cobro: string | null; activo: boolean | null }[]) {
+    if (c.activo === false || nitComparable(c.nit) !== nitComparable(nit)) continue;
+    for (const v of [c.email_cobros, c.correo_cobro]) for (const x of String(v ?? '').split(/[,;\s]+/)) { const t = x.trim().toLowerCase(); if (re.test(t)) out.add(t); }
+  }
+  return [...out];
+}
 
 /** El detalle con sus pruebas y expedientes, el documento imprimible (faltantes marcados) y el cliente. */
 export async function getDetalle(id: string): Promise<DetalleCompleto | null> {
   const detalle = await getDetalleBasico(id); if (!detalle) return null;
-  const [pruebas, expedientes, clientes, centros] = await Promise.all([pruebasDeDetalle(id), listarExpedientesLocal({ detalleId: id }), getClientes(), getCentrosCostoActivos()]);
+  const [pruebas, expedientes, clientes, centros, respuestas, link, envios, correosCliente] = await Promise.all([pruebasDeDetalle(id), listarExpedientesLocal({ detalleId: id }), getClientes(), getCentrosCostoActivos(), respuestasDeDetalle(id), ultimoLinkDeDetalle(id), enviosDeDetalle(id), correosDelCliente(detalle.nit)]);
   // Una facturada conserva detalle_id en sus pruebas (histórico); una anulada las liberó (la lista queda vacía).
   const c = clientes.find(x => x.activo !== false && nitComparable(x.nit) === detalle.nit) ?? clientes.find(x => nitComparable(x.nit) === detalle.nit);
-  return { detalle, expedientes, pruebas, documento: documentoDetalle(expedientes, pruebas), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '' };
+  return { detalle, expedientes, pruebas, documento: documentoDetalle(expedientes, pruebas), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '', respuestas, link, envios, correosCliente };
 }
 
 export async function listarDetalles(f: { nit?: string; estados?: EstadoDetalle[]; limite?: number } = {}): Promise<DetalleFacturacion[]> {
@@ -157,6 +210,22 @@ export async function marcarAprobada(id: string, input: { aprobadoPor: string; c
   const canal: CanalAprobacion = input.canal === 'link' || input.canal === 'otro' ? input.canal : 'correo';
   void actor;   // quien registra la aprobación queda en el log de la app; el detalle guarda quién aprobó del lado del cliente
   return transicion(id, 'aprobada', { aprobada_en: new Date().toISOString(), aprobado_por: quien, aprobado_canal: canal });
+}
+
+/** 029: quita una línea del detalle (borrador / con observaciones): la prueba vuelve a la cola, los totales se recalculan; opcionalmente queda diferida. */
+export async function quitarLineaDetalle(id: string, componenteId: string, input: { motivo?: string; diferirHasta?: string | null }, actor: string): Promise<DetalleResult> {
+  const dif = input.diferirHasta && /^\d{4}-\d{2}-\d{2}$/.test(input.diferirHasta) ? input.diferirHasta : null;
+  try {
+    const r = await rpc<Row>('detalle_facturacion_quitar_linea', { p_actor: actor, p_detalle_id: id, p_componente_id: componenteId, p_motivo: (input.motivo ?? '').trim().slice(0, 300) || null, p_diferir_hasta: dif });
+    return { ok: true, detalle: rowToDetalle(r) };
+  } catch (e) { return { ok: false, error: errorLegible(e instanceof Error ? e.message : String(e)) }; }
+}
+/** 029: respuesta de Golden a la nota del cliente en una línea (la verá en la versión siguiente). */
+export async function responderNotaDetalle(id: string, componenteId: string, respuesta: string, actor: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const sb = supabase(); if (!sb) return { ok: false, error: 'Supabase no está configurado.' };
+  const d = await getDetalleBasico(id); if (!d) return { ok: false, error: 'El detalle no existe.' };
+  const { error } = await sb.from('detalle_facturacion_respuesta').update({ respuesta_golden: respuesta.trim().slice(0, 500) || null, respondida_por: actor, updated_at: new Date().toISOString() }).eq('detalle_id', id).eq('version', d.version).eq('componente_id', componenteId);
+  return error ? { ok: false, error: error.message } : { ok: true };
 }
 
 /** Anula y libera los expedientes (RPC). No una facturada. */
