@@ -19,7 +19,7 @@ import { ETIQUETA_DECISION_DETALLE } from '@/lib/facturacion-agenda/detalle';
  */
 const territorioCorto = (t: string): string => (/^METRO/i.test(t) ? 'Metro' : /^DEPART/i.test(t) ? 'Depto' : t);
 
-export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; emisor: { nombre: string; nit: string; direccion: string } }) {
+export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; emisor: { nombre: string; nit: string; direccion: string; logoUrl?: string | null } }) {
   const { detalle: d, documento: doc } = datos;
   const facturado = d.estado === 'facturada' && d.noFactura;
   // 029: aprobado por link → firma digital, casillas marcadas según lo que respondió el cliente
@@ -60,6 +60,7 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
       </div>
       <header style={{ display: 'flex', justifyContent: 'space-between', gap: 24, borderBottom: '2px solid #111', paddingBottom: 12, marginBottom: 14 }}>
         <div>
+          {emisor.logoUrl && <img src={emisor.logoUrl} alt={emisor.nombre} style={{ height: 46, width: 'auto', display: 'block', marginBottom: 8 }} data-logo />}
           <div style={{ fontSize: 17, fontWeight: 600 }}>{emisor.nombre}</div>
           {emisor.nit && <div className="doc-mute">NIT {emisor.nit}</div>}
           {emisor.direccion && <div className="doc-mute">{emisor.direccion}</div>}

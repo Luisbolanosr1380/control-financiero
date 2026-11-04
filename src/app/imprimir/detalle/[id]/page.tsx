@@ -18,5 +18,5 @@ export default async function ImprimirDetallePage({ params }: { params: Promise<
   const datos = await getDetalle(id);
   if (!datos) notFound();
   const emp = empresaConfig();
-  return <DetalleImprimible datos={datos} emisor={{ nombre: emp.nombreLegal || emp.nombre, nit: emp.nit ?? '', direccion: emp.direccion ?? '' }} />;
+  return <DetalleImprimible datos={datos} emisor={{ nombre: emp.nombreLegal || emp.nombre, nit: emp.nit ?? '', direccion: emp.direccion ?? '', logoUrl: emp.logoUrl }} />;
 }

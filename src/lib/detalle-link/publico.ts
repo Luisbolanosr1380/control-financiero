@@ -28,7 +28,7 @@ export interface LineaPublica {
 }
 export interface DetallePublico {
   estado: 'vigente' | 'respondido';
-  correlativo: string; version: number; titulo: string; dirigidoA: string; cliente: string; emisor: string; notas: string;
+  correlativo: string; version: number; titulo: string; dirigidoA: string; cliente: string; emisor: string; /** logo servido desde este dominio (o null) */ logoUrl: string | null; notas: string;
   /** 030: total = Σ precios con IVA; subtotal = base sin IVA (total / 1.12); iva = total − base */
   lineas: LineaPublica[]; subtotal: number; iva: number; total: number; expiraEn: string; huella: string;
   /** Si ya se respondió: cómo quedó. */
