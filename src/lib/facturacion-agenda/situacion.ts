@@ -115,6 +115,8 @@ export function situacionDePruebas(exp: EntradaSituacion, servicios: readonly st
     }
     // Otros servicios: como hoy, por `terminado` del expediente.
     if (exp.cancelado) return { servicio, situacion: 'no_cobra', estadoPrueba: sp, motivo: 'no se cobra: expediente cancelado', noReconocido: false };
+    // Regla del CFO (2026-11-04): lo que no se presentó (o desistió / se canceló) no se cobra, aunque la Agenda lo dé por terminado.
+    if (NO_COBRA_GENERICO.includes(normEstado(sp))) return { servicio, situacion: 'no_cobra', estadoPrueba: sp, motivo: `no se cobra: ${sp}`, noReconocido: false };
     if (exp.terminado) return { servicio, situacion: 'cobra', estadoPrueba: sp, motivo: 'terminado en la Agenda', noReconocido: false };
     return { servicio, situacion: 'pendiente', estadoPrueba: sp, motivo: `pendiente: ${sp || 'sin terminar'}`, noReconocido: false };
   });
