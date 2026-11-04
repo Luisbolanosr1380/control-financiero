@@ -2,7 +2,7 @@
  * CORREO SALIENTE · Resend por su API REST (fetch, sin dependencia nueva) — SOLO SERVIDOR.
  *
  * Config: RESEND_API_KEY (solo servidor; nunca en código, logs ni repo), RESEND_FROM (default
- * facturacion@golden-talent.com), FACTURACION_AVISO_CORREO (casilla que recibe los avisos de vuelta).
+ * facturacion@golden-talent.com), FACTURACION_AVISO_CORREO (casilla principal que recibe los avisos de vuelta) y FACTURACION_AVISO_CC (copia).
  * Sin llave: `modo: 'sin_llave'` y la pantalla ofrece "copiar link". Con CORREO_MOCK=1 (pruebas) no se habla con
  * Resend: el correo se arma igual y se devuelve como enviado con id 'mock-…' (queda en `ultimosMock` para inspección).
  */
@@ -11,7 +11,7 @@ import 'server-only';
 export interface CorreoSaliente { para: string[]; cc?: string[]; respuestaA?: string; asunto: string; html: string; texto: string }
 export type ResultadoCorreo = { ok: true; modo: 'resend' | 'mock'; id: string } | { ok: false; modo: 'sin_llave' | 'resend'; error: string };
 
-export interface ConfigCorreo { apiKey: string; from: string; avisoA: string[]; mock: boolean }
+export interface ConfigCorreo { apiKey: string; from: string; avisoA: string[]; avisoCc: string[]; mock: boolean }
 
 const CORREO = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
 export const correosValidos = (xs: readonly (string | null | undefined)[]): string[] => [...new Set(xs.map(x => String(x ?? '').trim().toLowerCase()).filter(x => CORREO.test(x)))];
@@ -21,6 +21,8 @@ export function configCorreo(env: NodeJS.ProcessEnv = process.env): ConfigCorreo
     apiKey: String(env.RESEND_API_KEY ?? '').trim(),
     from: String(env.RESEND_FROM ?? '').trim() || 'facturacion@golden-talent.com',
     avisoA: correosValidos(String(env.FACTURACION_AVISO_CORREO ?? '').split(/[,;]/)),
+    /** copia (CC) del aviso de vuelta: FACTURACION_AVISO_CC, uno o varios separados por coma */
+    avisoCc: correosValidos(String(env.FACTURACION_AVISO_CC ?? '').split(/[,;]/)),
     mock: /^(1|true|on|yes)$/i.test(String(env.CORREO_MOCK ?? '').trim()),
   };
 }
