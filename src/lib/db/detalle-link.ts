@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase/client';
 import { rpc } from '@/lib/supabase/writes';
 import { empresaConfig } from '@/lib/config/empresa';
 import { precioConIva } from '@/lib/tarifario/canon';
+import { ordenLineas } from '@/lib/facturacion-agenda/detalle';
 import { generarToken, hashToken, linkConfigurado, refDeLinea, tokenValido } from '@/lib/detalle-link/token';
 import { hashDocumento, type DocumentoFirmable } from '@/lib/detalle-link/documento';
 import { correoAviso, correoEnvio, textoCopiarLink } from '@/lib/detalle-link/correo';
@@ -139,7 +140,8 @@ export async function abrirLinkPublico(token: string): Promise<AperturaPublica &
   const mapaRefs = new Map<string, string>();
   const previas = new Map(c.respuestas.filter(r => r.version === version - 1).map(r => [r.componente_id, r]));
   const actuales = new Map(c.respuestas.filter(r => r.version === version).map(r => [r.componente_id, r]));
-  const lineas: LineaPublica[] = c.lineas.map(l => {
+  const ordenadas = [...c.lineas].sort((x, y) => ordenLineas({ fechaIngreso: x.fecha_ingreso ?? null, persona: x.persona ?? '', servicio: x.servicio }, { fechaIngreso: y.fecha_ingreso ?? null, persona: y.persona ?? '', servicio: y.servicio }));
+  const lineas: LineaPublica[] = ordenadas.map(l => {
     const ref = refDeLinea(th, l.componente_id); mapaRefs.set(ref, l.componente_id);
     const p = previas.get(l.componente_id), r = actuales.get(l.componente_id);
     return {

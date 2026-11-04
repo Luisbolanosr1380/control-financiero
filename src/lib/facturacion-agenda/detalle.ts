@@ -71,6 +71,12 @@ export interface DocumentoDetalle { lineas: LineaDetalle[]; incluidas: LineaDeta
  * Solo las pruebas con resultado cobrable y precio suman; las demás quedan marcadas con el motivo.
  * `pruebas` = las reservadas en el detalle; `expedientes` da persona / puesto / fecha.
  */
+/** Orden del documento (pedido del CFO): fecha de ingreso, luego persona, luego prueba (polígrafo antes que socio). Sin fecha, al final. La huella no depende del orden. */
+export function ordenLineas(a: { fechaIngreso: string | null; persona: string; servicio: string }, b: { fechaIngreso: string | null; persona: string; servicio: string }): number {
+  const fa = a.fechaIngreso ?? '9999', fb = b.fechaIngreso ?? '9999';
+  return fa.localeCompare(fb) || a.persona.localeCompare(b.persona, 'es') || a.servicio.localeCompare(b.servicio, 'es');
+}
+
 export function documentoDetalle(expedientes: readonly ExpedienteLocal[], pruebas: readonly PruebaLocal[]): DocumentoDetalle {
   const porId = new Map(expedientes.map(e => [e.idExterno, e]));
   const lineas: LineaDetalle[] = pruebas.map(p => {
@@ -83,6 +89,7 @@ export function documentoDetalle(expedientes: readonly ExpedienteLocal[], prueba
       categoria: dimTexto(p.categoria), territorio: dimTexto(p.territorio), monto: incluido ? round2(p.montoCalculado ?? 0) : 0, montoConIva: incluido ? precioConIva(p.montoCalculado ?? 0) : 0, incluido, motivo,
     };
   });
+  lineas.sort(ordenLineas);
   const incluidas = lineas.filter(l => l.incluido), faltantes = lineas.filter(l => !l.incluido);
   // 030: como la FEL: suma de precios con IVA, base por división, IVA por resta
   const { base: subtotal, iva, total } = totalesFel(incluidas.map(l => l.monto));
