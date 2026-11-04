@@ -3,14 +3,16 @@
 /**
  * POR FACTURAR · DETALLE de un cliente: sus expedientes (persona solo para
  * identificar, servicio, categoría, territorio, precio resuelto o su estado),
- * filtros por mes de ingreso y estado de cobro, selección → "Facturar" con el
- * número y la fecha reales de SAT/FEL (los emite el auxiliar, no el sistema), y
- * "Mapear" cuando la empresa de la Agenda no apunta a un cliente de financiero.
+ * filtros por mes de ingreso, mes de terminación, estado de cobro y, para armar el
+ * corte (028), por servicio / categoría / territorio / solicitante A NIVEL PRUEBA (en
+ * un COMPLETO, "Polígrafo" deja solo el polígrafo); los filtros viajan en la URL.
+ * Selección → "Generar detalle" con título del corte (propuesto desde los filtros) y
+ * "dirigido a"; y "Mapear" cuando la empresa de la Agenda no apunta a un cliente.
  * Confirmaciones en línea / modal propio: sin diálogos del navegador.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
@@ -21,6 +23,7 @@ import { ETIQUETA_SITUACION, ICONO_SITUACION, resultadoLegible } from '@/lib/fac
 import { filtrarExpedientes, mesesDisponibles, mesesResultadoDisponibles, pruebasTerminadasEn, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
 import { diaGuatemala, ETIQUETA_FUENTE_FECHA } from '@/lib/facturacion-agenda/fecha-resultado';
 import { etiquetaMes } from '@/lib/facturacion-agenda/produccion';
+import { SIN_SOLICITANTE, etiquetaCategoria, etiquetaServicio, etiquetaSolicitante, etiquetaTerritorio, expedienteCumple, filtrosDesdeParams, hayFiltrosPrueba, opcionesFiltros, paramsDeFiltros, pruebasQueCumplen, tituloPropuesto, type FiltrosPrueba } from '@/lib/facturacion-agenda/filtros-detalle';
 import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type PruebaLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
 import type { GrupoDetalle } from '@/lib/db/facturacion-agenda';
 import { ReintentarWritebackButton } from './reintentar-writeback-button';
@@ -37,22 +40,43 @@ const WB_TEXTO: Record<WritebackEstado, string> = { confirmado: 'En Agenda', omi
 
 export function GrupoDetalleView({ datos, writeback, configurada, montoModo, generarInicial = false }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const puede = usePuede();
   const puedeFacturar = puede('facturar_agenda');
-  const [mes, setMes] = useState('');
-  const [mesResultado, setMesResultado] = useState('');   // 025: "terminadas en <mes>" para facturar por corte mensual
-  const [cobro, setCobro] = useState<FiltroCobro>('por_facturar');
-  const [soloListos, setSoloListos] = useState(false);
+  // 028: los filtros arrancan desde la URL (search params) y se escriben ahí al cambiar: al volver atrás no se pierden.
+  const inicial = useMemo(() => filtrosDesdeParams(k => searchParams.get(k)), [searchParams]);
+  const [mes, setMes] = useState(inicial.mes ?? '');
+  const [mesResultado, setMesResultado] = useState(inicial.mesResultado ?? '');   // 025: "terminadas en <mes>" para facturar por corte mensual
+  const [cobro, setCobro] = useState<FiltroCobro>((inicial.cobro as FiltroCobro | undefined) ?? 'por_facturar');
+  const [soloListos, setSoloListos] = useState(!!inicial.soloListos);
+  const [fp, setFp] = useState<FiltrosPrueba>({ servicio: inicial.servicio, categoria: inicial.categoria, territorio: inicial.territorio, solicitante: inicial.solicitante });
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [creando, setCreando] = useState(false);
   const [generando, setGenerando] = useState(generarInicial && !!datos.nit);
+  const [titulo, setTitulo] = useState('');
+  const [tituloEditado, setTituloEditado] = useState(false);
+  const [dirigidoA, setDirigidoA] = useState('');
+  const spRef = useRef(searchParams.toString());
+  useEffect(() => { spRef.current = searchParams.toString(); }, [searchParams]);
+  const filtrosLista = useMemo(() => ({ ...fp, mes: mes || undefined, mesResultado: mesResultado || undefined, cobro, soloListos }), [fp, mes, mesResultado, cobro, soloListos]);
+  useEffect(() => {
+    const qs = paramsDeFiltros(filtrosLista, new URLSearchParams(spRef.current));
+    const actual = spRef.current ? `?${spRef.current}` : '';
+    if (qs !== actual) router.replace(`${pathname}${qs}`, { scroll: false });
+  }, [filtrosLista, pathname, router]);
+  // El título propuesto sigue a los filtros hasta que el usuario lo edita.
+  useEffect(() => { if (!tituloEditado) setTitulo(tituloPropuesto(filtrosLista)); }, [filtrosLista, tituloEditado]);
+  const setFiltroPrueba = (k: keyof FiltrosPrueba, v: string) => setFp(f => ({ ...f, [k]: v || undefined }));
 
   const exps = datos.expedientes;
   const meses = useMemo(() => mesesDisponibles(exps), [exps]);
   const mesesTermino = useMemo(() => mesesResultadoDisponibles(exps), [exps]);
-  const filas = useMemo(() => filtrarExpedientes(exps, { mes: mes || undefined, cobro, soloListos, mesResultado: mesResultado || undefined }), [exps, mes, cobro, soloListos, mesResultado]);
-  /** Pruebas que se muestran de un candidato: solo lo cobrable si está marcado; solo las terminadas en el mes elegido (025). */
-  const pruebasVisibles = (e: ExpedienteLocal): PruebaLocal[] => { const base = soloListos ? pruebasFacturables(e) : e.pruebas; return mesResultado ? base.filter(p => pruebasTerminadasEn({ pruebas: [p] }, mesResultado).length > 0) : base; };
+  const opciones = useMemo(() => opcionesFiltros(exps), [exps]);
+  const filas = useMemo(() => filtrarExpedientes(exps, { mes: mes || undefined, cobro, soloListos, mesResultado: mesResultado || undefined }).filter(e => expedienteCumple(e, fp)), [exps, mes, cobro, soloListos, mesResultado, fp]);
+  /** Pruebas que se muestran de un candidato: solo lo cobrable si está marcado; solo las terminadas en el mes elegido (025); solo las que pasan los filtros de prueba (028). */
+  const pruebasVisibles = (e: ExpedienteLocal): PruebaLocal[] => { const base = soloListos ? pruebasFacturables(e) : e.pruebas; const porMes = mesResultado ? base.filter(p => pruebasTerminadasEn({ pruebas: [p] }, mesResultado).length > 0) : base; return pruebasQueCumplen(porMes, e, fp); };
+  const conFiltrosPrueba = hayFiltrosPrueba(fp);
   // 024: la unidad es la PRUEBA. Listos / total / sin tarifa / pendientes se cuentan por prueba (misma regla que la cola en SQL).
   const listos = exps.flatMap(pruebasFacturables);
   const totalListo = Math.round(exps.reduce((s, e) => s + montoFacturable(e), 0) * 100) / 100;
@@ -70,10 +94,10 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
     if (!seleccion.length) return;
     setCreando(true);
     try {
-      const r = await crearDetalleAction({ componenteIds: seleccion.map(p => p.id) });
+      const r = await crearDetalleAction({ componenteIds: seleccion.map(p => p.id), titulo: titulo.trim() || undefined, dirigidoA: dirigidoA.trim() || undefined });
       if (!r.ok) { toast.error(r.error); return; }
-      toast.success(`Detalle ${r.detalle.correlativo} generado en borrador · ${r.detalle.pruebas || r.detalle.expedientes} prueba(s) de ${r.detalle.expedientes} candidato(s) · ${Q(r.detalle.total)} con IVA`);
-      setSel(new Set());
+      toast.success(`Detalle ${r.detalle.correlativo} generado en borrador · ${r.detalle.pruebas || r.detalle.expedientes} prueba(s) de ${r.detalle.expedientes} candidato(s) · ${Q(r.detalle.total)} con IVA${r.detalle.titulo ? ` · "${r.detalle.titulo}"` : ''}`);
+      setSel(new Set()); setTituloEditado(false); setDirigidoA('');
       router.push(`/por-facturar/detalle/${r.detalle.id}`);
     } finally { setCreando(false); }
   };
@@ -118,8 +142,18 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
           <select className="input" value={mes} onChange={e => setMes(e.target.value)} aria-label="Mes de ingreso" title="Mes de ingreso"><option value="">Ingreso: todos los meses</option>{meses.map(m => <option key={m} value={m}>Ingreso en {m}</option>)}</select>
           <select className="input" value={mesResultado} onChange={e => setMesResultado(e.target.value)} aria-label="Mes de terminación" title="Pruebas terminadas (con resultado) en ese mes: para facturar por corte mensual" data-filtro="mes-resultado"><option value="">Terminadas: cualquier mes</option>{mesesTermino.map(m => <option key={m} value={m}>Terminadas en {etiquetaMes(m)}</option>)}</select>
           <select className="input" value={cobro} onChange={e => setCobro(e.target.value as FiltroCobro)} aria-label="Estado de cobro" title="Estado de cobro"><option value="por_facturar">Por facturar (cobro pendiente en Agenda)</option><option value="facturados">Facturados / resueltos</option><option value="todos">Todos</option></select>
-          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={soloListos} onChange={e => setSoloListos(e.target.checked)} aria-label="Solo lo cobrable ahora" /> Solo lo cobrable ahora</label>
-          <span style={{ marginLeft: 'auto', color: 'var(--ink-4)' }}>{filas.length} candidato{filas.length === 1 ? '' : 's'} · {filas.reduce((n, e) => n + ((soloListos || mesResultado) ? pruebasVisibles(e).length : Math.max(e.pruebas.length, 1)), 0)} prueba(s)</span>
+          <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={soloListos} onChange={e => setSoloListos(e.target.checked)} aria-label="Solo lo cobrable ahora" data-filtro="solo-listos" /> Solo lo cobrable ahora</label>
+          <span style={{ marginLeft: 'auto', color: 'var(--ink-4)' }} data-conteo-candidatos={filas.length}>{filas.length} candidato{filas.length === 1 ? '' : 's'} · {filas.reduce((n, e) => n + ((soloListos || mesResultado || conFiltrosPrueba) ? pruebasVisibles(e).length : Math.max(e.pruebas.length, 1)), 0)} prueba(s)</span>
+        </div>
+        {/* 028: filtros para armar el corte, por PRUEBA (solo lo que el cliente tiene) */}
+        <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5, borderTop: '1px solid var(--line-2)' }} data-filtros-corte>
+          <span className="cell-mute" style={{ fontSize: 12 }}>Armar el corte:</span>
+          <select className="input" value={fp.servicio ?? ''} onChange={e => setFiltroPrueba('servicio', e.target.value)} aria-label="Servicio" title="Solo las pruebas de este servicio (en un COMPLETO, solo esa mitad)" data-filtro="servicio" style={{ width: 'auto' }}><option value="">Servicio: todos</option>{opciones.servicios.map(x => <option key={x} value={x}>{etiquetaServicio(x)}</option>)}</select>
+          <select className="input" value={fp.categoria ?? ''} onChange={e => setFiltroPrueba('categoria', e.target.value)} aria-label="Categoría" title="Categoría de la prueba" data-filtro="categoria" style={{ width: 'auto' }}><option value="">Categoría: todas</option>{opciones.categorias.map(x => <option key={x} value={x}>{etiquetaCategoria(x)}</option>)}</select>
+          <select className="input" value={fp.territorio ?? ''} onChange={e => setFiltroPrueba('territorio', e.target.value)} aria-label="Territorio" title="Territorio de la prueba" data-filtro="territorio" style={{ width: 'auto' }}><option value="">Territorio: todos</option>{opciones.territorios.map(x => <option key={x} value={x}>{etiquetaTerritorio(x)}</option>)}</select>
+          <select className="input" value={fp.solicitante ?? ''} onChange={e => setFiltroPrueba('solicitante', e.target.value)} aria-label="Solicitante" title="Quién pidió la evaluación del lado del cliente (campo solicitante de la Agenda)" data-filtro="solicitante" style={{ width: 'auto', maxWidth: 300 }}><option value="">Solicitante: todos</option>{opciones.solicitantes.map(x => <option key={x} value={x}>{etiquetaSolicitante(x)}</option>)}</select>
+          {conFiltrosPrueba && <button type="button" className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setFp({})} data-accion="limpiar-filtros-corte">Quitar filtros del corte</button>}
+          {conFiltrosPrueba && <span className="cell-mute" style={{ fontSize: 11.5 }} data-titulo-propuesto={tituloPropuesto(filtrosLista)}>corte: <strong>{tituloPropuesto(filtrosLista) || '—'}</strong></span>}
         </div>
       </div>
 
@@ -149,6 +183,9 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
           <div style={{ maxWidth: 1400, margin: '0 auto', padding: '10px 24px', display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
             <div><strong>{seleccion.length}</strong> prueba{seleccion.length === 1 ? '' : 's'} seleccionada{seleccion.length === 1 ? '' : 's'} <span className="cell-mute">({new Set(seleccion.map(p => p.idExterno)).size} candidato{new Set(seleccion.map(p => p.idExterno)).size === 1 ? '' : 's'})</span></div>
             <div className="num">Subtotal <strong>{Q(preview.subtotal)}</strong> · IVA {Q(preview.iva)} · Total <strong>{Q(preview.total)}</strong></div>
+            {/* 028: título del corte (propuesto desde los filtros, editable) y a quién va dirigido; los dos opcionales */}
+            <input className="input" placeholder="Título del corte (opcional): Polígrafos rutina · Solicitante … · Oct 2026" value={titulo} onChange={e => { setTitulo(e.target.value); setTituloEditado(true); }} aria-label="Título del corte" style={{ minWidth: 300, flex: 1 }} maxLength={200} disabled={creando} data-campo="titulo" />
+            <input className="input" placeholder="Dirigido a (opcional): nombre en el cliente" value={dirigidoA} onChange={e => setDirigidoA(e.target.value)} aria-label="Dirigido a" style={{ minWidth: 220 }} maxLength={120} disabled={creando} data-campo="dirigido-a" />
             <button className="btn btn-ghost" onClick={() => setSel(new Set())}>Limpiar</button>
             <button className="btn btn-primary" style={{ marginLeft: 'auto' }} onClick={() => void generarDetalle()} disabled={seleccion.length === 0 || creando} data-accion="generar-detalle"><I.Receipt size={13} /> {creando ? 'Generando…' : 'Generar detalle'}</button>
           </div>

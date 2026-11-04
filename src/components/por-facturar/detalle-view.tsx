@@ -15,7 +15,7 @@ import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
 import { formatearFechaConHora } from '@/lib/utils/fechas';
-import { anularDetalleAction, facturarDetalleAction, marcarAprobadaAction, marcarEnviadaAction } from '@/app/(app)/por-facturar/actions';
+import { anularDetalleAction, editarEncabezadoDetalleAction, facturarDetalleAction, marcarAprobadaAction, marcarEnviadaAction } from '@/app/(app)/por-facturar/actions';
 import { BADGE_ESTADO_DETALLE, ETIQUETA_ESTADO_DETALLE, type CanalAprobacion } from '@/lib/facturacion-agenda/detalle';
 import type { DetalleCompleto } from '@/lib/db/detalle-facturacion';
 import { pruebaParaFactura } from '@/lib/facturacion-agenda/mapeo';
@@ -36,6 +36,11 @@ export function DetalleView({ datos, writeback, configurada, montoModo }: Props)
   const [motivo, setMotivo] = useState('');
   const [facturando, setFacturando] = useState(false);
   const [resultado, setResultado] = useState<{ noFactura: string; facturaAppId: string; writeback: { estado: string; detalle: string } } | null>(null);
+  // 028: título del corte y "dirigido a", editables mientras no esté facturado ni anulado
+  const [editandoEnc, setEditandoEnc] = useState(false);
+  const [titulo, setTitulo] = useState(d.titulo);
+  const [dirigidoA, setDirigidoA] = useState(d.dirigidoA);
+  const encEditable = puede && d.estado !== 'facturada' && d.estado !== 'anulada';
 
   const correr = async (fn: () => Promise<{ ok: true } | { ok: false; error: string }>, exito: string) => {
     setBusy(true);
@@ -66,6 +71,24 @@ export function DetalleView({ datos, writeback, configurada, montoModo }: Props)
           </div>
         </div>
       )}
+
+      {/* 028: encabezado del corte */}
+      <div className="card" style={{ marginBottom: 14 }} data-encabezado>
+        <div className="card-pad" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+          {!editandoEnc ? <>
+            <div style={{ flex: 1, minWidth: 260 }}>
+              <div><span className="cell-mute">Corte:</span> <strong data-titulo>{d.titulo || <span className="cell-mute" style={{ fontWeight: 400 }}>sin título</span>}</strong></div>
+              <div><span className="cell-mute">Dirigido a:</span> <span data-dirigido-a>{d.dirigidoA || <span className="cell-mute">—</span>}</span></div>
+            </div>
+            {encEditable && <button className="btn btn-ghost" onClick={() => { setTitulo(d.titulo); setDirigidoA(d.dirigidoA); setEditandoEnc(true); }} disabled={busy} data-accion="editar-encabezado"><I.Edit size={13} /> Editar título / destinatario</button>}
+          </> : <>
+            <input className="input" placeholder="Título del corte (opcional)" value={titulo} onChange={e => setTitulo(e.target.value)} aria-label="Título del corte" style={{ minWidth: 300, flex: 1 }} maxLength={200} disabled={busy} autoFocus data-campo="titulo" />
+            <input className="input" placeholder="Dirigido a (opcional)" value={dirigidoA} onChange={e => setDirigidoA(e.target.value)} aria-label="Dirigido a" style={{ minWidth: 220 }} maxLength={120} disabled={busy} data-campo="dirigido-a" />
+            <button className="btn btn-ghost" onClick={() => setEditandoEnc(false)} disabled={busy}>Volver</button>
+            <button className="btn btn-primary" onClick={() => void correr(() => editarEncabezadoDetalleAction(d.id, { titulo, dirigidoA }), 'Encabezado del detalle guardado').then(ok => { if (ok) setEditandoEnc(false); })} disabled={busy} data-accion="guardar-encabezado"><I.Check size={13} /> Guardar</button>
+          </>}
+        </div>
+      </div>
 
       {/* Línea de tiempo del flujo */}
       <div className="card" style={{ marginBottom: 14 }} data-flujo>
@@ -111,12 +134,12 @@ export function DetalleView({ datos, writeback, configurada, montoModo }: Props)
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-head"><div className="card-title">Pruebas</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>una línea por prueba con su resultado (un candidato puede tener solo el polígrafo acá) · montos sin IVA</span></div></div>
         <table className="table" data-lista="detalle">
-          <thead><tr><th>Persona</th><th>Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
+          <thead><tr><th>Persona</th><th title="Quién pidió la evaluación del lado del cliente (Agenda)">Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
           <tbody>
             {doc.lineas.map(l => (
               <tr key={l.componenteId || l.idExterno} style={{ opacity: l.incluido ? 1 : 0.6 }} data-linea={l.incluido ? 'incluida' : 'faltante'} data-prueba={l.componenteId}>
                 <td><div className="cell-strong">{l.persona}</div><div className="cell-mute" style={{ fontSize: 11 }}>{l.puesto || l.idExterno}</div></td>
-                <td style={{ fontSize: 12 }}>{l.solicitante || '—'}</td>
+                <td style={{ fontSize: 12 }} data-solicitante={l.solicitante}>{l.solicitante || <span className="cell-mute">—</span>}</td>
                 <td className="num" style={{ fontSize: 12 }}>{l.fechaIngreso ?? '—'}</td>
                 <td><div>{l.resultado || l.servicio}</div>{l.resultado && l.resultado !== l.servicio ? <div className="cell-mute" style={{ fontSize: 11 }}>{l.servicio}</div> : null}</td>
                 <td>{l.categoria}</td><td>{l.territorio}</td>

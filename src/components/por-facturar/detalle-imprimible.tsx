@@ -4,77 +4,123 @@ import type { DetalleCompleto } from '@/lib/db/detalle-facturacion';
 import { ImprimirBoton } from './imprimir-boton';
 
 /**
- * Documento imprimible (server component): encabezado del emisor y del cliente, correlativo,
- * fecha, título "Detalle de servicios / Pre-liquidación" (o "Detalle de la factura N°" cuando ya
- * se facturó), una línea por proceso, totales. Los procesos sin precio quedan abajo como "no
- * incluidos" y no suman. Estilos propios + @media print (sin shell).
+ * Documento imprimible (server component): encabezado del emisor y del cliente, correlativo, fecha,
+ * título "Detalle de servicios / Pre-liquidación" (o "Detalle de la factura N°" cuando ya se facturó),
+ * título del corte y "dirigido a" (028), una línea por prueba con solicitante, totales. Los procesos
+ * sin precio quedan abajo como "no incluidos" y no suman.
+ *
+ * Para que el cliente revise con lapicero: letra compacta (≥ 30 líneas por hoja carta), casillas
+ * "Sí / No" vacías de verdad (CSS) y una columna de observaciones en blanco por línea; bloque de firma
+ * al pie mientras el detalle no está facturado. En impresión las filas no se parten entre hojas y el
+ * encabezado de la tabla se repite en cada hoja. Estilos propios + @media print (sin shell).
  */
+const territorioCorto = (t: string): string => (/^METRO/i.test(t) ? 'Metro' : /^DEPART/i.test(t) ? 'Depto' : t);
+
 export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; emisor: { nombre: string; nit: string; direccion: string } }) {
   const { detalle: d, documento: doc } = datos;
   const facturado = d.estado === 'facturada' && d.noFactura;
+  const paraRevisar = !facturado && d.estado !== 'anulada';
   return (
-    <main style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#111', maxWidth: 820, margin: '0 auto', padding: '32px 28px', background: '#fff' }} data-imprimible>
+    <main style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#111', maxWidth: 820, margin: '0 auto', padding: '32px 28px', background: '#fff' }} data-imprimible data-estado={d.estado}>
       <style>{`
-        @media print { .no-print { display: none !important; } body { margin: 0; } main { padding: 0 !important; } @page { margin: 18mm 14mm; } }
-        .doc-tabla { width: 100%; border-collapse: collapse; font-size: 10.5px; }
-        .doc-tabla thead { display: table-header-group; } .doc-tabla tr { break-inside: avoid; page-break-inside: avoid; }
-        .doc-tabla th { text-align: left; font-weight: 600; border-bottom: 1.5px solid #111; padding: 5px 5px; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; }
-        .doc-tabla td { padding: 4px 5px; border-bottom: 1px solid #ddd; vertical-align: top; }
+        @media print {
+          .no-print { display: none !important; } body { margin: 0; } main { padding: 0 !important; max-width: none !important; } @page { size: letter portrait; margin: 14mm 12mm; }
+          .doc-tabla thead { display: table-header-group; } .doc-tabla tfoot { display: table-row-group; }
+          .doc-tabla tr { break-inside: avoid; page-break-inside: avoid; }
+          .doc-firma { break-inside: avoid; page-break-inside: avoid; }
+        }
+        .doc-tabla { width: 100%; border-collapse: collapse; font-size: 10.5px; line-height: 1.25; }
+        .doc-tabla th { text-align: left; font-weight: 600; border-bottom: 1.5px solid #111; padding: 4px 4px; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; }
+        .doc-tabla td { padding: 4px 4px; border-bottom: 1px solid #ddd; vertical-align: top; }
+        .doc-tabla td.nowrap, .doc-tabla th.nowrap { white-space: nowrap; }
+        /* una línea por prueba: persona y solicitante con puntos suspensivos (el texto completo va en el title) */
+        .doc-tabla td.corta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
+        .doc-tabla td.corta.sol { max-width: 120px; }
+        .doc-tabla td.obs { min-width: 70px; }
         .doc-tabla td.num, .doc-tabla th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-        .doc-mute { color: #666; font-size: 10px; }
+        .doc-tabla td.check, .doc-tabla th.check { white-space: nowrap; text-align: center; }
+        .doc-mute { color: #666; font-size: 9.5px; }
+        .cb { display: inline-block; width: 9px; height: 9px; border: 1px solid #111; vertical-align: -1px; margin-right: 3px; border-radius: 1px; background: #fff; }
+        .cb + .cb-lbl { margin-right: 7px; }
+        .doc-firma { margin-top: 26px; border-top: 1px solid #111; padding-top: 10px; font-size: 11px; }
+        .doc-firma .linea { display: inline-block; border-bottom: 1px solid #111; min-width: 220px; height: 16px; vertical-align: bottom; margin-left: 6px; }
+        .doc-firma .campo { margin-top: 12px; }
       `}</style>
       <div className="no-print" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginBottom: 16 }}>
         <a href={`/por-facturar/detalle/${d.id}`} style={{ fontSize: 13, color: '#444', alignSelf: 'center' }}>← Volver al detalle</a>
         <ImprimirBoton />
       </div>
-      <header style={{ display: 'flex', justifyContent: 'space-between', gap: 24, borderBottom: '2px solid #111', paddingBottom: 14, marginBottom: 18 }}>
+      <header style={{ display: 'flex', justifyContent: 'space-between', gap: 24, borderBottom: '2px solid #111', paddingBottom: 12, marginBottom: 14 }}>
         <div>
-          <div style={{ fontSize: 18, fontWeight: 600 }}>{emisor.nombre}</div>
+          <div style={{ fontSize: 17, fontWeight: 600 }}>{emisor.nombre}</div>
           {emisor.nit && <div className="doc-mute">NIT {emisor.nit}</div>}
           {emisor.direccion && <div className="doc-mute">{emisor.direccion}</div>}
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 20, fontWeight: 600 }}>{facturado ? `Detalle de la factura ${d.noFactura}` : 'Detalle de servicios'}</div>
+          <div style={{ fontSize: 18, fontWeight: 600 }}>{facturado ? `Detalle de la factura ${d.noFactura}` : 'Detalle de servicios'}</div>
           <div className="doc-mute">{facturado ? `Pre-liquidación ${d.correlativo}` : `Pre-liquidación · ${d.correlativo}`}</div>
           <div className="doc-mute">Fecha: {formatearFechaCorta(facturado && d.facturadoEn ? d.facturadoEn : d.createdAt)}</div>
           {!facturado && <div className="doc-mute" style={{ marginTop: 4 }}>Documento previo a la factura: no es una factura ni tiene número de SAT.</div>}
         </div>
       </header>
-      <section style={{ marginBottom: 18, fontSize: 13 }}>
+      <section style={{ marginBottom: 12, fontSize: 12 }} data-cliente>
         <div><strong>Cliente:</strong> {datos.clienteNombre}</div>
         <div><strong>NIT:</strong> {d.nit}{datos.empresaNombreExterno && datos.empresaNombreExterno !== datos.clienteNombre ? <span className="doc-mute"> · en la Agenda: {datos.empresaNombreExterno}</span> : null}</div>
-        {d.aprobadaEn && <div className="doc-mute">Aprobado por {d.aprobadoPor} ({d.aprobadoCanal}) el {formatearFechaCorta(d.aprobadaEn)}</div>}
+        {d.titulo && <div data-titulo><strong>Corte:</strong> {d.titulo}</div>}
+        {d.dirigidoA && <div data-dirigido-a><strong>Dirigido a:</strong> {d.dirigidoA}</div>}
+        {d.aprobadaEn && <div className="doc-mute" data-aprobado>Aprobado por {d.aprobadoPor} ({d.aprobadoCanal}) el {formatearFechaCorta(d.aprobadaEn)}</div>}
       </section>
-      <table className="doc-tabla">
-        <thead><tr><th>#</th><th>Persona</th><th>Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
+      <table className="doc-tabla" data-tabla-doc>
+        <thead><tr>
+          <th>#</th><th>Persona</th><th>Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Cat.</th><th>Terr.</th>
+          {paraRevisar && <th className="check" title="Para que el cliente marque con lapicero">Conforme</th>}
+          <th className="num">Monto sin IVA</th>
+          {paraRevisar && <th className="obs">Observaciones</th>}
+        </tr></thead>
         <tbody>
           {doc.incluidas.map((l, i) => (
-            <tr key={l.componenteId || l.idExterno}>
+            <tr key={l.componenteId || l.idExterno} data-linea>
               <td className="num">{i + 1}</td>
-              <td>{l.persona}{l.puesto ? <div className="doc-mute">{l.puesto}</div> : null}</td>
-              <td>{l.solicitante || '—'}</td>
-              <td>{l.fechaIngreso ? formatearFechaCorta(l.fechaIngreso) : '—'}</td>
-              <td>{l.resultado || l.servicio}</td>
-              <td>{l.categoria}</td><td>{l.territorio}</td>
+              <td className="corta" title={`${l.persona}${l.puesto ? ` · ${l.puesto}` : ''}`}>{l.persona}{l.puesto ? <span className="doc-mute"> · {l.puesto}</span> : null}</td>
+              <td className="corta sol" data-solicitante={l.solicitante} title={l.solicitante || undefined}>{l.solicitante || '—'}</td>
+              <td className="num">{l.fechaIngreso ? formatearFechaCorta(l.fechaIngreso) : '—'}</td>
+              <td className="nowrap">{l.resultado || l.servicio}</td>
+              <td className="nowrap">{l.categoria}</td><td className="nowrap">{territorioCorto(l.territorio)}</td>
+              {paraRevisar && <td className="check" data-casillas><span className="cb" aria-hidden /><span className="cb-lbl">Sí</span><span className="cb" aria-hidden /><span className="cb-lbl">No</span></td>}
               <td className="num">{Q(l.monto)}</td>
+              {paraRevisar && <td className="obs" data-observaciones />}
             </tr>
           ))}
-          {doc.incluidas.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20, color: '#666' }}>Ningún proceso con precio en este detalle.</td></tr>}
+          {doc.incluidas.length === 0 && <tr><td colSpan={paraRevisar ? 10 : 8} style={{ textAlign: 'center', padding: 20, color: '#666' }}>Ningún proceso con precio en este detalle.</td></tr>}
         </tbody>
         <tfoot>
-          <tr><td colSpan={7} className="num" style={{ borderBottom: 'none', paddingTop: 12 }}>Subtotal sin IVA</td><td className="num" style={{ borderBottom: 'none', paddingTop: 12 }}>{Q(doc.subtotal)}</td></tr>
-          <tr><td colSpan={7} className="num" style={{ borderBottom: 'none' }}>IVA 12 %</td><td className="num" style={{ borderBottom: 'none' }}>{Q(doc.iva)}</td></tr>
-          <tr><td colSpan={7} className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 14 }}>Total</td><td className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 14 }} data-total={doc.total}>{Q(doc.total)}</td></tr>
+          <tr><td colSpan={paraRevisar ? 8 : 7} className="num" style={{ borderBottom: 'none', paddingTop: 10 }}>Subtotal sin IVA</td><td className="num" style={{ borderBottom: 'none', paddingTop: 10 }}>{Q(doc.subtotal)}</td>{paraRevisar && <td style={{ borderBottom: 'none' }} />}</tr>
+          <tr><td colSpan={paraRevisar ? 8 : 7} className="num" style={{ borderBottom: 'none' }}>IVA 12 %</td><td className="num" style={{ borderBottom: 'none' }}>{Q(doc.iva)}</td>{paraRevisar && <td style={{ borderBottom: 'none' }} />}</tr>
+          <tr><td colSpan={paraRevisar ? 8 : 7} className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 12.5 }}>Total</td><td className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 12.5 }} data-total={doc.total}>{Q(doc.total)}</td>{paraRevisar && <td style={{ borderTop: '1.5px solid #111' }} />}</tr>
         </tfoot>
       </table>
       {doc.faltantes.length > 0 && (
-        <section style={{ marginTop: 18, fontSize: 12 }} data-faltantes>
+        <section style={{ marginTop: 14, fontSize: 10.5 }} data-faltantes>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>No incluidos en este detalle ({doc.faltantes.length})</div>
           <ul style={{ margin: 0, paddingLeft: 18, color: '#555' }}>{doc.faltantes.map(l => <li key={l.componenteId || l.idExterno}>{l.persona} · {l.resultado || l.servicio} · {l.motivo}</li>)}</ul>
         </section>
       )}
-      {d.notas && <section style={{ marginTop: 18, fontSize: 12.5 }}><strong>Notas:</strong> {d.notas}</section>}
-      <footer className="doc-mute" style={{ marginTop: 28, borderTop: '1px solid #ddd', paddingTop: 8 }}>Montos en quetzales. Precios según el tarifario pactado con el cliente. {facturado ? '' : 'Al aprobarse este detalle se emite la factura electrónica (FEL/SAT) por el total indicado.'}</footer>
+      {d.notas && <section style={{ marginTop: 14, fontSize: 11 }}><strong>Notas:</strong> {d.notas}</section>}
+      {paraRevisar && (
+        <section className="doc-firma" data-firma>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>Autorizado por el cliente</div>
+          <div className="doc-mute">Marcá en cada línea si estás conforme (Sí / No) y anotá las observaciones. Con la firma se autoriza la facturación de este detalle por el total indicado.</div>
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+            <div className="campo">Nombre:<span className="linea" /></div>
+            <div className="campo">Cargo:<span className="linea" /></div>
+          </div>
+          <div style={{ display: 'flex', gap: 28, flexWrap: 'wrap' }}>
+            <div className="campo">Firma:<span className="linea" style={{ minWidth: 260, height: 34 }} /></div>
+            <div className="campo">Fecha:<span className="linea" style={{ minWidth: 140 }} /></div>
+          </div>
+        </section>
+      )}
+      <footer className="doc-mute" style={{ marginTop: 22, borderTop: '1px solid #ddd', paddingTop: 6 }}>Montos en quetzales. Precios según el tarifario pactado con el cliente. {facturado ? '' : 'Al aprobarse este detalle se emite la factura electrónica (FEL/SAT) por el total indicado.'}</footer>
     </main>
   );
 }

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
-import { anularDetalle, crearDetalle, facturarDetalle, marcarAprobada, marcarEnviada, type DetalleResult, type FacturarDetalleResult } from '@/lib/db/detalle-facturacion';
+import { anularDetalle, crearDetalle, facturarDetalle, marcarAprobada, marcarEnviada, type DetalleResult, type FacturarDetalleResult, editarEncabezadoDetalle } from '@/lib/db/detalle-facturacion';
 import type { CanalAprobacion } from '@/lib/facturacion-agenda/detalle';
 import {
   empresasSinMapear, guardarMapeo, guardarMapeoLote, marcarNoFactura, marcarNoFacturaLote, quitarNoFactura, reintentarWriteback, reresolverPrecios, sincronizarAgenda,
@@ -46,7 +46,7 @@ export async function mapearClienteAction(input: { empresaIdExterno: string; emp
 }
 
 /** 019/024: generar el DETALLE (pre-liquidación) en borrador con las PRUEBAS seleccionadas; las reserva. */
-export async function crearDetalleAction(input: { idsExternos?: string[]; componenteIds?: string[]; notas?: string }): Promise<DetalleResult> {
+export async function crearDetalleAction(input: { idsExternos?: string[]; componenteIds?: string[]; notas?: string; /** 028 */ titulo?: string; dirigidoA?: string }): Promise<DetalleResult> {
   const permiso = await autorizar('facturar_agenda');
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await crearDetalle(input, permiso.email);
@@ -59,6 +59,15 @@ export async function marcarEnviadaAction(id: string): Promise<DetalleResult> {
   const permiso = await autorizar('facturar_agenda');
   if (!permiso.ok) return { ok: false, error: permiso.error };
   const r = await marcarEnviada(id, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** 028: título del corte y "dirigido a" del detalle (editable mientras no esté facturado ni anulado). */
+export async function editarEncabezadoDetalleAction(id: string, input: { titulo?: string | null; dirigidoA?: string | null }): Promise<DetalleResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await editarEncabezadoDetalle(id, input, permiso.email);
   if (r.ok) revalidatePath('/por-facturar', 'layout');
   return r;
 }

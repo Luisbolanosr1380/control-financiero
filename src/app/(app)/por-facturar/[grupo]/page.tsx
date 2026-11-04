@@ -1,3 +1,4 @@
+import { Suspense } from 'react';
 import { notFound } from 'next/navigation';
 import { exigirPagina } from '@/lib/auth/guard';
 import { configAgenda } from '@/lib/facturacion-agenda/config';
@@ -21,5 +22,6 @@ export default async function PorFacturarGrupoPage({ params, searchParams }: { p
   if (!datos) notFound();
   const cfg = configAgenda();
   // ?generar=1: llega de "crear cliente + mapear" en el panel de mapeo → abre "Generar tarifas" de una.
-  return <GrupoDetalleView datos={datos} writeback={cfg.writeback} configurada={cfg.apiKey.length > 0} montoModo={cfg.montoModo} generarInicial={sp.generar === '1'} />;
+  // 028: la vista lee los filtros de la URL (useSearchParams) → va dentro de un Suspense, como pide Next.
+  return <Suspense fallback={null}><GrupoDetalleView datos={datos} writeback={cfg.writeback} configurada={cfg.apiKey.length > 0} montoModo={cfg.montoModo} generarInicial={sp.generar === '1'} /></Suspense>;
 }
