@@ -9,7 +9,8 @@ import { ETIQUETA_DECISION_DETALLE } from '@/lib/facturacion-agenda/detalle';
  * Documento imprimible (server component): encabezado del emisor y del cliente, correlativo, fecha,
  * título "Detalle de servicios / Pre-liquidación" (o "Detalle de la factura N°" cuando ya se facturó),
  * título del corte y "dirigido a" (028), una línea por prueba con solicitante, totales. Los procesos
- * sin precio quedan abajo como "no incluidos" y no suman.
+ * sin precio quedan abajo como "no incluidos" y no suman. 030: la columna de monto es el PRECIO CON IVA de cada prueba
+ * (como en la factura); al pie, el total IVA incluido y, más chico, la base sin IVA y el IVA (regla FEL).
  *
  * Para que el cliente revise con lapicero: letra compacta (≥ 30 líneas por hoja carta), casillas
  * "Sí / No" vacías de verdad (CSS) y una columna de observaciones en blanco por línea; bloque de firma
@@ -82,7 +83,7 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
         <thead><tr>
           <th>#</th><th>Persona</th><th>Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Cat.</th><th>Terr.</th>
           {conCasillas && <th className="check" title={digital ? 'Lo que respondió el cliente por link' : 'Para que el cliente marque con lapicero'}>Conforme</th>}
-          <th className="num">Monto sin IVA</th>
+          <th className="num">Precio (IVA incl.)</th>
           {conCasillas && <th className="obs">Observaciones</th>}
         </tr></thead>
         <tbody>
@@ -95,16 +96,15 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
               <td className="nowrap">{l.resultado || l.servicio}</td>
               <td className="nowrap">{l.categoria}</td><td className="nowrap">{territorioCorto(l.territorio)}</td>
               {conCasillas && (() => { const r = digital ? respuestas.get(l.componenteId) : undefined; const si = digital && r?.decision === 'aprobado'; const no = digital && !!r && r.decision !== 'aprobado'; return <td className="check" data-casillas data-marcada={si ? 'si' : no ? 'no' : ''}><span className={'cb' + (si ? ' on' : '')} aria-hidden /><span className="cb-lbl">Sí</span><span className={'cb' + (no ? ' on' : '')} aria-hidden /><span className="cb-lbl">No</span></td>; })()}
-              <td className="num">{Q(l.monto)}</td>
+              <td className="num" data-precio-iva={l.montoConIva}>{Q(l.montoConIva)}</td>
               {conCasillas && <td className="obs" data-observaciones>{digital ? (respuestas.get(l.componenteId)?.nota ?? '') : ''}</td>}
             </tr>
           ))}
           {doc.incluidas.length === 0 && <tr><td colSpan={conCasillas ? 10 : 8} style={{ textAlign: 'center', padding: 20, color: '#666' }}>Ningún proceso con precio en este detalle.</td></tr>}
         </tbody>
         <tfoot>
-          <tr><td colSpan={conCasillas ? 8 : 7} className="num" style={{ borderBottom: 'none', paddingTop: 10 }}>Subtotal sin IVA</td><td className="num" style={{ borderBottom: 'none', paddingTop: 10 }}>{Q(doc.subtotal)}</td>{conCasillas && <td style={{ borderBottom: 'none' }} />}</tr>
-          <tr><td colSpan={conCasillas ? 8 : 7} className="num" style={{ borderBottom: 'none' }}>IVA 12 %</td><td className="num" style={{ borderBottom: 'none' }}>{Q(doc.iva)}</td>{conCasillas && <td style={{ borderBottom: 'none' }} />}</tr>
-          <tr><td colSpan={conCasillas ? 8 : 7} className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 12.5 }}>Total</td><td className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 12.5 }} data-total={doc.total}>{Q(doc.total)}</td>{conCasillas && <td style={{ borderTop: '1.5px solid #111' }} />}</tr>
+          <tr><td colSpan={conCasillas ? 8 : 7} className="num" style={{ borderTop: '1.5px solid #111', borderBottom: 'none', fontWeight: 600, fontSize: 12.5, paddingTop: 8 }}>Total (IVA incluido)</td><td className="num" style={{ borderTop: '1.5px solid #111', borderBottom: 'none', fontWeight: 600, fontSize: 12.5, paddingTop: 8 }} data-total={doc.total}>{Q(doc.total)}</td>{conCasillas && <td style={{ borderTop: '1.5px solid #111', borderBottom: 'none' }} />}</tr>
+          <tr><td colSpan={conCasillas ? 8 : 7} className="num doc-mute" style={{ borderBottom: 'none', paddingTop: 0 }} data-base={doc.subtotal} data-iva={doc.iva}>Base sin IVA {Q(doc.subtotal)} · IVA 12 % {Q(doc.iva)}</td><td style={{ borderBottom: 'none' }} />{conCasillas && <td style={{ borderBottom: 'none' }} />}</tr>
         </tfoot>
       </table>
       {doc.faltantes.length > 0 && (

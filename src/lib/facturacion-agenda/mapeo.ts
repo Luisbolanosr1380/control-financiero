@@ -20,7 +20,7 @@
  *  - cliente ← empresa.id vía cliente_externo; sin mapeo → "cliente sin mapear".
  *  - Precio del tarifario SIN IVA; IVA 12 %. No se reimplementa el motor.
  */
-import { canonCategoria, canonTipoPrueba, conIva, formaPrecio, normalizarTexto, round2, usaCategoria } from '@/lib/tarifario/canon';
+import { canonCategoria, canonTipoPrueba, formaPrecio, normalizarTexto, precioConIva, round2, totalesFel, usaCategoria } from '@/lib/tarifario/canon';
 import { resolverTarifa, type Tarifa } from '@/lib/tarifario/lookup';
 import { nitComparable } from '@/lib/clientes/nit';
 import { ESTADOS_EXCLUIDOS, STATUS_COBRO_POR_FACTURAR, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type FuenteFechaResultado, type PruebaLocal, type Situacion } from './tipos';
@@ -217,6 +217,8 @@ export const conPrecio = (e: ExpedienteCola): boolean => pruebasFacturables(e).l
 export const facturable = (e: ExpedienteCola): boolean => conPrecio(e);
 /** Monto sin IVA cobrable hoy del expediente (suma de sus pruebas facturables). */
 export const montoFacturable = (e: ExpedienteCola): number => round2(pruebasFacturables(e).reduce((s, p) => s + (p.montoCalculado ?? 0), 0));
+/** 030: lo mismo con IVA, como lo verá la factura: suma de los precios con IVA de cada prueba (no conIva de la suma). */
+export const montoFacturableConIva = (e: ExpedienteCola): number => round2(pruebasFacturables(e).reduce((s, p) => s + precioConIva(p.montoCalculado ?? 0), 0));
 
 /** Un expediente de la Agenda → la fila que se guarda (sin id ni timestamps). */
 export function expedienteALocal(exp: ExpedienteAgenda, c: Clasificacion): Omit<ExpedienteLocal, 'id' | 'facturaId' | 'facturaAppId' | 'noFactura' | 'facturadoEn' | 'facturadoPor' | 'writebackEstado' | 'writebackDetalle' | 'writebackEn' | 'cobroWritebackEstado' | 'cobroWritebackDetalle' | 'detalleId' | 'updatedAt' | 'pruebas'> & { pruebas: PruebaLocal[]; pruebasFirma: string } {
@@ -317,9 +319,11 @@ export function armarFactura(pruebas: readonly PruebaParaFactura[], centroDe: (t
     if (!cc) sinCentro.add(p.servicio);
     detalle.push({ idExterno: p.idExterno, componenteId: p.id, tipoPrueba: p.servicio, categoria: p.categoria, territorio: p.territorio, monto: round2(Number(p.montoCalculado ?? 0)), centroCostoId: cc ?? '', persona: p.persona, resultado: resultadoLegible(p.servicio, p.estadoPrueba) });
   }
-  const porCentro = new Map<string, number>();
-  for (const d of detalle) porCentro.set(d.centroCostoId, round2((porCentro.get(d.centroCostoId) ?? 0) + d.monto));
-  const lineas: LineaFactura[] = [...porCentro].map(([centroCostoId, subtotal]) => { const { iva, total } = conIva(subtotal); return { centroCostoId, subtotal, iva, total }; });
+  // 030 (regla FEL): por centro de costo, el total es la suma de los precios con IVA de sus pruebas, la base es
+  // total / 1.12 y el IVA va por resta; el total de la factura es la suma de las líneas.
+  const porCentro = new Map<string, number[]>();
+  for (const d of detalle) (porCentro.get(d.centroCostoId) ?? porCentro.set(d.centroCostoId, []).get(d.centroCostoId)!).push(d.monto);
+  const lineas: LineaFactura[] = [...porCentro].map(([centroCostoId, montos]) => { const { base, iva, total } = totalesFel(montos); return { centroCostoId, subtotal: base, iva, total }; });
   const subtotal = round2(lineas.reduce((s, l) => s + l.subtotal, 0));
   const iva = round2(lineas.reduce((s, l) => s + l.iva, 0));
   const total = round2(lineas.reduce((s, l) => s + l.total, 0));
@@ -336,7 +340,7 @@ export function facturasDelExpediente(e: Pick<ExpedienteLocal, 'pruebas' | 'noFa
 
 /** Monto que se escribe de vuelta a la Agenda por expediente: con IVA (como lo registra Golden hoy) o sin IVA. */
 export function montoParaAgenda(montoSinIva: number, modo: 'con_iva' | 'sin_iva'): number {
-  return modo === 'sin_iva' ? round2(montoSinIva) : conIva(montoSinIva).total;
+  return modo === 'sin_iva' ? round2(montoSinIva) : precioConIva(montoSinIva);   // 030: el precio redondo de la prueba (450, no 401.79 + 12 %)
 }
 
 /** NIT comparable del mapeo (mismo criterio que el tarifario). */

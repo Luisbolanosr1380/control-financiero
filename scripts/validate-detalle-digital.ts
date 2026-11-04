@@ -206,6 +206,22 @@ const PNG = 'data:image/png;base64,' + Buffer.from('x'.repeat(400)).toString('ba
   ok(a7.estado === 'respondido' && (a7.estado === 'respondido' ? a7.detalle.resultado?.estado === 'aprobada' && a7.detalle.resultado.nombre === 'Marta Solicita' : false), 'el link aprobado abre en solo lectura con "aprobada"');
   const det1Comp = await DB.getDetalle(D1);
   ok(!!det1Comp && det1Comp.respuestas.length === 8 && det1Comp.link?.usadoEn !== null && det1Comp.envios.length >= 2 && det1Comp.correosCliente.join() === 'cobros@dd-e2e.example,rrhh@dd-e2e.example', 'getDetalle trae respuestas (5 + 3), el último link, la bitácora y los correos sugeridos del cliente');
+  // ── 030 · caso GTL: 16 polígrafos de 401.79 + 12 socios de 424.11 → el cliente ve 450 / 475 y Q12,900.00, y firma sin DOCUMENTO_CAMBIO ──
+  const gtlSeeds = [...Array(16).fill(['POLIGRAFO', 'RUTINA', 401.79]), ...Array(12).fill(['SOCIOECONOMICO', 'PRE EMPLEO', 424.11])] as Array<[string, string, number]>;
+  const { data: gtlExps } = await sb.from('facturacion_expediente').insert(gtlSeeds.map((g, i) => ({ fuente: 'agenda', id_externo: `${PREFIJO}gtl${String(i + 1).padStart(3, '0')}`, empresa_id_externo: EMPRESA, empresa_nombre_externo: 'DD E2E APROBACION', nit_resuelto: NIT, cliente_id: cliRow?.id ?? null, persona: `GTL ${i + 1}`, puesto: 'Puesto', solicitante: 'GTL RRHH', tipo_prueba: g[0], categoria_prueba: g[1], proceso_solicitado: `SOLO ${g[0]}`, fecha_ingreso: '2026-10-10', fecha_entrega: '2026-10-25', status_proceso: 'APROBO', terminado: true, cancelado: false, eliminado: false, estado_tarifa: 'resuelta', monto_calculado: g[2], status_cobro_externo: 'PENDIENTE', actualizado_en_externo: '2026-10-26T12:00:00.000Z' }))).select('id, id_externo');
+  const { data: gtlComps } = await sb.from('facturacion_componente').insert((gtlExps ?? []).map((e, i) => ({ fuente: 'agenda', expediente_id: e.id, id_externo: e.id_externo, servicio: gtlSeeds[i][0], estado_prueba: 'APROBO', situacion: 'cobra', motivo: 'E2E', categoria: gtlSeeds[i][1], territorio: 'METROPOLITANA', monto_calculado: gtlSeeds[i][2], estado_tarifa: 'resuelta', fecha_resultado: '2026-10-20T15:00:00.000Z', fecha_resultado_fuente: 'agenda' }))).select('id');
+  const dG = await DB.crearDetalle({ componenteIds: (gtlComps ?? []).map(c => c.id as string), titulo: 'GTL · Oct 2026' }, 'e2e@test');
+  ok(dG.ok && dG.detalle.total === 12900 && dG.detalle.subtotal === 11517.86 && dG.detalle.iva === 1382.14 && dG.detalle.pruebas === 28, `030 GTL: la RPC crea el detalle con total ${dG.ok ? dG.detalle.total : dG.error}, base ${dG.ok ? dG.detalle.subtotal : ''}, IVA ${dG.ok ? dG.detalle.iva : ''} (regla FEL)`);
+  const eG = dG.ok ? await DL.emitirLinkDetalle(dG.detalle.id, actor, { destinatarios: ['cobros@dd-e2e.example'], baseUrl: 'http://localhost:3012' }) : null;
+  const aG = eG?.ok ? await DL.abrirLinkPublico(eG.url.split('#')[1]) : null;
+  const detG = aG?.estado === 'vigente' ? aG.detalle : null;
+  ok(!!detG && detG.lineas.filter(l => l.monto === 450).length === 16 && detG.lineas.filter(l => l.monto === 475).length === 12 && detG.total === 12900 && detG.subtotal === 11517.86 && detG.iva === 1382.14, `030 GTL: el cliente ve 16 líneas de 450.00 y 12 de 475.00, total Q12,900.00 (base 11,517.86 · IVA 1,382.14)`);
+  const rG = eG?.ok && detG ? await DL.responderLinkPublico({ token: eG.url.split('#')[1], respuestas: detG.lineas.map(l => ({ ref: l.ref, decision: 'aprobado' as const, nota: '' })), firma }, meta) : null;
+  const dGb = dG.ok ? await DB.getDetalleBasico(dG.detalle.id) : null;
+  ok(!!rG && rG.ok && rG.estado === 'aprobada' && dGb?.estado === 'aprobada' && dGb.total === 12900 && dGb.documentoHash === detG?.huella, '030 GTL: firma sin DOCUMENTO_CAMBIO → aprobada por link con la huella del documento con IVA');
+  const docG = dG.ok ? await DB.getDetalle(dG.detalle.id) : null;
+  ok(!!docG && docG.documento.total === 12900 && docG.documento.incluidas.every(l => l.montoConIva === 450 || l.montoConIva === 475), '030 GTL: el documento (imprimible) muestra 450 / 475 por línea y el mismo total que la base');
+  if (dG.ok) await DB.anularDetalle(dG.detalle.id, 'e2e', 'e2e@test');
   // revocar + anulado/facturado invalidan
   const d2 = await DB.crearDetalle({ componenteIds: [ids[5]] }, 'e2e@test');
   const e3 = d2.ok ? await DL.emitirLinkDetalle(d2.detalle.id, actor, { destinatarios: ['cobros@dd-e2e.example'], baseUrl: 'http://localhost:3012' }) : null;

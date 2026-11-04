@@ -6,7 +6,7 @@
  * precio o haya dejado de ser facturable NO rompe el documento: se marca como
  * "no incluido" y el total refleja solo lo incluido.
  */
-import { dimTexto, conIva, round2 } from '@/lib/tarifario/canon';
+import { dimTexto, precioConIva, round2, totalesFel } from '@/lib/tarifario/canon';
 import type { ExpedienteLocal, PruebaLocal } from './tipos';
 import { resultadoLegible } from './situacion';
 
@@ -59,10 +59,11 @@ export interface LineaDetalle {
   idExterno: string; /** 024: la prueba (facturacion_componente.id) */ componenteId: string; persona: string; puesto: string; fechaIngreso: string | null;
   /** 028: quién pidió la evaluación del lado del cliente, normalizado (trim + mayúsculas, como en el filtro); '' si no vino. */ solicitante: string;
   servicio: string; /** 024: resultado legible para el cliente ("Polígrafo — aprobó") */ resultado: string; /** texto auxiliar (vacío en el cobro por prueba) */ componentes: string;
-  categoria: string; territorio: string; monto: number;
+  categoria: string; territorio: string; /** sin IVA (tarifa) */ monto: number; /** 030: precio con IVA de la prueba (el que va en la factura), = precioConIva(monto) */ montoConIva: number;
   incluido: boolean; motivo: string;
 }
 
+/** 030: total = Σ precio con IVA por prueba; subtotal (base) = round2(total / 1.12); iva = total − base (regla FEL). */
 export interface DocumentoDetalle { lineas: LineaDetalle[]; incluidas: LineaDetalle[]; faltantes: LineaDetalle[]; subtotal: number; iva: number; total: number }
 
 /**
@@ -79,11 +80,11 @@ export function documentoDetalle(expedientes: readonly ExpedienteLocal[], prueba
     return {
       idExterno: p.idExterno, componenteId: p.id, persona: e?.persona || p.idExterno, puesto: e?.puesto ?? '', fechaIngreso: e?.fechaIngreso ?? null, solicitante: String(e?.solicitante ?? '').replace(/\s+/g, ' ').trim().toUpperCase(),
       servicio: p.servicio, resultado: resultadoLegible(p.servicio, p.estadoPrueba), componentes: '',
-      categoria: dimTexto(p.categoria), territorio: dimTexto(p.territorio), monto: incluido ? round2(p.montoCalculado ?? 0) : 0, incluido, motivo,
+      categoria: dimTexto(p.categoria), territorio: dimTexto(p.territorio), monto: incluido ? round2(p.montoCalculado ?? 0) : 0, montoConIva: incluido ? precioConIva(p.montoCalculado ?? 0) : 0, incluido, motivo,
     };
   });
   const incluidas = lineas.filter(l => l.incluido), faltantes = lineas.filter(l => !l.incluido);
-  const subtotal = round2(incluidas.reduce((s, l) => s + l.monto, 0));
-  const { iva, total } = conIva(subtotal);
+  // 030: como la FEL: suma de precios con IVA, base por división, IVA por resta
+  const { base: subtotal, iva, total } = totalesFel(incluidas.map(l => l.monto));
   return { lineas, incluidas, faltantes, subtotal, iva, total };
 }

@@ -176,16 +176,16 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
 
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 14 }}>
         <div className="kpi" data-kpi="procesos"><div className="kpi-label">Pruebas incluidas</div><div className="kpi-value">{doc.incluidas.length}</div><div className="kpi-delta"><span className="vs">{doc.faltantes.length ? `${doc.faltantes.length} no incluido(s)` : 'todos con precio'}</span></div></div>
-        <div className="kpi" data-kpi="subtotal"><div className="kpi-label">Subtotal sin IVA</div><div className="kpi-value">{Q(doc.subtotal)}</div><div className="kpi-delta"><span className="vs">del tarifario</span></div></div>
-        <div className="kpi" data-kpi="iva"><div className="kpi-label">IVA 12 %</div><div className="kpi-value">{Q(doc.iva)}</div><div className="kpi-delta"><span className="vs">Guatemala</span></div></div>
-        <div className="kpi" data-kpi="total"><div className="kpi-label">Total</div><div className="kpi-value">{Q(doc.total)}</div><div className="kpi-delta"><span className="vs">{doc.total !== d.total ? `al generar: ${Q(d.total)}` : 'igual que al generar'}</span></div></div>
+        <div className="kpi" data-kpi="subtotal"><div className="kpi-label">Base sin IVA</div><div className="kpi-value">{Q(doc.subtotal)}</div><div className="kpi-delta"><span className="vs">total ÷ 1.12 (regla FEL)</span></div></div>
+        <div className="kpi" data-kpi="iva"><div className="kpi-label">IVA 12 %</div><div className="kpi-value">{Q(doc.iva)}</div><div className="kpi-delta"><span className="vs">total − base</span></div></div>
+        <div className="kpi" data-kpi="total"><div className="kpi-label">Total (IVA incluido)</div><div className="kpi-value">{Q(doc.total)}</div><div className="kpi-delta"><span className="vs">{doc.total !== d.total ? `al generar: ${Q(d.total)}` : 'igual que al generar'}</span></div></div>
       </div>
 
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-head"><div className="card-title">Pruebas</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>una línea por prueba con su resultado (un candidato puede tener solo el polígrafo acá) · montos sin IVA</span></div></div>
         <div className="table-scroll">
         <table className="table" data-lista="detalle">
-          <thead><tr><th>Persona</th><th title="Quién pidió la evaluación del lado del cliente (Agenda)">Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th>{(respuestasVigentes.size > 0 || puedeQuitar) && <th>Respuesta del cliente</th>}</tr></thead>
+          <thead><tr><th>Persona</th><th title="Quién pidió la evaluación del lado del cliente (Agenda)">Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Sin IVA</th><th className="num" title="Precio de la prueba con IVA, como en la factura (030)">Con IVA</th>{(respuestasVigentes.size > 0 || puedeQuitar) && <th>Respuesta del cliente</th>}</tr></thead>
           <tbody>
             {doc.lineas.map(l => (
               <tr key={l.componenteId || l.idExterno} style={{ opacity: l.incluido ? 1 : 0.6 }} data-linea={l.incluido ? 'incluida' : 'faltante'} data-prueba={l.componenteId} data-respuesta-linea={respuestasVigentes.get(l.componenteId)?.decision ?? ''}>
@@ -194,7 +194,8 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
                 <td className="num" style={{ fontSize: 12 }}>{l.fechaIngreso ?? '—'}</td>
                 <td><div>{l.resultado || l.servicio}</div>{l.resultado && l.resultado !== l.servicio ? <div className="cell-mute" style={{ fontSize: 11 }}>{l.servicio}</div> : null}</td>
                 <td>{l.categoria}</td><td>{l.territorio}</td>
-                <td className="num">{l.incluido ? <span className="cell-strong">{Q(l.monto)}</span> : <span className="badge badge-warn" style={{ fontSize: 10 }} title="No suma al total">no incluido · {l.motivo}</span>}</td>
+                <td className="num">{l.incluido ? <span>{Q(l.monto)}</span> : <span className="badge badge-warn" style={{ fontSize: 10 }} title="No suma al total">no incluido · {l.motivo}</span>}</td>
+                <td className="num">{l.incluido ? <span className="cell-strong" data-precio-iva={l.montoConIva}>{Q(l.montoConIva)}</span> : <span className="cell-mute">—</span>}</td>
                 {(respuestasVigentes.size > 0 || puedeQuitar) && (
                   <td style={{ fontSize: 12, minWidth: 220 }}>
                     <RespuestaLinea r={respuestasVigentes.get(l.componenteId) ?? null} />
@@ -222,7 +223,7 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
                 )}
               </tr>
             ))}
-            <tr style={{ background: 'var(--bg-2)' }}><td colSpan={(respuestasVigentes.size > 0 || puedeQuitar) ? 7 : 6} className="num" style={{ textAlign: 'right', color: 'var(--ink-3)' }}>Subtotal · IVA (12 %) · <strong>Total</strong></td><td className="num" data-total={doc.total}>{Q(doc.subtotal)} · {Q(doc.iva)} · <strong>{Q(doc.total)}</strong></td></tr>
+            <tr style={{ background: 'var(--bg-2)' }}><td colSpan={(respuestasVigentes.size > 0 || puedeQuitar) ? 7 : 6} className="num" style={{ textAlign: 'right', color: 'var(--ink-3)' }}>Base sin IVA {Q(doc.subtotal)} · IVA 12 % {Q(doc.iva)} · <strong>Total (IVA incluido)</strong></td><td className="num" data-total={doc.total}><strong>{Q(doc.total)}</strong></td>{(respuestasVigentes.size > 0 || puedeQuitar) && <td />}</tr>
           </tbody>
         </table>
         </div>

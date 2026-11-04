@@ -131,7 +131,7 @@ function Formulario({ detalle: d, token, onRespondido }: { detalle: DetallePubli
               <li key={l.ref} className={'ad-linea' + (r.decision !== 'aprobado' ? ' ad-linea-obs' : '')} data-linea={l.ref} data-decision={r.decision}>
                 <div className="ad-linea-cab">
                   <div className="ad-persona"><span className="ad-num">{(soloNoAprobadas ? d.lineas.indexOf(l) : i) + 1}.</span> <strong>{l.persona}</strong>{l.puesto ? <span className="ad-mute"> · {l.puesto}</span> : null}</div>
-                  <div className="ad-monto">{Q(l.monto)} <span className="ad-mute">sin IVA</span></div>
+                  <div className="ad-monto">{Q(l.monto)} <span className="ad-mute">IVA incl.</span></div>
                 </div>
                 <div className="ad-linea-datos">
                   <span>{l.resultado}</span>{l.categoria ? <span>· {l.categoria}</span> : null}{l.territorio ? <span>· {l.territorio}</span> : null}
@@ -159,10 +159,9 @@ function Formulario({ detalle: d, token, onRespondido }: { detalle: DetallePubli
           })}
           {visibles.length === 0 && <li className="ad-mute" style={{ padding: 14 }}>Todas las líneas están aprobadas.</li>}
         </ol>
-        <div className="ad-totales">
-          <div><span className="ad-mute">Subtotal sin IVA</span> {Q(d.subtotal)}</div>
-          <div><span className="ad-mute">IVA 12 %</span> {Q(d.iva)}</div>
-          <div className="ad-total"><span>Total</span> {Q(d.total)}</div>
+        <div className="ad-totales" data-totales>
+          <div className="ad-total"><span>Total (IVA incluido)</span> {Q(d.total)}</div>
+          <div className="ad-mute" style={{ fontSize: 13 }}>Base sin IVA {Q(d.subtotal)} · IVA 12 % {Q(d.iva)}</div>
         </div>
       </section>
 
@@ -224,13 +223,13 @@ function SoloLectura({ detalle: d, recien }: { detalle: DetallePublico; recien?:
         <ol className="ad-lineas">
           {d.lineas.map((l, i) => (
             <li key={l.ref} className={'ad-linea' + (l.respuesta && l.respuesta.decision !== 'aprobado' ? ' ad-linea-obs' : '')} data-linea={l.ref} data-decision={l.respuesta?.decision ?? ''}>
-              <div className="ad-linea-cab"><div className="ad-persona"><span className="ad-num">{i + 1}.</span> <strong>{l.persona}</strong>{l.puesto ? <span className="ad-mute"> · {l.puesto}</span> : null}</div><div className="ad-monto">{Q(l.monto)}</div></div>
+              <div className="ad-linea-cab"><div className="ad-persona"><span className="ad-num">{i + 1}.</span> <strong>{l.persona}</strong>{l.puesto ? <span className="ad-mute"> · {l.puesto}</span> : null}</div><div className="ad-monto">{Q(l.monto)} <span className="ad-mute">IVA incl.</span></div></div>
               <div className="ad-linea-datos"><span>{l.resultado}</span>{l.categoria ? <span>· {l.categoria}</span> : null}{l.territorio ? <span>· {l.territorio}</span> : null}</div>
               <div className="ad-respuesta"><strong>{l.respuesta ? ETIQUETA_DECISION[l.respuesta.decision] : '—'}</strong>{l.respuesta?.nota ? <>: <em>{l.respuesta.nota}</em></> : null}</div>
             </li>
           ))}
         </ol>
-        <div className="ad-totales"><div className="ad-total"><span>Total con IVA</span> {Q(d.total)}</div></div>
+        <div className="ad-totales" data-totales><div className="ad-total"><span>Total (IVA incluido)</span> {Q(d.total)}</div><div className="ad-mute" style={{ fontSize: 13 }}>Base sin IVA {Q(d.subtotal)} · IVA 12 % {Q(d.iva)}</div></div>
         {aprobada && <div className="ad-mute" style={{ fontSize: 12, marginTop: 8 }}>Aprobado digitalmente{r?.nombre ? ` por ${r.nombre}` : ''}{r?.respondidoEn ? ` el ${fechaHora(r.respondidoEn)}` : ''} · huella {huella(d.huella)}</div>}
       </section>
     </>

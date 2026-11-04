@@ -17,7 +17,7 @@ import { supabase, fetchAll } from '@/lib/supabase/client';
 import { nuevoIdEscritura, rpc, uuidOpcional, uuidRequerido } from '@/lib/supabase/writes';
 import { nitComparable, nitEsPlaceholder } from '@/lib/clientes/nit';
 import { nombresDe } from '@/lib/clientes/buscar';
-import { conIva, normalizarTexto } from '@/lib/tarifario/canon';
+import { normalizarTexto, precioConIva } from '@/lib/tarifario/canon';
 import { indiceAlias, nombreBase, resolverNit } from '@/lib/tarifario/lookup';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { configAgenda } from '@/lib/facturacion-agenda/config';
@@ -522,12 +522,14 @@ export interface VistaPorFacturar {
 }
 
 interface ConteoEstado { estado_tarifa: EstadoTarifa; total: number; en_cola: number; empresas_en_cola: number }
-interface GrupoRpc { nit_resuelto: string; empresa_id_externo: string | null; empresa_nombre_externo: string | null; listos: number; total_sin_iva: number | string; sin_tarifa: number; con_megapaca: number; en_detalle?: number; fecha_mas_antigua: string | null; /** 024 */ pendientes?: number; expedientes?: number }
+interface GrupoRpc { nit_resuelto: string; empresa_id_externo: string | null; empresa_nombre_externo: string | null; listos: number; total_sin_iva: number | string; /** 030: Σ round(monto × 1.12, 2) por prueba */ total_con_iva?: number | string | null; sin_tarifa: number; con_megapaca: number; en_detalle?: number; fecha_mas_antigua: string | null; /** 024 */ pendientes?: number; expedientes?: number }
 interface FacturadoRpc { nit_resuelto: string | null; facturados: number; writeback_pendiente: number; con_megapaca: number }
 interface NoFacturaRpc { empresa_id_externo: string; empresa_nombre_externo: string | null; motivo_no_factura: string | null; creado_por: string | null; updated_at: string | null; expedientes: number }
 interface DetalleRpc { estado: string; n: number; total: number | string }
 interface ResumenRpc { conteos: ConteoEstado[]; grupos: GrupoRpc[]; facturados: FacturadoRpc[]; total: number; excluidos: number; /** 018 */ excluidos_no_factura?: number; no_facturan?: NoFacturaRpc[]; /** 019 */ detalles?: DetalleRpc[]; /** 024 */ pendientes?: number; pendientes_expedientes?: number; parciales?: number; por_prueba?: boolean }
 
+/** SOLO si la base no tiene la 030 (la RPC del resumen no trae total_con_iva): aproximación vieja, el 12 % sobre la suma. Con la 030 aplicada no se usa. */
+const conIvaSinLa030 = (sumaSinIva: number): number => Math.round(sumaSinIva * 112) / 100;
 const rpcNoExiste = (e: { code?: string; message: string }) => e.code === 'PGRST202' || /could not find the function|function .* does not exist/i.test(e.message);
 /** Filtro PostgREST de "en cola" (misma regla que enCola() y que facturacion_agenda_cobro_pendiente(status, pago) en SQL). */
 const COBRO_PENDIENTE_OR = 'status_cobro_externo.is.null,status_cobro_externo.in.("PENDIENTE","SIN_STATUS","")';
@@ -580,10 +582,10 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>, arran
   for (const c of cola) {
     const e = c.facturacion_expediente; const nit = e.nit_resuelto;
     if (!nit || !['resuelta', 'sin_tarifa'].includes(c.estado_tarifa)) continue;
-    const g = grupos.get(nit) ?? { nit_resuelto: nit, empresa_id_externo: e.empresa_id_externo, empresa_nombre_externo: e.empresa_nombre_externo, listos: 0, total_sin_iva: 0, sin_tarifa: 0, con_megapaca: 0, en_detalle: 0, fecha_mas_antigua: null, pendientes: 0, expedientes: 0 };
+    const g = grupos.get(nit) ?? { nit_resuelto: nit, empresa_id_externo: e.empresa_id_externo, empresa_nombre_externo: e.empresa_nombre_externo, listos: 0, total_sin_iva: 0, total_con_iva: 0, sin_tarifa: 0, con_megapaca: 0, en_detalle: 0, fecha_mas_antigua: null, pendientes: 0, expedientes: 0 };
     if (g.empresa_id_externo === null || (e.empresa_id_externo && e.empresa_id_externo < g.empresa_id_externo)) { g.empresa_id_externo = e.empresa_id_externo; }
     if (g.empresa_nombre_externo === null || (e.empresa_nombre_externo && e.empresa_nombre_externo < g.empresa_nombre_externo)) g.empresa_nombre_externo = e.empresa_nombre_externo;
-    if (c.estado_tarifa === 'resuelta' && Number(c.monto_calculado ?? 0) > 0) { g.listos++; g.total_sin_iva = Math.round((Number(g.total_sin_iva) + Number(c.monto_calculado)) * 100) / 100; }
+    if (c.estado_tarifa === 'resuelta' && Number(c.monto_calculado ?? 0) > 0) { g.listos++; g.total_sin_iva = Math.round((Number(g.total_sin_iva) + Number(c.monto_calculado)) * 100) / 100; g.total_con_iva = Math.round((Number(g.total_con_iva ?? 0) + precioConIva(Number(c.monto_calculado))) * 100) / 100; }
     if (c.estado_tarifa === 'sin_tarifa') g.sin_tarifa++;
     (expsPorNit.get(nit) ?? expsPorNit.set(nit, new Set()).get(nit)!).add(c.expediente_id);
     if (Number(e.cobro_megapaca ?? 0) > 0) (megaPorNit.get(nit) ?? megaPorNit.set(nit, new Set()).get(nit)!).add(c.expediente_id);
@@ -643,7 +645,8 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
   });
   for (const g of r.grupos) {
     const x = porNit.get(g.nit_resuelto) ?? base(g.nit_resuelto, g.empresa_id_externo, g.empresa_nombre_externo);
-    x.listos += Number(g.listos); x.totalSinIva = Math.round((x.totalSinIva + Number(g.total_sin_iva)) * 100) / 100; x.sinTarifa += Number(g.sin_tarifa); x.conMegapaca += Number(g.con_megapaca); x.enDetalle += Number(g.en_detalle ?? 0); x.pendientes += Number(g.pendientes ?? 0);
+    // 030: total_con_iva = Σ precios con IVA por prueba (RPC de la 030 o el fallback en memoria)
+    x.listos += Number(g.listos); x.totalSinIva = Math.round((x.totalSinIva + Number(g.total_sin_iva)) * 100) / 100; x.totalConIva = Math.round((x.totalConIva + (g.total_con_iva === undefined || g.total_con_iva === null ? conIvaSinLa030(Number(g.total_sin_iva)) : Number(g.total_con_iva))) * 100) / 100; x.sinTarifa += Number(g.sin_tarifa); x.conMegapaca += Number(g.con_megapaca); x.enDetalle += Number(g.en_detalle ?? 0); x.pendientes += Number(g.pendientes ?? 0);
     x.expedientes += g.expedientes !== undefined ? Number(g.expedientes) : Number(g.listos) + Number(g.sin_tarifa);
     if (g.fecha_mas_antigua && (!x.fechaIngresoMasAntigua || g.fecha_mas_antigua < x.fechaIngresoMasAntigua)) x.fechaIngresoMasAntigua = g.fecha_mas_antigua;
     porNit.set(g.nit_resuelto, x);
@@ -653,14 +656,15 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
     if (!x) continue;
     x.facturados += Number(f.facturados); x.writebackPendiente += Number(f.writeback_pendiente); x.expedientes += Number(f.facturados);
   }
-  const grupos = [...porNit.values()].map(g => ({ ...g, totalConIva: conIva(g.totalSinIva).total }));
+  const grupos = [...porNit.values()];   // 030: total_con_iva viene del agregado (suma de precios con IVA por prueba)
   const peso = (g: GrupoCliente) => (g.sinTarifa ? 0 : g.listos ? 1 : 2);
   grupos.sort((a, b) => peso(a) - peso(b) || b.totalSinIva - a.totalSinIva || a.nombre.localeCompare(b.nombre, 'es'));
   const c = (e: EstadoTarifa) => r!.conteos.find(x => x.estado_tarifa === e);
   const listos = grupos.reduce((s, g) => s + g.listos, 0);
   const totalSinIva = Math.round(grupos.reduce((s, g) => s + g.totalSinIva, 0) * 100) / 100;
+  const totalConIva = Math.round(grupos.reduce((s, g) => s + g.totalConIva, 0) * 100) / 100;
   const kpis: KpisPorFacturar = {
-    listos, totalSinIva, totalConIva: conIva(totalSinIva).total,
+    listos, totalSinIva, totalConIva,
     sinTarifa: Number(c('sin_tarifa')?.en_cola ?? 0),
     sinMapear: Number(c('cliente_sin_mapear')?.en_cola ?? 0),
     excluidos: Number(r.excluidos ?? 0),

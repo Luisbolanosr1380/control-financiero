@@ -18,7 +18,7 @@ import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
 import { crearDetalleAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
-import { armarFactura, centroPorServicio, enCola, esMitadDeCompleto, facturable, montoFacturable, pruebaEnCola, pruebasEnCola, pruebasFacturables, pruebasParaFactura, pruebasPendientes } from '@/lib/facturacion-agenda/mapeo';
+import { armarFactura, centroPorServicio, enCola, esMitadDeCompleto, facturable, montoFacturable, montoFacturableConIva, pruebaEnCola, pruebasEnCola, pruebasFacturables, pruebasParaFactura, pruebasPendientes } from '@/lib/facturacion-agenda/mapeo';
 import { ETIQUETA_SITUACION, ICONO_SITUACION, resultadoLegible } from '@/lib/facturacion-agenda/situacion';
 import { filtrarExpedientes, mesesDisponibles, mesesResultadoDisponibles, pruebasTerminadasEn, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
 import { diaGuatemala, ETIQUETA_FUENTE_FECHA } from '@/lib/facturacion-agenda/fecha-resultado';
@@ -85,6 +85,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
   // 024: la unidad es la PRUEBA. Listos / total / sin tarifa / pendientes se cuentan por prueba (misma regla que la cola en SQL).
   const listos = exps.flatMap(pruebasFacturables);
   const totalListo = Math.round(exps.reduce((s, e) => s + montoFacturable(e), 0) * 100) / 100;
+  const totalListoConIva = Math.round(exps.reduce((s, e) => s + montoFacturableConIva(e), 0) * 100) / 100;   // 030: suma de precios con IVA por prueba
   const sinTarifa = exps.reduce((n, e) => n + pruebasEnCola(e).filter(p => p.estadoTarifa === 'sin_tarifa').length, 0);
   const sinMapear = exps.reduce((n, e) => n + pruebasEnCola(e).filter(p => p.estadoTarifa === 'cliente_sin_mapear').length, 0);
   const pendientes = exps.flatMap(pruebasPendientes);
@@ -136,7 +137,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
       <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)', marginBottom: 14 }}>
         <div className="kpi" data-kpi="listos"><div className="kpi-label">Cobrable ahora</div><div className="kpi-value">{listos.length}</div><div className="kpi-delta"><span className="vs">prueba{listos.length === 1 ? '' : 's'} con resultado y precio · {exps.filter(enCola).length} candidato{exps.filter(enCola).length === 1 ? '' : 's'} en cola{diferidas.length ? <> · <span className="badge badge-warn" style={{ fontSize: 10 }} data-kpi-diferidas={diferidas.length} title="El cliente pidió cobrarlas el próximo mes: 'Solo cobrable' las esconde hasta entonces">{diferidas.length} diferida{diferidas.length === 1 ? '' : 's'}</span></> : null}</span></div></div>
         <div className="kpi" data-kpi="pendientes" title="Pruebas que esperan resultado en la Agenda: se cobran cuando lo carguen"><div className="kpi-label">Pendiente de resultado</div><div className="kpi-value" style={{ color: 'var(--ink-3)' }}>{pendientes.length}</div><div className="kpi-delta"><span className="vs">{parciales ? `${parciales} candidato${parciales === 1 ? '' : 's'} con cobro parcial` : 'esperan a la Agenda'}</span></div></div>
-        <div className="kpi" data-kpi="total"><div className="kpi-label">Total sin IVA</div><div className="kpi-value">{Q(totalListo)}</div><div className="kpi-delta"><span className="vs">con IVA {Q(Math.round(totalListo * 112) / 100)}</span></div></div>
+        <div className="kpi" data-kpi="total"><div className="kpi-label">Total sin IVA</div><div className="kpi-value">{Q(totalListo)}</div><div className="kpi-delta"><span className="vs">con IVA {Q(totalListoConIva)}</span></div></div>
         <div className="kpi" data-kpi="sin-tarifa"><div className="kpi-label">Sin tarifa</div><div className="kpi-value" style={{ color: sinTarifa ? 'var(--burnt, #b5651d)' : undefined }}>{sinTarifa}</div><div className="kpi-delta"><span className="vs">{sinTarifa ? 'cargá la tarifa y se resuelve solo' : 'todas con precio'}</span></div></div>
         <div className="kpi" data-kpi="sin-mapear"><div className="kpi-label">Cliente sin mapear</div><div className="kpi-value" style={{ color: sinMapear ? 'var(--wine)' : undefined }}>{sinMapear}</div><div className="kpi-delta"><span className="vs">{sinMapear ? 'mapeá la empresa' : 'mapeado'}</span></div></div>
         <div className="kpi" data-kpi="facturados"><div className="kpi-label">Facturados desde acá</div><div className="kpi-value">{facturados}</div><div className="kpi-delta"><span className="vs">{exps.filter(e => e.facturaId && e.writebackEstado && !['confirmado', 'omitido'].includes(e.writebackEstado)).length} sin confirmar en Agenda</span></div></div>

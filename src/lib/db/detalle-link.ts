@@ -10,6 +10,7 @@ import 'server-only';
 import { supabase } from '@/lib/supabase/client';
 import { rpc } from '@/lib/supabase/writes';
 import { empresaConfig } from '@/lib/config/empresa';
+import { precioConIva } from '@/lib/tarifario/canon';
 import { generarToken, hashToken, linkConfigurado, refDeLinea, tokenValido } from '@/lib/detalle-link/token';
 import { hashDocumento, type DocumentoFirmable } from '@/lib/detalle-link/documento';
 import { correoAviso, correoEnvio, textoCopiarLink } from '@/lib/detalle-link/correo';
@@ -20,15 +21,16 @@ import type { DetalleFacturacion } from '@/lib/facturacion-agenda/detalle';
 
 /**
  * Lo que se firma: las líneas incluidas del detalle (con su componente), los totales y la versión. Se arma con los
- * datos CRUDOS de la base (persona del expediente, servicio / categoría / territorio / monto del componente), igual
- * que `detalle_link_contenido` en SQL, para que la huella que se calcula al emitir sea la misma al abrir.
+ * datos CRUDOS de la base (persona del expediente, servicio / categoría / territorio del componente y su precio CON IVA),
+ * igual que `detalle_link_contenido` en SQL, para que la huella que se calcula al emitir sea la misma al abrir.
  */
 export function documentoFirmableDe(datos: DetalleCompleto, version: number): DocumentoFirmable {
   const incluidas = new Set(datos.documento.incluidas.map(l => l.componenteId));
   const persona = new Map(datos.expedientes.map(e => [e.idExterno, e.persona ?? '']));
   return {
     correlativo: datos.detalle.correlativo, version, nit: datos.detalle.nit,
-    lineas: datos.pruebas.filter(p => incluidas.has(p.id)).map(p => ({ componenteId: p.id, persona: persona.get(p.idExterno) ?? '', servicio: p.servicio, categoria: p.categoria ?? '', territorio: p.territorio ?? '', monto: Number(p.montoCalculado ?? 0) })),
+    // 030: el monto firmado es el PRECIO CON IVA de la prueba (el que va en la factura), igual que `detalle_link_contenido`
+    lineas: datos.pruebas.filter(p => incluidas.has(p.id)).map(p => ({ componenteId: p.id, persona: persona.get(p.idExterno) ?? '', servicio: p.servicio, categoria: p.categoria ?? '', territorio: p.territorio ?? '', monto: precioConIva(p.montoCalculado ?? 0) })),
     subtotal: datos.documento.subtotal, iva: datos.documento.iva, total: datos.documento.total,
   };
 }
