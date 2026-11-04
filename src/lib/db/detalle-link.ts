@@ -177,15 +177,16 @@ export async function responderLinkPublico(envio: EnvioCliente, meta: { ip: stri
   return { ok: true, estado: r.estado, observaciones: Number(r.observaciones ?? 0), detalleId: String((lk as { detalle_id?: string } | null)?.detalle_id ?? ''), version: Number(r.version) };
 }
 
-/** Aviso de vuelta a quien envió el detalle y a la casilla de facturación (FACTURACION_AVISO_CORREO). Fail-soft. */
+/** Aviso de vuelta: para = casilla principal (FACTURACION_AVISO_CORREO) + quien envió el detalle; cc = FACTURACION_AVISO_CC. Fail-soft. */
 export async function avisarRespuesta(detalleId: string, resultado: { estado: 'aprobada' | 'con_observaciones'; observaciones: number }, baseUrl: string): Promise<void> {
   try {
     const datos = await getDetalle(detalleId); if (!datos) return;
     const d = datos.detalle; const cfg = configCorreo();
-    const para = correosValidos([d.enviadaPor, ...cfg.avisoA]);
+    const para = correosValidos([...cfg.avisoA, d.enviadaPor]);
+    const cc = correosValidos(cfg.avisoCc).filter(x => !para.includes(x));
     const c = correoAviso({ correlativo: d.correlativo, cliente: datos.clienteNombre, estado: resultado.estado, observaciones: resultado.observaciones, nombre: d.respondidoPorNombre, cargo: d.respondidoPorCargo, respondidoEn: d.respondidoEn ?? new Date().toISOString(), linkFinanzas: `${baseUrl.replace(/\/$/, '')}/por-facturar/detalle/${d.id}`, total: datos.documento.total, version: d.version });
     if (!para.length) { await registrarEnvio(d.id, d.version, null, 'aviso', [], [], c.asunto, 'copiar_link', 'sin_llave', null, 'Sin destinatarios para el aviso (enviada_por / FACTURACION_AVISO_CORREO).', 'sistema'); return; }
-    const res = await enviarCorreo({ para, asunto: c.asunto, html: c.html, texto: c.texto });
-    await registrarEnvio(d.id, d.version, null, 'aviso', para, [], c.asunto, res.ok ? res.modo : res.modo === 'sin_llave' ? 'copiar_link' : 'resend', res.ok ? 'enviado' : res.modo === 'sin_llave' ? 'sin_llave' : 'error', res.ok ? res.id : null, res.ok ? null : res.error, 'sistema');
+    const res = await enviarCorreo({ para, cc, asunto: c.asunto, html: c.html, texto: c.texto });
+    await registrarEnvio(d.id, d.version, null, 'aviso', para, cc, c.asunto, res.ok ? res.modo : res.modo === 'sin_llave' ? 'copiar_link' : 'resend', res.ok ? 'enviado' : res.modo === 'sin_llave' ? 'sin_llave' : 'error', res.ok ? res.id : null, res.ok ? null : res.error, 'sistema');
   } catch (e) { console.error('avisarRespuesta:', e instanceof Error ? e.message : String(e)); }
 }
