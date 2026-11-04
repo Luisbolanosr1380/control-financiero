@@ -260,6 +260,10 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   ok(d.length === 2 && d[0].servicio === 'POLIGRAFO' && d[0].situacion === 'cobra' && d[1].servicio === 'SOCIOECONOMICO' && d[1].situacion === 'cobra' && S.resultadoLegible('POLIGRAFO', 'APROBO') === 'Polígrafo — aprobó' && S.resultadoLegible('SOCIOECONOMICO', 'SOCIO-COMPLETO') === 'Socioeconómico — completo', 'Jeniffer Monterroso (FITNESS ONE): COMPLETO APROBO + SOCIO-COMPLETO → 2 pruebas cobra ("Polígrafo — aprobó", "Socioeconómico — completo")');
   d = sit({ ...COMPLETO, statusProceso: 'CANCELADO', estadoPoligrafo: null, estadoSocio: null, cancelado: true });
   ok(d.every(x => x.situacion === 'no_cobra' && /CANCELADO/.test(x.motivo)), 'Daniel Cárcamo (FITNESS ONE): statusProceso CANCELADO con ambos estados vacíos → todo no_cobra');
+  // Regla del CFO (2026-11-04): otros servicios con NO SE PRESENTÓ / DESISTE no se cobran aunque la Agenda los dé por terminados.
+  const dOtros = [['MIDOT', 'NO SE PRESENTO'], ['MIDOT', 'No se presentó'], ['BACKGROUND CHECK', 'DESISTE']].map(([t, sp]) => sit({ tipoPrueba: t, procesoSolicitado: t, statusProceso: sp, terminado: true })[0]);
+  const dOk = sit({ tipoPrueba: 'MIDOT', procesoSolicitado: 'MIDOT', statusProceso: 'TERMINADO', terminado: true })[0];
+  ok(dOtros.every(x => x.situacion === 'no_cobra') && dOk.situacion === 'cobra', 'Jaison Peace (GTL): MIDOT / BACKGROUND terminado pero NO SE PRESENTÓ o DESISTE → no_cobra; terminado normal → cobra');
   d = sit({ ...COMPLETO, statusProceso: 'SOCIO-COMPLETO', estadoPoligrafo: null, estadoSocio: 'SOCIO-COMPLETO' });
   ok(d[0].situacion === 'pendiente' && /sin resultado de polígrafo/.test(d[0].motivo) && d[1].situacion === 'cobra', 'Carlos Calderón: COMPLETO 2026 con socio completo y estadoPoligrafo vacío → socio cobra, polígrafo PENDIENTE (no se infiere del socio ni de statusProceso)');
   d = sit({ ...COMPLETO, statusProceso: 'SOCIO-EN PROCESO', estadoPoligrafo: 'APROBO', estadoSocio: 'SOCIO-EN PROCESO', terminado: false });
