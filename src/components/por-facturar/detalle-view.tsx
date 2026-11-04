@@ -111,18 +111,19 @@ export function DetalleView({ datos, writeback, configurada, montoModo }: Props)
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-head"><div className="card-title">Pruebas</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>una línea por prueba con su resultado (un candidato puede tener solo el polígrafo acá) · montos sin IVA</span></div></div>
         <table className="table" data-lista="detalle">
-          <thead><tr><th>Persona</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
+          <thead><tr><th>Persona</th><th>Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
           <tbody>
             {doc.lineas.map(l => (
               <tr key={l.componenteId || l.idExterno} style={{ opacity: l.incluido ? 1 : 0.6 }} data-linea={l.incluido ? 'incluida' : 'faltante'} data-prueba={l.componenteId}>
                 <td><div className="cell-strong">{l.persona}</div><div className="cell-mute" style={{ fontSize: 11 }}>{l.puesto || l.idExterno}</div></td>
+                <td style={{ fontSize: 12 }}>{l.solicitante || '—'}</td>
                 <td className="num" style={{ fontSize: 12 }}>{l.fechaIngreso ?? '—'}</td>
                 <td><div>{l.resultado || l.servicio}</div>{l.resultado && l.resultado !== l.servicio ? <div className="cell-mute" style={{ fontSize: 11 }}>{l.servicio}</div> : null}</td>
                 <td>{l.categoria}</td><td>{l.territorio}</td>
                 <td className="num">{l.incluido ? <span className="cell-strong">{Q(l.monto)}</span> : <span className="badge badge-warn" style={{ fontSize: 10 }} title="No suma al total">no incluido · {l.motivo}</span>}</td>
               </tr>
             ))}
-            <tr style={{ background: 'var(--bg-2)' }}><td colSpan={5} className="num" style={{ textAlign: 'right', color: 'var(--ink-3)' }}>Subtotal · IVA (12 %) · <strong>Total</strong></td><td className="num" data-total={doc.total}>{Q(doc.subtotal)} · {Q(doc.iva)} · <strong>{Q(doc.total)}</strong></td></tr>
+            <tr style={{ background: 'var(--bg-2)' }}><td colSpan={6} className="num" style={{ textAlign: 'right', color: 'var(--ink-3)' }}>Subtotal · IVA (12 %) · <strong>Total</strong></td><td className="num" data-total={doc.total}>{Q(doc.subtotal)} · {Q(doc.iva)} · <strong>{Q(doc.total)}</strong></td></tr>
           </tbody>
         </table>
       </div>

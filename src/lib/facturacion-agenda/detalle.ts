@@ -37,7 +37,7 @@ export interface DetalleFacturacion {
 }
 
 export interface LineaDetalle {
-  idExterno: string; /** 024: la prueba (facturacion_componente.id) */ componenteId: string; persona: string; puesto: string; fechaIngreso: string | null;
+  idExterno: string; /** 024: la prueba (facturacion_componente.id) */ componenteId: string; persona: string; puesto: string; /** quien lo pidió del lado del cliente (Agenda: solicitante) */ solicitante: string; fechaIngreso: string | null;
   servicio: string; /** 024: resultado legible para el cliente ("Polígrafo — aprobó") */ resultado: string; /** texto auxiliar (vacío en el cobro por prueba) */ componentes: string;
   categoria: string; territorio: string; monto: number;
   incluido: boolean; motivo: string;
@@ -57,7 +57,7 @@ export function documentoDetalle(expedientes: readonly ExpedienteLocal[], prueba
     const incluido = p.situacion === 'cobra' && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 && !!e && !e.eliminado;
     const motivo = incluido ? '' : !e || e.eliminado ? 'eliminado en la Agenda' : p.situacion === 'no_cobra' ? `no se cobra (${p.motivo || 'cerrado'})` : p.situacion === 'pendiente' ? `sin resultado todavía (${p.estadoPrueba || 'pendiente'})` : p.estadoTarifa === 'sin_tarifa' ? 'sin tarifa' : p.estadoTarifa === 'cliente_sin_mapear' ? 'cliente sin mapear' : p.estadoTarifa.startsWith('excluido') ? 'no se factura por este flujo' : 'sin precio';
     return {
-      idExterno: p.idExterno, componenteId: p.id, persona: e?.persona || p.idExterno, puesto: e?.puesto ?? '', fechaIngreso: e?.fechaIngreso ?? null,
+      idExterno: p.idExterno, componenteId: p.id, persona: e?.persona || p.idExterno, puesto: e?.puesto ?? '', solicitante: (e?.solicitante ?? '').trim(), fechaIngreso: e?.fechaIngreso ?? null,
       servicio: p.servicio, resultado: resultadoLegible(p.servicio, p.estadoPrueba), componentes: '',
       categoria: dimTexto(p.categoria), territorio: dimTexto(p.territorio), monto: incluido ? round2(p.montoCalculado ?? 0) : 0, incluido, motivo,
     };

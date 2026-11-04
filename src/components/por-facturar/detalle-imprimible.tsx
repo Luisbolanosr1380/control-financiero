@@ -16,11 +16,12 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
     <main style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#111', maxWidth: 820, margin: '0 auto', padding: '32px 28px', background: '#fff' }} data-imprimible>
       <style>{`
         @media print { .no-print { display: none !important; } body { margin: 0; } main { padding: 0 !important; } @page { margin: 18mm 14mm; } }
-        .doc-tabla { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-        .doc-tabla th { text-align: left; font-weight: 600; border-bottom: 1.5px solid #111; padding: 6px 6px; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
-        .doc-tabla td { padding: 7px 6px; border-bottom: 1px solid #ddd; vertical-align: top; }
+        .doc-tabla { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+        .doc-tabla thead { display: table-header-group; } .doc-tabla tr { break-inside: avoid; page-break-inside: avoid; }
+        .doc-tabla th { text-align: left; font-weight: 600; border-bottom: 1.5px solid #111; padding: 5px 5px; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; }
+        .doc-tabla td { padding: 4px 5px; border-bottom: 1px solid #ddd; vertical-align: top; }
         .doc-tabla td.num, .doc-tabla th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-        .doc-mute { color: #666; font-size: 11px; }
+        .doc-mute { color: #666; font-size: 10px; }
       `}</style>
       <div className="no-print" style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginBottom: 16 }}>
         <a href={`/por-facturar/detalle/${d.id}`} style={{ fontSize: 13, color: '#444', alignSelf: 'center' }}>← Volver al detalle</a>
@@ -45,24 +46,25 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
         {d.aprobadaEn && <div className="doc-mute">Aprobado por {d.aprobadoPor} ({d.aprobadoCanal}) el {formatearFechaCorta(d.aprobadaEn)}</div>}
       </section>
       <table className="doc-tabla">
-        <thead><tr><th>#</th><th>Persona</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
+        <thead><tr><th>#</th><th>Persona</th><th>Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Categoría</th><th>Territorio</th><th className="num">Monto sin IVA</th></tr></thead>
         <tbody>
           {doc.incluidas.map((l, i) => (
             <tr key={l.componenteId || l.idExterno}>
               <td className="num">{i + 1}</td>
               <td>{l.persona}{l.puesto ? <div className="doc-mute">{l.puesto}</div> : null}</td>
+              <td>{l.solicitante || '—'}</td>
               <td>{l.fechaIngreso ? formatearFechaCorta(l.fechaIngreso) : '—'}</td>
               <td>{l.resultado || l.servicio}</td>
               <td>{l.categoria}</td><td>{l.territorio}</td>
               <td className="num">{Q(l.monto)}</td>
             </tr>
           ))}
-          {doc.incluidas.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20, color: '#666' }}>Ningún proceso con precio en este detalle.</td></tr>}
+          {doc.incluidas.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: 20, color: '#666' }}>Ningún proceso con precio en este detalle.</td></tr>}
         </tbody>
         <tfoot>
-          <tr><td colSpan={6} className="num" style={{ borderBottom: 'none', paddingTop: 12 }}>Subtotal sin IVA</td><td className="num" style={{ borderBottom: 'none', paddingTop: 12 }}>{Q(doc.subtotal)}</td></tr>
-          <tr><td colSpan={6} className="num" style={{ borderBottom: 'none' }}>IVA 12 %</td><td className="num" style={{ borderBottom: 'none' }}>{Q(doc.iva)}</td></tr>
-          <tr><td colSpan={6} className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 14 }}>Total</td><td className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 14 }} data-total={doc.total}>{Q(doc.total)}</td></tr>
+          <tr><td colSpan={7} className="num" style={{ borderBottom: 'none', paddingTop: 12 }}>Subtotal sin IVA</td><td className="num" style={{ borderBottom: 'none', paddingTop: 12 }}>{Q(doc.subtotal)}</td></tr>
+          <tr><td colSpan={7} className="num" style={{ borderBottom: 'none' }}>IVA 12 %</td><td className="num" style={{ borderBottom: 'none' }}>{Q(doc.iva)}</td></tr>
+          <tr><td colSpan={7} className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 14 }}>Total</td><td className="num" style={{ borderTop: '1.5px solid #111', fontWeight: 600, fontSize: 14 }} data-total={doc.total}>{Q(doc.total)}</td></tr>
         </tfoot>
       </table>
       {doc.faltantes.length > 0 && (
