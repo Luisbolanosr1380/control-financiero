@@ -36,14 +36,13 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
           .doc-tabla tr { break-inside: avoid; page-break-inside: avoid; }
           .doc-firma { break-inside: avoid; page-break-inside: avoid; }
         }
-        .doc-tabla { width: 100%; border-collapse: collapse; font-size: 10.5px; line-height: 1.25; }
+        .doc-tabla { width: 100%; border-collapse: collapse; font-size: 10px; line-height: 1.25; table-layout: fixed; }
+        .doc-tabla td, .doc-tabla th { overflow-wrap: anywhere; }
         .doc-tabla th { text-align: left; font-weight: 600; border-bottom: 1.5px solid #111; padding: 4px 4px; font-size: 9.5px; letter-spacing: .04em; text-transform: uppercase; }
         .doc-tabla td { padding: 4px 4px; border-bottom: 1px solid #ddd; vertical-align: top; }
         .doc-tabla td.nowrap, .doc-tabla th.nowrap { white-space: nowrap; }
-        /* una línea por prueba: persona y solicitante con puntos suspensivos (el texto completo va en el title) */
-        .doc-tabla td.corta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 190px; }
-        .doc-tabla td.corta.sol { max-width: 120px; }
-        .doc-tabla td.obs { min-width: 70px; }
+        /* ancho fijo por columna (colgroup): la tabla nunca se sale de la hoja; el nombre completo hace wrap (el cliente tiene que leerlo entero) */
+        .doc-tabla td.corta { white-space: normal; }
         .doc-tabla td.num, .doc-tabla th.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
         .doc-tabla td.check, .doc-tabla th.check { white-space: nowrap; text-align: center; }
         .doc-mute { color: #666; font-size: 9.5px; }
@@ -80,10 +79,16 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
         {d.aprobadaEn && <div className="doc-mute" data-aprobado>Aprobado por {d.aprobadoPor} ({d.aprobadoCanal}) el {formatearFechaCorta(d.aprobadaEn)}</div>}
       </section>
       <table className="doc-tabla" data-tabla-doc>
+        <colgroup>
+          <col style={{ width: 20 }} /><col /><col style={{ width: 80 }} /><col style={{ width: 62 }} /><col style={{ width: 104 }} /><col style={{ width: 72 }} /><col style={{ width: 42 }} />
+          {conCasillas && <col style={{ width: 64 }} />}
+          <col style={{ width: 56 }} />
+          {conCasillas && <col style={{ width: 96 }} />}
+        </colgroup>
         <thead><tr>
           <th>#</th><th>Persona</th><th>Solicitante</th><th>Ingreso</th><th>Prueba · resultado</th><th>Cat.</th><th>Terr.</th>
           {conCasillas && <th className="check" title={digital ? 'Lo que respondió el cliente por link' : 'Para que el cliente marque con lapicero'}>Conforme</th>}
-          <th className="num">Precio (IVA incl.)</th>
+          <th className="num" style={{ whiteSpace: 'normal' }}>Precio<br />IVA incl.</th>
           {conCasillas && <th className="obs">Observaciones</th>}
         </tr></thead>
         <tbody>
@@ -93,8 +98,8 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
               <td className="corta" title={`${l.persona}${l.puesto ? ` · ${l.puesto}` : ''}`}>{l.persona}{l.puesto ? <span className="doc-mute"> · {l.puesto}</span> : null}</td>
               <td className="corta sol" data-solicitante={l.solicitante} title={l.solicitante || undefined}>{l.solicitante || '—'}</td>
               <td className="num">{l.fechaIngreso ? formatearFechaCorta(l.fechaIngreso) : '—'}</td>
-              <td className="nowrap">{l.resultado || l.servicio}</td>
-              <td className="nowrap">{l.categoria}</td><td className="nowrap">{territorioCorto(l.territorio)}</td>
+              <td>{l.resultado || l.servicio}</td>
+              <td>{l.categoria}</td><td className="nowrap">{territorioCorto(l.territorio)}</td>
               {conCasillas && (() => { const r = digital ? respuestas.get(l.componenteId) : undefined; const si = digital && r?.decision === 'aprobado'; const no = digital && !!r && r.decision !== 'aprobado'; return <td className="check" data-casillas data-marcada={si ? 'si' : no ? 'no' : ''}><span className={'cb' + (si ? ' on' : '')} aria-hidden /><span className="cb-lbl">Sí</span><span className={'cb' + (no ? ' on' : '')} aria-hidden /><span className="cb-lbl">No</span></td>; })()}
               <td className="num" data-precio-iva={l.montoConIva}>{Q(l.montoConIva)}</td>
               {conCasillas && <td className="obs" data-observaciones>{digital ? (respuestas.get(l.componenteId)?.nota ?? '') : ''}</td>}
