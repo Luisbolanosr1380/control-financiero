@@ -59,7 +59,7 @@ export function AprobarDetalleClient() {
 function Encabezado({ d }: { d: DetallePublico }) {
   return (
     <header className="ad-card">
-      <div className="ad-emisor">{d.emisor}</div>
+      {d.logoUrl && /^\/[^/]/.test(d.logoUrl) ? <img src={d.logoUrl} alt={d.emisor} style={{ height: 40, width: 'auto', display: 'block', marginBottom: 10 }} data-logo /> : <div className="ad-emisor">{d.emisor}</div>}
       <div className="ad-h1">Detalle de servicios · {d.correlativo}</div>
       {d.version > 1 && <div className="ad-version" data-version={d.version}>Versión {d.version} · corregida</div>}
       <div className="ad-datos">

@@ -151,7 +151,7 @@ export async function abrirLinkPublico(token: string): Promise<AperturaPublica &
   });
   const observaciones = [...actuales.values()].filter(r => r.decision !== 'aprobado').length;
   const detalle: DetallePublico = {
-    estado: a.estado, correlativo: c.correlativo, version, titulo: c.titulo ?? '', dirigidoA: c.dirigido_a ?? '', cliente: c.cliente, emisor: empresaConfig().nombre, notas: c.notas ?? '',
+    estado: a.estado, correlativo: c.correlativo, version, titulo: c.titulo ?? '', dirigidoA: c.dirigido_a ?? '', cliente: c.cliente, emisor: empresaConfig().nombre, logoUrl: empresaConfig().logoUrl, notas: c.notas ?? '',
     lineas, subtotal: n2(c.subtotal), iva: n2(c.iva), total: n2(c.total), expiraEn: String(a.expira_en ?? ''), huella: a.huella,
     resultado: a.estado === 'respondido' ? { estado: c.estado === 'aprobada' ? 'aprobada' : 'con_observaciones', respondidoEn: c.respondido_en, nombre: c.respondido_por_nombre ?? '', cargo: c.respondido_por_cargo ?? '', observaciones } : null,
   };
