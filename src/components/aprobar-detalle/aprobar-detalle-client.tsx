@@ -30,10 +30,11 @@ export function AprobarDetalleClient() {
   const [token, setToken] = useState('');
   useEffect(() => {
     const t = (typeof window !== 'undefined' ? window.location.hash : '').replace(/^#/, '').trim();
-    if (!/^[A-Za-z0-9_-]{40,48}$/.test(t)) { setEstado({ fase: 'invalido', mensaje: 'Este link ya no es válido.' }); return; }
+    if (!/^[A-Za-z0-9_-]{40,48}$/.test(t)) { setEstado({ fase: 'invalido', mensaje: 'Este link no está completo. Abrilo de nuevo desde el correo que te llegó.' }); return; }
     setToken(t);
-    // el token nunca queda en el historial ni en la barra: se guarda en memoria y se limpia el fragmento
-    try { history.replaceState(null, '', window.location.pathname); } catch { /* sin historial */ }
+    // El token SE QUEDA en el fragmento (#): el cliente abre el link hoy y lo llena días después (recarga, vuelve por el
+    // historial o el teléfono descarta la pestaña). Borrarlo de la barra hacía que el link "venciera" al recargar.
+    // El fragmento nunca viaja al servidor (ni logs ni referer): la seguridad no cambia.
     void pedir({ accion: 'abrir', token: t }).then(({ json }) => {
       if (json.estado === 'vigente' && json.detalle) setEstado({ fase: 'vigente', detalle: json.detalle as DetallePublico });
       else if (json.estado === 'respondido' && json.detalle) setEstado({ fase: 'respondido', detalle: json.detalle as DetallePublico });
