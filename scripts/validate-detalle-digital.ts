@@ -12,12 +12,17 @@
  *     línea (recalcula, vuelve a la cola, diferida), respuesta de Golden, reenviar → versión 2 y link 1 revocado
  *     ("nueva versión"), link vencido / revocado / reusado → rechazado, rate limit, anon → denegado, correo en mock.
  *
+ *  D. 031 · aperturas del link: creador_ip_hash al emitir; 6 aperturas desde dos «redes» + la de quien envió → 4 filas
+ *     (recargas del mismo ip_hash + dispositivo en 10 min son una) y cuentan 3; abrir no consume ni cambia el estado;
+ *     link inválido / revocado → no registra; `respondio` en la apertura previa a responder; anon sin la tabla ni la RPC.
+ *
  * Uso: npx tsx --conditions=react-server scripts/validate-detalle-digital.ts hit [--conservar | --solo-limpiar]
  *      (SUPABASE_ANON_KEY en el entorno habilita la prueba con la llave pública)
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import type { AperturaLink as AperturaLinkT } from '../src/lib/detalle-link/aperturas';
 
 const BASE = (process.argv[2] ?? 'hit').toLowerCase();
 if (BASE !== 'hit') { console.error('Este validador siembra datos: solo corre contra HIT.'); process.exit(2); }
@@ -62,6 +67,16 @@ const PNG = 'data:image/png;base64,' + Buffer.from('x'.repeat(400)).toString('ba
   ok(/data-accion="enviar-cliente"/.test(dv) && /Enviar versión corregida/.test(dv) && /data-accion="revocar-link"/.test(dv) && /data-accion="quitar-linea"/.test(dv) && /data-campo="respuesta-golden"/.test(dv) && /data-accion="re-resolver"/.test(dv) && /data-campo="diferir"/.test(dv) && /data-texto-copiar/.test(dv) && /data-sin-correo/.test(dv) && !/window\.(confirm|alert|prompt)/.test(dv + cli), 'Finanzas: Enviar al cliente / versión corregida, revocar link, quitar línea (con diferir), respuesta de Golden, re-resolver, copiar link sin correo; sin diálogos del navegador');
   ok(/data-firma-digital/.test(rd('src/components/por-facturar/detalle-imprimible.tsx')) && /Aprobado digitalmente por/.test(rd('src/components/por-facturar/detalle-imprimible.tsx')) && /data-marcada=/.test(rd('src/components/por-facturar/detalle-imprimible.tsx')) && /con_observaciones/.test(rd('src/components/por-facturar/por-facturar-client.tsx')) && /data-kpi-diferidas/.test(rd('src/components/por-facturar/grupo-detalle.tsx')) && /\.table th\.col-precio, \.table td\.col-precio \{ min-width: 118px/.test(rd('src/app/globals.css')), 'imprimible con firma digital y casillas marcadas; tablero con "Respuestas del cliente"; diferidas en el cliente; fix de la columna de precio (col-precio)');
 
+  // ── 031: aperturas del link ──
+  const m31 = rd('supabase/migrations/031_link_aperturas.sql'), sin31 = m31.replace(/--.*$/gm, ''), ap = rd('src/lib/detalle-link/aperturas.ts'), pfc = rd('src/components/por-facturar/por-facturar-client.tsx'), pfp = rd('src/app/(app)/por-facturar/page.tsx');
+  ok(/create table if not exists detalle_facturacion_link_apertura/.test(m31) && /add column if not exists creador_ip_hash text/.test(m31) && /check \(dispositivo in \('movil', 'escritorio', 'tablet', 'desconocido'\)\)/.test(m31) && /interval '10 minutes'/.test(m31) && /alter table detalle_facturacion_link_apertura enable row level security/.test(m31) && /revoke all on table detalle_facturacion_link_apertura from public, anon, authenticated/.test(m31) && !/\bdrop\s+(table|function)\b/i.test(sin31) && !/\bdelete\s+from\b/i.test(sin31) && !/^\s*(begin|commit)\s*;/im.test(sin31), '031: tabla de aperturas (RLS, sin anon ni authenticated), creador_ip_hash en el link, recargas a 10 minutos; sin drop / delete / begin / commit');
+  ok(/create or replace function detalle_link_abrir\(p_token_hash text, p_ip_hash text, p_dispositivo text, p_navegador text\)/.test(m31) && /create or replace function detalle_link_emitir\(p_actor text, p_detalle_id uuid, p_token_hash text, p_documento_hash text, p_destinatarios text\[\], p_dias integer, p_creador_ip_hash text\)/.test(m31) && ['detalle_link_abrir(text, text, text, text)', 'detalle_link_abrir(text)', 'detalle_link_emitir(text, uuid, text, text, text[], integer, text)', 'detalle_link_emitir(text, uuid, text, text, text[], integer)'].every(f => m31.includes(`revoke all on function ${f} from public, anon, authenticated`) && m31.includes(`grant execute on function ${f} to service_role`)), '031: abrir / emitir nuevos sin defaults (ninguna llamada con nombres es ambigua) y los de la 029 quedan como envoltorios; revoke / grant en los cuatro');
+  ok(/if v_link\.usado_en is not null then\n\s+v_estado := 'respondido';/.test(m31) && /if v_link\.abierto_en is null then update detalle_facturacion_link set abierto_en = now\(\)/.test(m31) && !/usado_en = now\(\)/.test(m31) && /return jsonb_build_object\('estado', 'nueva_version'\)/.test(m31) && /left\(p_ip_hash, 16\)/.test(m31) && /left\(p_navegador, 40\)/.test(m31), '031: abrir sigue sin consumir el link ni cambiar el estado; abierto_en del link sigue siendo la primera apertura; inválido / nueva versión salen antes de registrar; solo hash de red y familia de navegador');
+  ok(/update ayuda/.test(m31) && /\*\*Abierto\*\* = alguien abrió el link \(puede ser un antivirus del correo\); no confirma quién lo leyó/.test(m31) && /contenido not like '%\*\*Abierto\*\* = alguien abrió el link%'/.test(m31), '031: la ayuda del detalle recibe la línea «Abierto = alguien abrió el link (puede ser un antivirus del correo); no confirma quién lo leyó» (idempotente)');
+  ok(/export function hashIp/.test(tok) && /createHash\('sha256'\)\.update\(`\$\{v\}\|\$\{secreto\}`/.test(tok) && /\.slice\(0, 16\)/.test(tok) && /p_creador_ip_hash: hashIp\(input\.ip\)/.test(dbl) && /p_ip_hash: hashIp\(meta\?\.ip\), p_dispositivo: meta \? ua\.dispositivo : null, p_navegador: meta \? ua\.navegador : null/.test(dbl) && /clasificarUserAgent\(meta\?\.userAgent\)/.test(dbl) && !/from 'node:|from "node:|server-only/.test(ap) && !/ip_hash|ipHash/.test(cli), '031: ip_hash = sha256(ip + DETALLE_LINK_SECRET) truncado a 16 (token.ts, solo servidor); dispositivo / navegador se derivan en el servidor; el módulo puro no importa node; nada de esto llega a la página del cliente');
+  ok(/x-forwarded-for/.test(acts) && /emitirLinkDetalle\(id, \{ email: permiso\.email, nombre: permiso\.nombre \}, \{ \.\.\.input, baseUrl: await baseUrlPublica\(\), ip \}\)/.test(acts) && /abrirLinkPublico\(token, \{ ip, userAgent/.test(api) && /abrirLinkPublico\(envio\.token, meta\)/.test(dbl) && /marcarAperturaRespondio\(/.test(dbl), '031: Enviar al cliente / Copiar link guardan el hash de la red de quien envía; el endpoint pasa ip + user agent al abrir y al responder (la apertura previa queda `respondio`)');
+  ok(/data-aperturas=\{r\.n\}/.test(dv) && /textoAperturas\(r, formatearFechaCompacta\)/.test(dv) && /data-accion="ver-aperturas"/.test(dv) && /data-lista-aperturas/.test(dv) && /ETIQUETA_MARCA_RED\[marca\]/.test(dv) && /data-bitacora-fila="apertura"/.test(dv) && /Abierto = alguien abrió el link \(puede ser un antivirus del correo\); no confirma quién lo leyó/.test(dv) && /data-visto=\{b\.visto \? 'si' : 'no'\}/.test(pfc) && /badgeVisto\(aperturas\[d\.id\], d\.enviadaEn/.test(pfc) && /resumenAperturasPorDetalle\(detallesLista\.filter\(d => d\.estado === 'enviada'\)/.test(pfp) && !/window\.(confirm|alert|prompt)/.test(dv + pfc), '031 Finanzas: «Abierto N veces · primera · última · dispositivos» / «Sin abrir» junto a Enviado con la lista desplegable (red marcada), aperturas en la bitácora junto a los envíos, Visto / Sin abrir en los enviados de la lista; la pantalla dice «abierto», nunca «leído»');
+
   /* ───────────── B. Puro ───────────── */
   console.log('\nB. Puro');
   const DOC = await import('../src/lib/detalle-link/documento');
@@ -81,6 +96,28 @@ const PNG = 'data:image/png;base64,' + Buffer.from('x'.repeat(400)).toString('ba
   ok(ca.asunto === 'DET-0123 · ACME mandó 3 observaciones' && COR.asuntoAviso('DET-1', 'ACME', 'aprobada', 0) === 'DET-1 · ACME aprobó y firmó el detalle' && /Abrir el detalle en Finanzas/.test(ca.html), `aviso de vuelta: "aprobó y firmó" / "mandó N observaciones" con el link al detalle en Finanzas (asunto: "${ca.asunto}")`);
   ok(PUB.etiquetaResultadoPublico('POLIGRAFO', 'APROBO') === 'Polígrafo — aprobo' && PUB.exigeNota('proximo_mes') && !PUB.exigeNota('aprobado') && PUB.DECISIONES.length === 4, 'decisiones y etiquetas públicas');
 
+  // ── 031: clasificación del user agent, resumen, marcas de red, textos ──
+  const AP = await import('../src/lib/detalle-link/aperturas');
+  const uaChromeMac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+  const uaIphone = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+  const uaIpad = 'Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';
+  const uaEdgeWin = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0';
+  const uaOutlook = 'Mozilla/4.0 (compatible; ms-office; MSOffice 16)';
+  const uaAndroid = 'Mozilla/5.0 (Linux; Android 14; SM-S918B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36';
+  const uaBot = 'Mozilla/5.0 (compatible; Proofpoint URL Defense scanner)';
+  const cua = AP.clasificarUserAgent;
+  ok(JSON.stringify(cua(uaChromeMac)) === '{"dispositivo":"escritorio","navegador":"Chrome"}' && JSON.stringify(cua(uaIphone)) === '{"dispositivo":"movil","navegador":"Safari"}' && cua(uaIpad).dispositivo === 'tablet' && cua(uaEdgeWin).navegador === 'Edge' && cua(uaOutlook).navegador === 'Outlook' && JSON.stringify(cua(uaAndroid)) === '{"dispositivo":"movil","navegador":"Chrome"}' && cua(uaBot).navegador === 'robot / antivirus' && cua('').dispositivo === 'desconocido' && cua(null).navegador === 'desconocido', 'clasificarUserAgent: Chrome/Mac escritorio, iPhone Safari móvil, iPad tablet, Edge, Outlook, Android Chrome móvil, robot / antivirus, vacío → desconocido (nunca el user agent completo)');
+  const mkAp = (id: string, iso: string, ip: string | null, disp: AperturaLinkT['dispositivo'] = 'escritorio', nav = 'Chrome', respondio = false): AperturaLinkT => ({ id, linkId: 'L', version: 1, abiertoEn: iso, dispositivo: disp, navegador: nav, ipHash: ip, respondio });
+  const aps = [mkAp('1', '2026-11-04T19:20:00Z', 'golden'), mkAp('2', '2026-11-05T15:12:00Z', 'cliA', 'movil', 'Safari'), mkAp('3', '2026-11-04T19:40:00Z', 'cliA'), mkAp('4', '2026-11-05T16:00:00Z', 'cliB', 'escritorio', 'Edge', true)];
+  const rAp = AP.resumenAperturas(aps, 'golden');
+  ok(rAp.n === 3 && rAp.propias === 1 && rAp.primera === '2026-11-04T19:40:00Z' && rAp.ultima === '2026-11-05T16:00:00Z' && rAp.dispositivos === 3 && rAp.respondio && AP.resumenAperturas(aps, null).n === 4 && AP.resumenAperturas([], 'x').n === 0, 'resumenAperturas: 4 aperturas, 1 desde la red de quien envió → cuentan 3; primera / última sin la propia; 3 dispositivos; respondió');
+  ok(AP.marcaRed(aps[0], aps, 'golden') === 'creador' && AP.marcaRed(aps[2], aps, 'golden') === 'primera' && AP.marcaRed(aps[1], aps, 'golden') === 'misma_red' && AP.marcaRed(aps[3], aps, 'golden') === 'otra_red' && AP.marcaRed(aps[0], aps, null) === 'primera', 'marcaRed: «desde la red de quien envió» / «primera apertura» / «misma red que la primera» / «otra red»');
+  const fmtAp = (iso: string) => iso.slice(5, 16);
+  ok(AP.textoAperturas(rAp, fmtAp) === 'Abierto 3 veces · primera 11-04T19:40 · última 11-05T16:00 · 3 dispositivos' && AP.textoAperturas(AP.resumenAperturas([aps[2]], 'golden'), fmtAp) === 'Abierto 1 vez · 11-04T19:40' && AP.textoAperturas(AP.resumenAperturas([aps[0]], 'golden'), fmtAp) === 'Sin abrir (1 apertura desde la red de quien envió)' && AP.textoAperturas(AP.resumenAperturas([], null), fmtAp) === 'Sin abrir', 'textoAperturas: «Abierto 3 veces · primera … · última … · 3 dispositivos», «Abierto 1 vez · …», «Sin abrir (1 apertura desde la red de quien envió)», «Sin abrir»');
+  const ahoraAp = Date.parse('2026-11-08T12:00:00Z');
+  const bv1 = AP.badgeVisto(undefined, '2026-11-05T12:00:00Z', fmtAp, ahoraAp), bv2 = AP.badgeVisto(rAp, '2026-11-05T12:00:00Z', fmtAp, ahoraAp), bv3 = AP.badgeVisto(AP.resumenAperturas([aps[0]], 'golden'), '2026-11-08T09:00:00Z', fmtAp, ahoraAp);
+  ok(!bv1.visto && bv1.texto === 'Sin abrir' && bv1.title === 'Enviado hace 3 días y sin abrir: hay que llamar' && bv2.visto && bv2.texto === 'Visto' && /^Abierto 3 veces/.test(bv2.title) && /enviado hace 3 días$/.test(bv2.title) && bv3.title === 'Enviado hoy y sin abrir (1 desde la red de quien envió)', 'badgeVisto: «Sin abrir» con "Enviado hace 3 días y sin abrir: hay que llamar"; «Visto» con el resumen en el title; las propias se mencionan aparte');
+
   /* ───────────── C. E2E en HIT ───────────── */
   console.log(`\nC. E2E en HIT${CONSERVAR ? ' (--conservar)' : SOLO_LIMPIAR ? ' (--solo-limpiar)' : ''}`);
   const { supabase } = await import('../src/lib/supabase/client');
@@ -88,15 +125,18 @@ const PNG = 'data:image/png;base64,' + Buffer.from('x'.repeat(400)).toString('ba
   const limpiar = async () => {
     const { data: exps } = await sb.from('facturacion_expediente').select('id').like('id_externo', `${PREFIJO}%`);
     const ids = (exps ?? []).map(e => e.id as string);
-    await sb.from('detalle_facturacion').delete().eq('nit', NIT);   // links, respuestas y envíos van en cascada
+    // primero las pruebas (una aprobada / facturada conserva detalle_id y la FK impediría borrar el detalle), después los detalles
     if (ids.length) { await sb.from('facturacion_componente').delete().in('expediente_id', ids); await sb.from('facturacion_expediente').delete().in('id', ids); }
+    const { error: eDel } = await sb.from('detalle_facturacion').delete().eq('nit', NIT);   // links, respuestas, envíos y aperturas van en cascada
+    if (eDel) console.error('  limpiar detalles:', eDel.message);
     await sb.from('cliente_externo').delete().eq('nit', NIT);
     await sb.from('clientes').delete().eq('nit', NIT);
     await sb.from('detalle_link_intento').delete().like('clave', '%e2e%');
     const { count } = await sb.from('facturacion_expediente').select('id', { count: 'exact', head: true }).like('id_externo', `${PREFIJO}%`);
-    return count ?? 0;
+    const { count: nDet } = await sb.from('detalle_facturacion').select('id', { count: 'exact', head: true }).eq('nit', NIT);
+    return (count ?? 0) + (nDet ?? 0);
   };
-  if (SOLO_LIMPIAR) { ok((await limpiar()) === 0, 'limpieza: 0 expedientes ddE2E; detalles (con links, respuestas y envíos), mapeo y cliente borrados'); console.log(`\n${pass} 🟢 / ${fail} 🔴`); process.exit(fail ? 1 : 0); }
+  if (SOLO_LIMPIAR) { ok((await limpiar()) === 0, 'limpieza: 0 expedientes ddE2E y 0 detalles del NIT de prueba (con links, respuestas, envíos y aperturas), mapeo y cliente borrados'); console.log(`\n${pass} 🟢 / ${fail} 🔴`); process.exit(fail ? 1 : 0); }
   await limpiar();
   const { data: cliRow } = await sb.from('clientes').insert({ airtable_id: 'sbwDDE2E01', nombre_empresa: 'DD E2E APROBACION', razon_social: 'DD E2E APROBACION, S.A.', nit: NIT, activo: true, email_cobros: 'cobros@dd-e2e.example', correo_cobro: 'rrhh@dd-e2e.example' }).select('id').single();
   await sb.from('cliente_externo').insert({ fuente: 'agenda', empresa_id_externo: EMPRESA, empresa_nombre_externo: 'DD E2E APROBACION', nit: NIT, cliente_id: cliRow?.id ?? null, activo: true, creado_por: 'e2e' });
@@ -234,6 +274,50 @@ const PNG = 'data:image/png;base64,' + Buffer.from('x'.repeat(400)).toString('ba
   if (d2.ok) await DB.anularDetalle(d2.detalle.id, 'e2e', 'e2e@test');
   const a9 = await DL.abrirLinkPublico(token4);
   ok(a9.estado === 'invalido', 'detalle anulado → su link es inválido');
+  // ── 031 · aperturas del link: quién lo abrió, cuántas veces, desde qué red ──
+  const TK = await import('../src/lib/detalle-link/token');
+  const ipGolden = '198.51.100.10', ipCliA = '203.0.113.21', ipCliB = '203.0.113.99';
+  const totalAp = async () => (await sb.from('detalle_facturacion_link_apertura').select('id', { count: 'exact', head: true })).count ?? 0;
+  const d4 = await DB.crearDetalle({ componenteIds: [ids[5]], titulo: 'Aperturas 031' }, 'e2e@test');
+  const D4 = d4.ok ? d4.detalle.id : '';
+  const e5 = d4.ok ? await DL.emitirLinkDetalle(D4, actor, { destinatarios: ['cobros@dd-e2e.example'], baseUrl: 'http://localhost:3012', ip: ipGolden }) : null;
+  const token5 = e5?.ok ? e5.url.split('#')[1] : '';
+  const { data: lk5 } = await sb.from('detalle_facturacion_link').select('id, creador_ip_hash').eq('token_hash', sha(token5)).maybeSingle();
+  ok(!!e5?.ok && !!lk5 && lk5.creador_ip_hash === TK.hashIp(ipGolden) && String(lk5.creador_ip_hash).length === 16 && e5.link.creadorIpHash === lk5.creador_ip_hash && TK.hashIp('desconocida') === null && TK.hashIp('') === null, `031: emitir guarda creador_ip_hash = sha256(ip + secreto) truncado a 16 (nunca la IP; una IP desconocida no se hashea)${e5 && !e5.ok ? ' · ' + e5.error : ''}`);
+  // 1) quien envió lo abre (su red) · 2) cliente A escritorio, tres recargas · 3) cliente A móvil · 4) cliente B escritorio
+  const t0 = await totalAp();
+  await DL.abrirLinkPublico(token5, { ip: ipGolden, userAgent: uaChromeMac });
+  for (let i = 0; i < 3; i++) await DL.abrirLinkPublico(token5, { ip: ipCliA, userAgent: uaEdgeWin });
+  await DL.abrirLinkPublico(token5, { ip: ipCliA, userAgent: uaIphone });
+  const a10 = await DL.abrirLinkPublico(token5, { ip: ipCliB, userAgent: uaChromeMac });
+  const { data: filas } = await sb.from('detalle_facturacion_link_apertura').select('*').eq('detalle_id', D4).order('abierto_en');
+  const { data: lk5b } = await sb.from('detalle_facturacion_link').select('usado_en, abierto_en').eq('token_hash', sha(token5)).single();
+  const d4b = await DB.getDetalleBasico(D4);
+  ok(a10.estado === 'vigente' && (filas ?? []).length === 4 && (await totalAp()) === t0 + 4 && filas!.filter(f => f.ip_hash === TK.hashIp(ipCliA) && f.dispositivo === 'escritorio').length === 1 && filas!.every(f => !/203\.0|198\.51|Mozilla/.test(JSON.stringify(f)) && f.version === 1) && filas!.map(f => f.navegador).sort().join() === 'Chrome,Chrome,Edge,Safari', `031: 6 aperturas → ${(filas ?? []).length} filas (las 3 recargas del mismo ip_hash + dispositivo en 10 min son una); sin IP ni user agent en la tabla; dispositivo y navegador cortos`);
+  ok(!lk5b!.usado_en && !!lk5b!.abierto_en && d4b!.estado === 'enviada', '031: abrir no consume el link ni cambia el estado; abierto_en del link sigue siendo la primera apertura');
+  const det4 = await DB.getDetalle(D4);
+  const res4 = det4 ? AP.resumenAperturas(det4.aperturas, det4.link!.creadorIpHash) : null;
+  ok(!!res4 && res4.n === 3 && res4.propias === 1 && res4.dispositivos === 3 && det4!.aperturas.length === 4 && det4!.links.length === 1 && det4!.aperturas.filter(a => AP.marcaRed(a, det4!.aperturas, det4!.link!.creadorIpHash) === 'creador').length === 1, '031: en el detalle cuentan 3 aperturas (la de la red de quien envió se marca «probablemente Golden» y no cuenta), 3 dispositivos');
+  const lista4 = await DB.resumenAperturasPorDetalle([D4, D1, 'no-existe']);
+  ok(lista4[D4]?.n === 3 && lista4[D4]?.propias === 1 && AP.badgeVisto(lista4[D4], d4b!.enviadaEn, fmtAp).texto === 'Visto', '031: resumen para la lista de Por facturar (último link por detalle) → «Visto» con 3 aperturas');
+  // link inválido / revocado → no registra
+  const t1 = await totalAp();
+  const aX = await DL.abrirLinkPublico('Z'.repeat(43), { ip: ipCliB, userAgent: uaChromeMac });
+  const rv5 = await DL.revocarLinkDetalle(D4, 'e2e@test', 'prueba 031');
+  const a11 = await DL.abrirLinkPublico(token5, { ip: ipCliB, userAgent: uaIphone });
+  ok(aX.estado === 'invalido' && rv5.ok && a11.estado === 'nueva_version' && (await totalAp()) === t1, '031: un link inválido o revocado no registra apertura');
+  // respondio: abrir y responder desde la misma red + dispositivo → la apertura previa queda marcada; después de responder, abrir sigue registrando
+  const e6 = await DL.emitirLinkDetalle(D4, actor, { destinatarios: [], baseUrl: 'http://localhost:3012', ip: ipGolden });
+  const token6 = e6.ok ? e6.url.split('#')[1] : '';
+  const a12 = await DL.abrirLinkPublico(token6, { ip: ipCliB, userAgent: uaAndroid });
+  const r9 = a12.estado === 'vigente' ? await DL.responderLinkPublico({ token: token6, respuestas: a12.detalle.lineas.map(l => ({ ref: l.ref, decision: 'aprobado' as const, nota: '' })), firma }, { ip: ipCliB, userAgent: uaAndroid }) : null;
+  const a13 = await DL.abrirLinkPublico(token6, { ip: ipCliA, userAgent: uaOutlook });
+  const { data: filas6 } = await sb.from('detalle_facturacion_link_apertura').select('dispositivo, navegador, respondio, ip_hash').eq('link_id', e6.ok ? e6.link.id : '').order('abierto_en');
+  ok(!!r9 && r9.ok && r9.estado === 'aprobada' && a13.estado === 'respondido' && (filas6 ?? []).length === 2 && filas6![0].respondio === true && filas6![0].dispositivo === 'movil' && filas6![0].navegador === 'Chrome' && filas6![1].respondio === false && filas6![1].navegador === 'Outlook', '031: la apertura previa a responder queda `respondio`; un link respondido sigue registrando aperturas (Outlook, otra red)');
+  await DB.anularDetalle(D4, 'e2e 031', 'e2e@test');
+  const nAp = async () => (await sb.from('detalle_facturacion_link_apertura').select('id', { count: 'exact', head: true }).eq('detalle_id', D4)).count ?? 0;
+  ok((await nAp()) === 6, '031: anular el detalle conserva sus aperturas (histórico: 4 del link 1 + 2 del link 2); se van en cascada solo con el detalle');
+
   // rate limit
   const claveRl = `responder:token:e2e-rl-${Date.now().toString(36)}`;   // clave única por corrida (la ventana es de un minuto)
   let permitidos = 0; for (let i = 0; i < 7; i++) if (await DL.dentroDelLimite(claveRl, 5, 60)) permitidos++;
@@ -246,8 +330,11 @@ const PNG = 'data:image/png;base64,' + Buffer.from('x'.repeat(400)).toString('ba
     const { data: dA, error: eA } = await pub.rpc('detalle_link_abrir', { p_token_hash: sha(token2) });
     const { error: eB } = await pub.rpc('detalle_link_responder', { p_token_hash: sha(token2), p_respuestas: [] });
     ok(!dA && /permission denied|42501/i.test(`${eA?.code} ${eA?.message}`) && /permission denied|42501/i.test(`${eB?.code} ${eB?.message}`), `con la llave anon las RPC del link fallan por permiso (${eA?.code})`);
+    const { data: dC, error: eC } = await pub.from('detalle_facturacion_link_apertura').select('id').limit(1);
+    const { error: eD } = await pub.rpc('detalle_link_abrir', { p_token_hash: sha(token2), p_ip_hash: null, p_dispositivo: null, p_navegador: null });
+    ok(!dC?.length && /permission denied|42501/i.test(`${eC?.code} ${eC?.message}`) && /permission denied|42501/i.test(`${eD?.code} ${eD?.message}`), `031: con la llave anon ni la tabla de aperturas ni la RPC de abrir (4 argumentos) responden (${eC?.code} / ${eD?.code})`);
   } else console.log('  ⚪ SUPABASE_ANON_KEY no está en el entorno: prueba con la llave pública omitida (verificada con has_function_privilege en SQL)');
-  if (!CONSERVAR) ok((await limpiar()) === 0, 'limpieza verificada: 0 expedientes ddE2E; detalles, links, respuestas, envíos, mapeo y cliente borrados');
+  if (!CONSERVAR) ok((await limpiar()) === 0 && (await nAp()) === 0, 'limpieza verificada: 0 expedientes ddE2E y 0 detalles del NIT de prueba; links, respuestas, envíos, aperturas (cascada), mapeo y cliente borrados');
   else {
     // para el E2E en Chrome: un detalle nuevo en borrador con las 5 pruebas libres (la diferida incluida: "Solo cobrable" la esconde pero el detalle la admite)
     const { data: dets } = await sb.from('detalle_facturacion').select('id, estado').eq('nit', NIT);

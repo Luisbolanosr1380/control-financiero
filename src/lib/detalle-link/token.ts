@@ -23,4 +23,14 @@ export function refDeLinea(tokenHash: string, componenteId: string, secreto: str
   return createHmac('sha256', secreto).update(`${tokenHash}|${componenteId}`, 'utf8').digest().subarray(0, 16).toString('base64url');
 }
 
+/**
+ * 031: hash de la red de una petición: sha256(ip + DETALLE_LINK_SECRET) truncado a 16. Distingue «otra red» sin guardar
+ * la IP. Una IP desconocida (sin x-forwarded-for) no se hashea: null, para no agrupar desconocidos como «misma red».
+ */
+export function hashIp(ip: string | null | undefined, secreto: string = secretoLink()): string | null {
+  const v = String(ip ?? '').trim();
+  if (!v || v === 'desconocida' || secreto.length < 16) return null;
+  return createHash('sha256').update(`${v}|${secreto}`, 'utf8').digest('hex').slice(0, 16);
+}
+
 export const igualSeguro = (a: string, b: string): boolean => a.length === b.length && timingSafeEqual(Buffer.from(a), Buffer.from(b));

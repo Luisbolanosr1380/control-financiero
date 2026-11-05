@@ -12,7 +12,8 @@ import { rpc } from '@/lib/supabase/writes';
 import { empresaConfig } from '@/lib/config/empresa';
 import { precioConIva } from '@/lib/tarifario/canon';
 import { ordenLineas } from '@/lib/facturacion-agenda/detalle';
-import { generarToken, hashToken, linkConfigurado, refDeLinea, tokenValido } from '@/lib/detalle-link/token';
+import { generarToken, hashIp, hashToken, linkConfigurado, refDeLinea, tokenValido } from '@/lib/detalle-link/token';
+import { clasificarUserAgent } from '@/lib/detalle-link/aperturas';
 import { hashDocumento, type DocumentoFirmable } from '@/lib/detalle-link/documento';
 import { correoAviso, correoEnvio, textoCopiarLink } from '@/lib/detalle-link/correo';
 import { configCorreo, correosValidos, enviarCorreo } from '@/lib/correo/resend';
@@ -48,7 +49,7 @@ export type EmitirLinkResult =
  * si venía con observaciones), deja el detalle en `enviada`, manda el correo (o devuelve el texto para copiar) y
  * registra el envío en la bitácora. El token en claro solo vuelve en `url` para el correo / copiar.
  */
-export async function emitirLinkDetalle(id: string, actor: { email: string; nombre: string }, input: { destinatarios: string[]; cc?: string[]; asunto?: string; mensaje?: string; baseUrl: string; dias?: number }): Promise<EmitirLinkResult> {
+export async function emitirLinkDetalle(id: string, actor: { email: string; nombre: string }, input: { destinatarios: string[]; cc?: string[]; asunto?: string; mensaje?: string; baseUrl: string; dias?: number; /** 031: IP de quien envía (x-forwarded-for); se guarda solo su hash para no contar sus propias aperturas */ ip?: string | null }): Promise<EmitirLinkResult> {
   if (!linkConfigurado()) return { ok: false, error: 'Falta configurar DETALLE_LINK_SECRET en este deploy: sin eso no se emiten links de aprobación.' };
   const datos = await getDetalle(id); if (!datos) return { ok: false, error: 'El detalle no existe.' };
   const d = datos.detalle;
@@ -60,14 +61,15 @@ export async function emitirLinkDetalle(id: string, actor: { email: string; nomb
   const token = generarToken();
   let r: { detalle: Record<string, unknown>; link: Record<string, unknown> };
   try {
-    r = await rpc<{ detalle: Record<string, unknown>; link: Record<string, unknown> }>('detalle_link_emitir', { p_actor: actor.email, p_detalle_id: id, p_token_hash: hashToken(token), p_documento_hash: huella, p_destinatarios: destinatarios, p_dias: input.dias ?? 30 });
+    // 031: los 7 argumentos con nombre resuelven a la versión nueva (la de 6 queda como envoltorio en la 031)
+    r = await rpc<{ detalle: Record<string, unknown>; link: Record<string, unknown> }>('detalle_link_emitir', { p_actor: actor.email, p_detalle_id: id, p_token_hash: hashToken(token), p_documento_hash: huella, p_destinatarios: destinatarios, p_dias: input.dias ?? 30, p_creador_ip_hash: hashIp(input.ip) });
   } catch (e) {
     const m = e instanceof Error ? e.message : String(e);
-    return { ok: false, error: /DETALLE_VACIO/.test(m) ? 'El detalle no tiene pruebas.' : /DETALLE_NO_ENVIABLE/.test(m) ? 'Solo se envía un detalle en borrador, enviado o con observaciones.' : /does not exist|Could not find/i.test(m) ? 'Falta aplicar la migración 029 en esta base.' : m.replace(/^detalle_link_emitir: /, '') };
+    return { ok: false, error: /DETALLE_VACIO/.test(m) ? 'El detalle no tiene pruebas.' : /DETALLE_NO_ENVIABLE/.test(m) ? 'Solo se envía un detalle en borrador, enviado o con observaciones.' : /does not exist|Could not find/i.test(m) ? 'Falta aplicar la migración 031 en esta base.' : m.replace(/^detalle_link_emitir: /, '') };
   }
   const detalle = (await getDetalleBasico(id))!;
   const lk = r.link;
-  const link: LinkDetalle = { id: String(lk.id), version: Number(lk.version), creadoEn: String(lk.creado_en), expiraEn: String(lk.expira_en), revocadoEn: null, abiertoEn: null, usadoEn: null, vigente: true };
+  const link: LinkDetalle = { id: String(lk.id), version: Number(lk.version), creadoEn: String(lk.creado_en), expiraEn: String(lk.expira_en), revocadoEn: null, abiertoEn: null, usadoEn: null, vigente: true, creadorIpHash: (lk.creador_ip_hash as string | null) ?? null };
   const url = urlLink(input.baseUrl, token);
   const emp = empresaConfig();
   const textoCopiar = textoCopiarLink({ correlativo: d.correlativo, cliente: datos.clienteNombre, emisor: emp.nombre, titulo: d.titulo, pruebas: datos.documento.incluidas.length, total: datos.documento.total, link: url, expiraEn: link.expiraEn, version });
@@ -123,12 +125,21 @@ interface AperturaRpc { estado: 'invalido' | 'nueva_version' | 'vigente' | 'resp
 const dim = (v: string | null | undefined) => (!v || v === 'UNICA' ? '' : v);
 const n2 = (v: number | string | null | undefined) => Math.round(Number(v ?? 0) * 100) / 100;
 
-/** Abre un link por su token: valida en la base, recalcula la huella y arma el DTO público (sin nada interno). */
-export async function abrirLinkPublico(token: string): Promise<AperturaPublica & { detalleId?: string; mapaRefs?: Map<string, string>; huella?: string }> {
+/** 031: lo que se registra de la petición al abrir: red (solo su hash) y dispositivo / navegador (nunca el user agent completo). */
+export interface MetaPeticion { ip: string; userAgent: string }
+
+/**
+ * Abre un link por su token: valida en la base, recalcula la huella y arma el DTO público (sin nada interno).
+ * 031: registra la apertura (vigente o respondido) con ip_hash + dispositivo + navegador; la base junta las recargas
+ * del mismo ip_hash + dispositivo dentro de 10 minutos. Nunca consume el link ni cambia el estado.
+ */
+export async function abrirLinkPublico(token: string, meta?: MetaPeticion | null): Promise<AperturaPublica & { detalleId?: string; mapaRefs?: Map<string, string>; huella?: string }> {
   if (!tokenValido(token) || !linkConfigurado()) return { estado: 'invalido' };
   const th = hashToken(token);
   const sb = supabase(); if (!sb) return { estado: 'invalido' };
-  const { data, error } = await sb.rpc('detalle_link_abrir', { p_token_hash: th });
+  const ua = clasificarUserAgent(meta?.userAgent);
+  // los 4 argumentos con nombre resuelven a la versión de la 031 (la de la 029 queda como envoltorio)
+  const { data, error } = await sb.rpc('detalle_link_abrir', { p_token_hash: th, p_ip_hash: hashIp(meta?.ip), p_dispositivo: meta ? ua.dispositivo : null, p_navegador: meta ? ua.navegador : null });
   if (error || !data) { if (error) console.error('detalle_link_abrir:', error.code ?? error.message.slice(0, 80)); return { estado: 'invalido' }; }
   const a = data as AperturaRpc;
   if (a.estado === 'invalido' || a.estado === 'nueva_version' || !a.contenido || !a.huella) return { estado: a.estado === 'nueva_version' ? 'nueva_version' : 'invalido' };
@@ -163,8 +174,8 @@ export async function abrirLinkPublico(token: string): Promise<AperturaPublica &
 export type ResponderResult = { ok: true; estado: 'aprobada' | 'con_observaciones'; observaciones: number; detalleId: string; version: number } | { ok: false; error: string };
 
 /** Responde un link: refs → componentes desde la base, y la RPC valida todo (una transacción). Errores genéricos. */
-export async function responderLinkPublico(envio: EnvioCliente, meta: { ip: string; userAgent: string }): Promise<ResponderResult> {
-  const apertura = await abrirLinkPublico(envio.token);
+export async function responderLinkPublico(envio: EnvioCliente, meta: MetaPeticion): Promise<ResponderResult> {
+  const apertura = await abrirLinkPublico(envio.token, meta);
   if (apertura.estado !== 'vigente' || !apertura.mapaRefs || !apertura.huella) return { ok: false, error: apertura.estado === 'nueva_version' ? mensajePublico('LINK_NUEVA_VERSION') : apertura.estado === 'respondido' ? mensajePublico('LINK_USADO') : mensajePublico('LINK_INVALIDO') };
   const respuestas: Array<{ componente_id: string; decision: string; nota: string }> = [];
   for (const r of envio.respuestas) {
@@ -177,8 +188,20 @@ export async function responderLinkPublico(envio: EnvioCliente, meta: { ip: stri
   const { data, error } = await sb.rpc('detalle_link_responder', { p_token_hash: th, p_respuestas: respuestas, p_firma: envio.firma ? { nombre: envio.firma.nombre, cargo: envio.firma.cargo, correo: envio.firma.correo, autoriza: envio.firma.autoriza, png: envio.firma.png } : null, p_ip: meta.ip, p_user_agent: meta.userAgent, p_documento_hash: apertura.huella });
   if (error) { console.error('detalle_link_responder:', (error.message ?? '').replace(/^.*?([A-Z_]{6,}).*$/s, '$1').slice(0, 40)); return { ok: false, error: mensajePublico(error.message ?? '') }; }
   const r = data as { estado: 'aprobada' | 'con_observaciones'; observaciones: number; version: number };
-  const { data: lk } = await sb.from('detalle_facturacion_link').select('detalle_id').eq('token_hash', th).maybeSingle();
+  const { data: lk } = await sb.from('detalle_facturacion_link').select('id, detalle_id').eq('token_hash', th).maybeSingle();
+  await marcarAperturaRespondio(String((lk as { id?: string } | null)?.id ?? ''), meta);
   return { ok: true, estado: r.estado, observaciones: Number(r.observaciones ?? 0), detalleId: String((lk as { detalle_id?: string } | null)?.detalle_id ?? ''), version: Number(r.version) };
+}
+
+/** 031: la apertura previa a responder (misma red + dispositivo, la última) queda marcada `respondio`. Informativo, fail-soft. */
+async function marcarAperturaRespondio(linkId: string, meta: MetaPeticion): Promise<void> {
+  const sb = supabase(); if (!sb || !linkId) return;
+  const ipHash = hashIp(meta.ip), { dispositivo } = clasificarUserAgent(meta.userAgent);
+  let q = sb.from('detalle_facturacion_link_apertura').select('id').eq('link_id', linkId).eq('dispositivo', dispositivo).order('abierto_en', { ascending: false }).limit(1);
+  q = ipHash ? q.eq('ip_hash', ipHash) : q.is('ip_hash', null);
+  const { data } = await q.maybeSingle();
+  const id = (data as { id?: string } | null)?.id;
+  if (id) await sb.from('detalle_facturacion_link_apertura').update({ respondio: true }).eq('id', id);
 }
 
 /** Aviso de vuelta: para = casilla principal (FACTURACION_AVISO_CORREO) + quien envió el detalle; cc = FACTURACION_AVISO_CC. Fail-soft. */

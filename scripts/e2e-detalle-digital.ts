@@ -10,6 +10,8 @@
  *  4. Cliente (sin sesión, 390 px): link v2 con "Versión 2 · corregida" y las respuestas de Golden, "Aprobar todo", firma
  *     con el mouse en el canvas, confirma → "Detalle aprobado y firmado".
  *  5. Finanzas: detalle aprobado por link con firma y huella; imprimible con la firma digital y las casillas marcadas.
+ *  031: cada contexto manda su propio x-forwarded-for (Finanzas 198.51.100.10, cliente 203.0.113.77): la apertura de quien
+ *     envió sale «desde la red de quien envió» y no cuenta; la del cliente → «Abierto 1 vez» en el detalle y «Visto» en la lista.
  *  Capturas en --out. Usuario descartable de Clerk (contador).
  *
  * Uso: npx tsx scripts/e2e-detalle-digital.ts --env hit --base http://localhost:3012 --out /ruta/capturas
@@ -34,6 +36,7 @@ let pass = 0, fail = 0;
 const ok = (c: boolean, m: string) => { if (c) { pass++; console.log(`  🟢 ${m}`); } else { fail++; console.log(`  🔴 ${m}`); } };
 const SLUG = (process.env.EMPRESA_SLUG || 'golden').toLowerCase();
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+const UA_MOVIL = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1';   // 031: el cliente abre desde un teléfono
 
 (async () => {
   const { chromium } = await import('playwright-core');
@@ -42,8 +45,11 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHT
   const STAMP = Date.now().toString(36);
   let userId: string | null = null;
   fs.mkdirSync(OUT, { recursive: true });
+  const IP_FIN = '198.51.100.10', IP_CLI = '203.0.113.77';   // 031: dos «redes» (el servidor lee x-forwarded-for)
   const ctxFin = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-dd-fin-')), { executablePath: CHROME, headless: true, args: [`--user-agent=${UA}`], viewport: { width: 1280, height: 900 }, userAgent: UA, locale: 'es-GT' });
-  const ctxCli = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-dd-cli-')), { executablePath: CHROME, headless: true, args: [`--user-agent=${UA}`], viewport: { width: 390, height: 844 }, userAgent: UA, locale: 'es-GT', isMobile: true, hasTouch: true });
+  const ctxCli = await chromium.launchPersistentContext(fs.mkdtempSync(path.join(os.tmpdir(), 'e2e-dd-cli-')), { executablePath: CHROME, headless: true, args: [`--user-agent=${UA_MOVIL}`], viewport: { width: 390, height: 844 }, userAgent: UA_MOVIL, locale: 'es-GT', isMobile: true, hasTouch: true });
+  // el x-forwarded-for solo en las peticiones a la app (en la red, no en el fetch del navegador: un header extra hacia Clerk dispararía un preflight CORS que lo rompe)
+  for (const [ctx, ip] of [[ctxFin, IP_FIN], [ctxCli, IP_CLI]] as const) await ctx.route(u => u.href.startsWith(BASE), r => r.continue({ headers: { ...r.request().headers(), 'x-forwarded-for': ip } }));
   console.log(`\nE2E detalle digital · ${ENV.toUpperCase()} · ${BASE}`);
   try {
     const u = await clerk.users.createUser({ emailAddress: [`e2e.digital+${STAMP}@example.com`], password: `E2e-${STAMP}-${Math.random().toString(36).slice(2)}!Aa9`, firstName: 'E2E', lastName: 'Digital', skipPasswordChecks: true, publicMetadata: { accesos: [{ empresa_slug: SLUG, rol: 'contador' }] } });
@@ -86,6 +92,17 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHT
     await fin.waitForSelector('[data-link-cliente]');
     const est1 = await fin.evaluate(() => ({ estado: document.querySelector('[data-estado]')?.getAttribute('data-estado'), link: (document.querySelector('[data-link-cliente]')?.textContent ?? '').replace(/\s+/g, ' ') }));
     ok(est1.estado === 'enviada' && /vigente hasta/.test(est1.link) && /sin abrir/.test(est1.link), `Finanzas: estado enviada, link vigente, sin abrir`);
+    // 031: quien envió abre su propio link (misma red) → se marca y NO cuenta
+    const ap0 = await fin.evaluate(() => ({ n: document.querySelector('[data-aperturas]')?.getAttribute('data-aperturas'), texto: document.querySelector('[data-aperturas]')?.textContent ?? '' }));
+    const finLink = await ctxFin.newPage();
+    await finLink.goto(link1); await finLink.waitForSelector('[data-aprobar-detalle][data-fase="vigente"]'); await finLink.close();
+    await fin.reload(); await fin.waitForSelector('[data-aperturas]');
+    const ap1 = await fin.evaluate(() => ({ n: document.querySelector('[data-aperturas]')?.getAttribute('data-aperturas'), propias: document.querySelector('[data-aperturas]')?.getAttribute('data-aperturas-propias'), texto: (document.querySelector('[data-aperturas]')?.textContent ?? '').replace(/\s+/g, ' ') }));
+    ok(ap0.n === '0' && /^Sin abrir/.test(ap0.texto) && ap1.n === '0' && ap1.propias === '1' && /Sin abrir \(1 apertura desde la red de quien envió\)/.test(ap1.texto), `031: antes "Sin abrir"; quien envió abre el link desde su red → sigue "Sin abrir (1 apertura desde la red de quien envió)" (no cuenta)`);
+    await fin.goto(`${BASE}/por-facturar`); await fin.click('[data-tab="detalles"]'); await fin.waitForSelector('[data-lista="detalles"] tbody tr[data-detalle]');
+    const vistoDe = (id: string) => fin.evaluate((id) => [...document.querySelectorAll('[data-lista="detalles"] tbody tr[data-detalle]')].find(t => t.querySelector(`a[href$="/${id}"]`))?.querySelector('[data-visto]')?.getAttribute('data-visto') ?? null, id);
+    const visto0 = await vistoDe(idDetalle);
+    ok(visto0 === 'no', '031 lista: el detalle enviado sale "Sin abrir"');
 
     // ── 2. Cliente sin sesión: observaciones ──
     const cli = ctxCli.pages()[0] ?? await ctxCli.newPage();
@@ -99,10 +116,18 @@ const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHT
       clerk: !!(window as unknown as { Clerk?: unknown }).Clerk, scripts: [...document.scripts].map(s => s.src).filter(s => s && !s.startsWith(location.origin)), html: document.documentElement.outerHTML,
       ancho: document.documentElement.scrollWidth, vp: window.innerWidth,
     }));
-    ok(pub1.lineas === 6 && !pub1.hash && !pub1.hayNav && !pub1.clerk && pub1.scripts.length === 0, `cliente sin sesión: la página abre con ${pub1.lineas} líneas, sin el shell de la app, sin Clerk ni scripts externos; el token se quitó de la barra (${pub1.url})`);
+    ok(pub1.lineas === 6 && /^#[A-Za-z0-9_-]{43}$/.test(pub1.hash) && !pub1.hayNav && !pub1.clerk && pub1.scripts.length === 0, `cliente sin sesión: la página abre con ${pub1.lineas} líneas, sin el shell de la app, sin Clerk ni scripts externos; el token se queda en el fragmento (#), que el navegador nunca manda al servidor (PR #47: recargar no lo pierde)`);
     ok(!pub1.html.includes(NIT) && !/componente_id|nit_resuelto|centro_costo|estado_tarifa/.test(pub1.html), 'nada interno a la vista: ni NIT, ni ids, ni centro de costo');
     ok(pub1.ancho <= pub1.vp + 1, `390 px: sin desplazamiento horizontal (${pub1.ancho} ≤ ${pub1.vp})`);
     await cli.screenshot({ path: path.join(OUT, 'cliente-link-390.png'), fullPage: true });
+    // 031: la apertura del cliente (otra red) cuenta: «Visto» en la lista y «Abierto 1 vez» en el detalle, con la lista de aperturas
+    await fin.goto(`${BASE}/por-facturar`); await fin.click('[data-tab="detalles"]'); await fin.waitForSelector('[data-lista="detalles"] tbody tr[data-detalle]');
+    const visto1 = await vistoDe(idDetalle);
+    await fin.goto(detalleUrl); await fin.waitForSelector('[data-aperturas]');
+    await fin.click('[data-accion="ver-aperturas"]'); await fin.waitForSelector('[data-lista-aperturas]');
+    const ap2 = await fin.evaluate(() => ({ n: document.querySelector('[data-aperturas]')?.getAttribute('data-aperturas'), texto: (document.querySelector('[data-aperturas]')?.textContent ?? '').replace(/\s+/g, ' '), marcas: [...document.querySelectorAll('[data-lista-aperturas] li[data-apertura]')].map(l => `${l.getAttribute('data-marca')}:${l.getAttribute('data-dispositivo')}`), bitacora: document.querySelectorAll('[data-bitacora-fila="apertura"]').length }));
+    ok(visto1 === 'si' && ap2.n === '1' && /^Abierto 1 vez · \d{1,2}-[a-z]{3} \d{2}:\d{2}/.test(ap2.texto) && /no confirma quién lo leyó/.test(ap2.texto) && ap2.marcas.length === 2 && ap2.marcas.includes('primera:movil') && ap2.marcas.includes('creador:escritorio') && ap2.bitacora === 2, `031: lista "${visto1 === 'si' ? 'Visto' : visto1}"; detalle "${ap2.texto.slice(0, 32)}…" con 2 aperturas listadas (${ap2.marcas.join(' · ')}: el teléfono del cliente cuenta, el escritorio de quien envió no) y ${ap2.bitacora} filas de apertura en la bitácora`);
+    await fin.screenshot({ path: path.join(OUT, 'finanzas-aperturas-1280.png'), fullPage: false });
     // marcar 2 líneas: corrección y próximo mes (nota obligatoria)
     const refs = await cli.evaluate(() => [...document.querySelectorAll('[data-lineas] li[data-linea]')].map(l => l.getAttribute('data-linea')!));
     await cli.click(`li[data-linea="${refs[0]}"] input[value="correccion"]`);
