@@ -1,5 +1,7 @@
 'use client';
 
+import Link from 'next/link';
+
 import { useMemo, useState } from 'react';
 import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
@@ -168,6 +170,11 @@ export function IdentificarClient({ facturas, clientes }: Props) {
               <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--ink-4)' }} className="num">
                 rango {Q(monto - tol)} – {Q(monto + tol)}
               </span>
+            )}
+            {hasInput && (
+              <Link href={`/facturacion?monto=${encodeURIComponent(String(Math.round(monto * 100) / 100))}&estado=pendientes`} className="btn btn-secondary" style={{ padding: '5px 12px', fontSize: 12 }} title="Abre Facturación buscando este monto (±Q1) entre las pendientes, en todas las facturas" data-accion="buscar-facturas-monto">
+                <I.Search size={12} /> Buscar facturas por este monto
+              </Link>
             )}
           </div>
         </div>
