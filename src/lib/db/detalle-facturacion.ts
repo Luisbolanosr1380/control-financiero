@@ -17,6 +17,7 @@ import type { PruebaLocal } from '@/lib/facturacion-agenda/tipos';
 import { getClientes } from './clientes';
 import { getCentrosCostoActivos, type CentroCosto } from './centros';
 import type { AgendaApi } from '@/lib/facturacion-agenda/agenda-api';
+import { archivosDeDetalle, type ArchivoDetalle } from './detalle-archivo';
 
 const FUENTE = 'agenda';
 
@@ -120,6 +121,8 @@ export interface DetalleCompleto {
   clienteNombre: string; clienteAppId: string | null; centros: CentroCosto[]; empresaNombreExterno: string;
   /** 029: respuestas del cliente (todas las versiones), el último link y la bitácora de envíos; correos sugeridos del cliente. */
   respuestas: RespuestaDetalle[]; link: LinkDetalle | null; envios: EnvioDetalle[]; correosCliente: string[];
+  /** 032: el detalle firmado en papel (vigentes y anteriores, el más nuevo primero; miniaturas firmadas de 5 min para las imágenes). Sin la 032 → []. */
+  archivos: ArchivoDetalle[];
 }
 
 const rowToRespuesta = (r: Record<string, unknown>): RespuestaDetalle => ({ id: String(r.id), version: Number(r.version), componenteId: String(r.componente_id), decision: r.decision as RespuestaDetalle['decision'], nota: String(r.nota ?? ''), respuestaGolden: String(r.respuesta_golden ?? ''), createdAt: String(r.created_at ?? '') });
@@ -162,10 +165,10 @@ export async function correosDelCliente(nit: string): Promise<string[]> {
 /** El detalle con sus pruebas y expedientes, el documento imprimible (faltantes marcados) y el cliente. */
 export async function getDetalle(id: string): Promise<DetalleCompleto | null> {
   const detalle = await getDetalleBasico(id); if (!detalle) return null;
-  const [pruebas, expedientes, clientes, centros, respuestas, link, envios, correosCliente] = await Promise.all([pruebasDeDetalle(id), listarExpedientesLocal({ detalleId: id }), getClientes(), getCentrosCostoActivos(), respuestasDeDetalle(id), ultimoLinkDeDetalle(id), enviosDeDetalle(id), correosDelCliente(detalle.nit)]);
+  const [pruebas, expedientes, clientes, centros, respuestas, link, envios, correosCliente, archivos] = await Promise.all([pruebasDeDetalle(id), listarExpedientesLocal({ detalleId: id }), getClientes(), getCentrosCostoActivos(), respuestasDeDetalle(id), ultimoLinkDeDetalle(id), enviosDeDetalle(id), correosDelCliente(detalle.nit), archivosDeDetalle(id, { miniaturas: true })]);
   // Una facturada conserva detalle_id en sus pruebas (histórico); una anulada las liberó (la lista queda vacía).
   const c = clientes.find(x => x.activo !== false && nitComparable(x.nit) === detalle.nit) ?? clientes.find(x => nitComparable(x.nit) === detalle.nit);
-  return { detalle, expedientes, pruebas, documento: documentoDetalle(expedientes, pruebas), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '', respuestas, link, envios, correosCliente };
+  return { detalle, expedientes, pruebas, documento: documentoDetalle(expedientes, pruebas), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '', respuestas, link, envios, correosCliente, archivos };
 }
 
 export async function listarDetalles(f: { nit?: string; estados?: EstadoDetalle[]; limite?: number } = {}): Promise<DetalleFacturacion[]> {
@@ -207,7 +210,7 @@ export const marcarEnviada = (id: string, actor: string): Promise<DetalleResult>
 export async function marcarAprobada(id: string, input: { aprobadoPor: string; canal?: CanalAprobacion }, actor: string): Promise<DetalleResult> {
   const quien = String(input.aprobadoPor ?? '').trim().replace(/\s+/g, ' ').slice(0, 200);
   if (!quien) return { ok: false, error: 'Indicá quién aprobó el detalle del lado del cliente.' };
-  const canal: CanalAprobacion = input.canal === 'link' || input.canal === 'otro' ? input.canal : 'correo';
+  const canal: CanalAprobacion = input.canal === 'link' || input.canal === 'otro' || input.canal === 'papel' ? input.canal : 'correo';
   void actor;   // quien registra la aprobación queda en el log de la app; el detalle guarda quién aprobó del lado del cliente
   return transicion(id, 'aprobada', { aprobada_en: new Date().toISOString(), aprobado_por: quien, aprobado_canal: canal });
 }

@@ -25,7 +25,9 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
   // 029: aprobado por link → firma digital, casillas marcadas según lo que respondió el cliente
   const digital = d.aprobadoCanal === 'link' && !!d.respondidoEn && (d.estado === 'aprobada' || d.estado === 'facturada');
   const respuestas = new Map(datos.respuestas.filter(r => r.version === d.version).map(r => [r.componenteId, r] as const));
-  const paraRevisar = !facturado && d.estado !== 'anulada' && !digital;
+  // 032: con el papel firmado subido, el pie dice «Firmado en papel por …» y ya no va el bloque de firma en blanco
+  const firmadoPapel = datos.archivos.find(a => a.vigente) ?? null;
+  const paraRevisar = !facturado && d.estado !== 'anulada' && !digital && !firmadoPapel;
   const conCasillas = paraRevisar || digital;
   return (
     <main style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#111', maxWidth: 820, margin: '0 auto', padding: '32px 28px', background: '#fff' }} data-imprimible data-estado={d.estado}>
@@ -131,6 +133,12 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
               <div className="doc-mute">Las casillas reflejan lo que respondió el cliente en el link{[...respuestas.values()].some(r => r.decision !== 'aprobado') ? ` (${[...respuestas.values()].filter(r => r.decision !== 'aprobado').map(r => ETIQUETA_DECISION_DETALLE[r.decision]).join(', ')})` : ''}.</div>
             </div>
           </div>
+        </section>
+      )}
+      {firmadoPapel && (
+        <section className="doc-firma" data-firmado-papel>
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>Firmado en papel</div>
+          <div style={{ fontSize: 11, lineHeight: 1.5 }}>Firmado en papel por <strong>{firmadoPapel.firmadoPor}</strong>{firmadoPapel.firmadoCargo ? ` · ${firmadoPapel.firmadoCargo}` : ''} el {formatearFechaCorta(firmadoPapel.firmadoFecha)} · respaldo en el sistema ({datos.archivos.filter(a => a.vigente).length === 1 ? '1 archivo' : `${datos.archivos.filter(a => a.vigente).length} archivos`}{firmadoPapel.notas ? ` · ${firmadoPapel.notas}` : ''})</div>
         </section>
       )}
       {paraRevisar && (

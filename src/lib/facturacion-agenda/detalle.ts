@@ -11,7 +11,8 @@ import type { ExpedienteLocal, PruebaLocal } from './tipos';
 import { resultadoLegible } from './situacion';
 
 export type EstadoDetalle = 'borrador' | 'enviada' | 'con_observaciones' | 'aprobada' | 'facturada' | 'anulada';
-export type CanalAprobacion = 'correo' | 'link' | 'otro';
+export type CanalAprobacion = 'correo' | 'link' | 'otro' | /** 032: detalle firmado en papel (escaneo o foto) subido al detalle */ 'papel';
+export const ETIQUETA_CANAL_APROBACION: Record<CanalAprobacion, string> = { correo: 'por correo', link: 'por link', otro: 'otro canal', papel: 'firmado en papel' };
 
 export const ETIQUETA_ESTADO_DETALLE: Record<EstadoDetalle, string> = {
   borrador: 'Borrador', enviada: 'Enviada al cliente', con_observaciones: 'Con observaciones del cliente', aprobada: 'Aprobada por el cliente', facturada: 'Facturada', anulada: 'Anulada',
@@ -21,7 +22,7 @@ export const BADGE_ESTADO_DETALLE: Record<EstadoDetalle, string> = {
 };
 
 const TRANSICIONES: Record<EstadoDetalle, EstadoDetalle[]> = {
-  borrador: ['enviada', 'anulada'], enviada: ['aprobada', 'con_observaciones', 'anulada'], con_observaciones: ['enviada', 'anulada'], aprobada: ['facturada', 'anulada'], facturada: [], anulada: [],
+  borrador: ['enviada', 'anulada'], enviada: ['aprobada', 'con_observaciones', 'anulada'], con_observaciones: ['enviada', 'aprobada' /* 032: el papel firmado manda */, 'anulada'], aprobada: ['facturada', 'anulada'], facturada: [], anulada: [],
 };
 export const transicionValida = (de: EstadoDetalle, a: EstadoDetalle): boolean => TRANSICIONES[de]?.includes(a) ?? false;
 

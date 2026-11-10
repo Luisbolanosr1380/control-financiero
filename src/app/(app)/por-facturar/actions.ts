@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
 import { anularDetalle, crearDetalle, facturarDetalle, marcarAprobada, marcarEnviada, type DetalleResult, type FacturarDetalleResult, editarEncabezadoDetalle, quitarLineaDetalle, responderNotaDetalle } from '@/lib/db/detalle-facturacion';
 import { emitirLinkDetalle, revocarLinkDetalle, type EmitirLinkResult } from '@/lib/db/detalle-link';
+import { confirmarSubida, prepararSubida, quitarArchivo, type ArchivoDeclarado, type ConfirmarInput, type ConfirmarResult, type PrepararResult } from '@/lib/db/detalle-archivo';
 import { headers } from 'next/headers';
 import type { CanalAprobacion } from '@/lib/facturacion-agenda/detalle';
 import {
@@ -204,4 +205,29 @@ export async function responderNotaDetalleAction(id: string, componenteId: strin
   const r = await responderNotaDetalle(id, componenteId, respuesta, permiso.email);
   if (r.ok) revalidatePath('/por-facturar', 'layout');
   return r;
+}
+
+/** 032: paso 1 de «Subir detalle firmado»: URLs firmadas de subida al bucket privado (una por archivo). */
+export async function prepararSubidaFirmadoAction(id: string, archivos: ArchivoDeclarado[], opts: { reemplazaId?: string | null } = {}): Promise<PrepararResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  return prepararSubida(id, (archivos ?? []).slice(0, 10).map(a => ({ nombre: String(a.nombre ?? '').slice(0, 200), bytes: Number(a.bytes), mime: String(a.mime ?? '') })), opts);
+}
+
+/** 032: paso 2: valida los archivos subidos (tipo real por bytes, tamaño, sha256), los registra y, si se pidió, aprueba en papel (revoca el link). */
+export async function confirmarSubidaFirmadoAction(id: string, input: ConfirmarInput): Promise<ConfirmarResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await confirmarSubida(id, input, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
+}
+
+/** 032: quitar el archivo firmado (admin / contador, con motivo): queda como versión anterior, no se borra. */
+export async function quitarArchivoFirmadoAction(archivoId: string, motivo: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const permiso = await autorizar('gestionar_archivo_detalle');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await quitarArchivo(archivoId, motivo, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r.ok ? { ok: true } : r;
 }

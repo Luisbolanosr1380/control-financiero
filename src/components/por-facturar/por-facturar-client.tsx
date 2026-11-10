@@ -24,10 +24,10 @@ import type { ClienteSlim, VistaPorFacturar } from '@/lib/db/facturacion-agenda'
 import { BADGE_ESTADO_DETALLE, ETIQUETA_ESTADO_DETALLE, type DetalleFacturacion, type EstadoDetalle } from '@/lib/facturacion-agenda/detalle';
 import { formatearFechaCorta } from '@/lib/utils/fechas';
 
-interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; noFacturan: EmpresaNoFactura[]; clientes: ClienteSlim[]; detalles: VistaPorFacturar['detalles']; detallesLista: DetalleFacturacion[]; agregadoEnSql: boolean }
+interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; noFacturan: EmpresaNoFactura[]; clientes: ClienteSlim[]; detalles: VistaPorFacturar['detalles']; detallesLista: DetalleFacturacion[]; agregadoEnSql: boolean; /** 032: detalles con el papel firmado subido */ firmados?: string[] }
 type Pestana = 'facturables' | 'sin_mapear' | 'no_facturan' | 'detalles';
 
-export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, noFacturan, clientes, detalles, detallesLista, agregadoEnSql }: Props) {
+export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, noFacturan, clientes, detalles, detallesLista, agregadoEnSql, firmados = [] }: Props) {
   const [pestana, setPestana] = useState<Pestana>('facturables');
   const router = useRouter();
   const puede = usePuede();
@@ -125,7 +125,7 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
         <button role="tab" aria-selected={pestana === 'no_facturan'} className={'btn ' + (pestana === 'no_facturan' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setPestana('no_facturan')} data-tab="no-facturan">No se facturan <span className="cell-mute">({noFacturan.length} empresa{noFacturan.length === 1 ? '' : 's'} · {kpis.excluidosNoFactura} exp.)</span></button>
       </div>
 
-      {pestana === 'detalles' ? <DetallesLista detalles={detallesLista} /> : pestana === 'no_facturan' ? <NoFacturanLista empresas={noFacturan} puede={puedeFacturar} /> : pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} clientes={clientes} puede={puedeFacturar} /> : <>
+      {pestana === 'detalles' ? <DetallesLista detalles={detallesLista} firmados={firmados} /> : pestana === 'no_facturan' ? <NoFacturanLista empresas={noFacturan} puede={puedeFacturar} /> : pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} clientes={clientes} puede={puedeFacturar} /> : <>
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
           <input className="input" placeholder="Buscar cliente por nombre o NIT…" value={q} onChange={e => setQ(e.target.value)} style={{ minWidth: 300 }} aria-label="Buscar cliente" />
@@ -209,8 +209,9 @@ function NoFacturanLista({ empresas, puede }: { empresas: EmpresaNoFactura[]; pu
 }
 
 /** 019: tablero de detalles de facturación (pre-liquidaciones) por estado: qué espera aprobación del cliente y qué ya se puede facturar. */
-function DetallesLista({ detalles }: { detalles: DetalleFacturacion[] }) {
+function DetallesLista({ detalles, firmados }: { detalles: DetalleFacturacion[]; firmados: string[] }) {
   const router = useRouter();
+  const conFirmado = new Set(firmados);
   const [estado, setEstado] = useState<EstadoDetalle | 'vivos' | 'todos'>('vivos');
   const filas = detalles.filter(d => estado === 'todos' ? true : estado === 'vivos' ? !['facturada', 'anulada'].includes(d.estado) : d.estado === estado);
   const conObs = detalles.filter(d => d.estado === 'con_observaciones').length;
@@ -234,7 +235,7 @@ function DetallesLista({ detalles }: { detalles: DetalleFacturacion[] }) {
               <tr key={d.id} className="clickable" style={{ cursor: 'pointer' }} onClick={() => router.push(`/por-facturar/detalle/${d.id}`)} data-detalle={d.correlativo}>
                 <td><Link href={`/por-facturar/detalle/${d.id}`} onClick={ev => ev.stopPropagation()} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{d.correlativo}</Link><div className="cell-mute" style={{ fontSize: 11 }}>{formatearFechaCorta(d.createdAt)} · {d.creadoPor || '—'}</div></td>
                 <td className="num" style={{ fontSize: 12 }}>NIT {d.nit}</td>
-                <td><span className={'badge ' + BADGE_ESTADO_DETALLE[d.estado]} style={{ fontSize: 10 }} data-estado-detalle={d.estado}>{ETIQUETA_ESTADO_DETALLE[d.estado]}</span>{d.version > 1 ? <span className="cell-mute" style={{ fontSize: 11, marginLeft: 4 }}>v{d.version}</span> : null}</td>
+                <td><span className={'badge ' + BADGE_ESTADO_DETALLE[d.estado]} style={{ fontSize: 10 }} data-estado-detalle={d.estado}>{ETIQUETA_ESTADO_DETALLE[d.estado]}</span>{d.version > 1 ? <span className="cell-mute" style={{ fontSize: 11, marginLeft: 4 }}>v{d.version}</span> : null}{conFirmado.has(d.id) && <span title="Detalle firmado en papel subido (respaldo en el sistema)" aria-label="Firmado en papel" style={{ marginLeft: 6, color: 'var(--olive)', verticalAlign: 'middle' }} data-firmado="si"><I.Paperclip size={12} /></span>}</td>
                 <td className="num">{d.expedientes}</td>
                 <td className="num cell-strong">{Q(d.total)}</td>
                 <td className="cell-mute" style={{ fontSize: 12 }}>{d.enviadaEn ? formatearFechaCorta(d.enviadaEn) : '—'}</td>
