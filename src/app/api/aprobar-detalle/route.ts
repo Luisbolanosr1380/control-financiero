@@ -44,7 +44,8 @@ export async function POST(req: NextRequest) {
 
   if (accion === 'abrir') {
     if (!(await dentroDelLimite(`abrir:ip:${ip}`, 30, 60))) return responder({ error: 'Demasiados intentos. Probá de nuevo en un minuto.' }, 429);
-    const a = await abrirLinkPublico(token);
+    // 031: la apertura se registra con el hash de la red y el dispositivo / navegador (derivados acá, en el servidor)
+    const a = await abrirLinkPublico(token, { ip, userAgent: (req.headers.get('user-agent') ?? '').slice(0, 600) });
     if (a.estado === 'invalido' || a.estado === 'nueva_version') return responder({ estado: a.estado, error: a.estado === 'nueva_version' ? mensajePublico('LINK_NUEVA_VERSION') : mensajePublico('LINK_INVALIDO') });
     return responder({ estado: a.estado, detalle: a.detalle });
   }
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
     if (!(await dentroDelLimite(`responder:ip:${ip}`, 10, 60)) || !(await dentroDelLimite(`responder:token:${tokenClave}`, 5, 60))) return responder({ error: 'Demasiados intentos. Probá de nuevo en un minuto.' }, 429);
     const v = validarEnvioCliente(cuerpo);
     if (!v.ok) return responder({ error: v.error }, 400);
-    const r = await responderLinkPublico(v.envio, { ip, userAgent: (req.headers.get('user-agent') ?? '').slice(0, 300) });
+    const r = await responderLinkPublico(v.envio, { ip, userAgent: (req.headers.get('user-agent') ?? '').slice(0, 600) });
     if (!r.ok) return responder({ error: r.error }, 409);
     // aviso de vuelta a Finanzas (fail-soft, no bloquea la respuesta al cliente)
     const base = String(process.env.APP_URL ?? '').trim().replace(/\/$/, '') || new URL(req.url).origin;

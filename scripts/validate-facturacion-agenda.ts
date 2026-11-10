@@ -86,7 +86,7 @@ const FACTS = ['F-E2E-1', 'F-E2E-2', 'F-E2E-3', 'F-E2E-4', 'F-E2E-5', 'F-E2E-DUP
   const m23 = rd('supabase/migrations/023_cliente_cambiar_nit.sql');
   const sin23 = m23.replace(/--.*$/gm, '');
   ok(/create or replace function cliente_cambiar_nit\(/.test(m23) && /update cliente_externo m set nit = v_nuevo/.test(m23) && /update facturacion_expediente e set nit_resuelto = v_nuevo/.test(m23) && /update detalle_facturacion d set nit = v_nuevo/.test(m23) && (m23.match(/cliente_id is null or v_cli\.id is null or \w\.cliente_id = v_cli\.id/g) ?? []).length === 6 && /'tarifa_choque'/.test(m23) && /'nit_compartido'/.test(m23) && !/\b(drop|truncate)\b/i.test(sin23) && !/\bdelete\s+from\b/i.test(sin23) && !/^\s*(begin|commit)\s*;/im.test(sin23) && !/\b(alter|create) table\b/i.test(sin23), '023: cliente_cambiar_nit arrastra mapeo (cliente_externo.nit), expedientes (nit_resuelto) y detalles (nit) del cliente objetivo (o sin cliente_id) en la misma transacción que clientes + tarifario + bitácora; choque de llave no pisa; NIT compartido pide p_forzar; sin drop/delete/commit');
-  ok(fs.readdirSync('supabase/migrations').filter(f => /^03[1-9]_|^0[4-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 030');
+  ok(fs.readdirSync('supabase/migrations').filter(f => /^03[2-9]_|^0[4-9]\d_/.test(f)).length === 0, 'sin migraciones después de la 031');
   // ── 024 · cobro por PRUEBA ──
   const m24 = rd('supabase/migrations/024_cobro_por_prueba.sql');
   const sin24 = m24.replace(/--.*$/gm, '');
