@@ -59,6 +59,7 @@ export function ClienteDetalleClient({ analisis: a, facturas, cliente }: Props) 
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
             <h1 className="page-title" style={{ fontSize: 26 }}>{a.nombre}</h1>
             <span className={'badge ' + badge.cls} style={{ fontSize: 11.5, padding: '3px 10px' }}>{badge.text}</span>
+            <Link href={`/cobranza/${encodeURIComponent(a.custId)}`} className="btn btn-secondary" style={{ fontSize: 12 }} data-accion="ir-cobranza"><I.Phone size={12} /> Cobranza</Link>
           </div>
           <div className="page-subtitle" style={{ marginTop: 6 }}>
             Última factura {formatDate(a.ultimaFactura)} · {facturas.length} factura(s) en 12 meses

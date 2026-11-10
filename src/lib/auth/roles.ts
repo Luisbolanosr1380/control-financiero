@@ -22,7 +22,7 @@
  *     (mínimo privilegio: un admin les asigna el rol desde la pantalla).
  */
 
-export const ROLES = ['admin', 'contador', 'auxiliar', 'lectura'] as const;
+export const ROLES = ['admin', 'contador', 'auxiliar', 'lectura', 'cobranza'] as const;
 export type Rol = (typeof ROLES)[number];
 
 export const ROL_LABEL: Record<Rol, string> = {
@@ -30,6 +30,7 @@ export const ROL_LABEL: Record<Rol, string> = {
   contador: 'Contador',
   auxiliar: 'Auxiliar',
   lectura:  'Solo lectura',
+  cobranza: 'Cobranza',
 };
 
 export const ROL_DESCRIPCION: Record<Rol, string> = {
@@ -37,6 +38,7 @@ export const ROL_DESCRIPCION: Record<Rol, string> = {
   contador: 'Registra, aprueba, paga, anula, planilla, cierres, catálogos y reportes.',
   auxiliar: 'Registra facturas, cobros y gastos. No aprueba, no paga, no anula.',
   lectura:  'Solo ve reportes y dashboard. No registra ni edita nada.',
+  cobranza: 'Centro de Cobros: gestiones, promesas, contactos y condiciones de cobro. Ve clientes, facturas, cobros y Por facturar (solo lectura). No registra cobros ni factura, no ve planilla, gastos, bancos ni deudas.',
 };
 
 export type Accion =
@@ -62,11 +64,14 @@ export type Accion =
   | 'reabrir_presupuesto'
   | 'facturar_agenda'
   | 'gestionar_archivo_detalle'
+  | 'ver_cobranza'
+  | 'gestionar_cobranza'
   | 'ver_mapa_precios'
   | 'gestionar_usuarios'
   | 'configurar_empresa';
 
-const TODOS: readonly Rol[] = ['admin', 'contador', 'auxiliar', 'lectura'];
+const TODOS: readonly Rol[] = ['admin', 'contador', 'auxiliar', 'lectura', 'cobranza'];
+const COBRANZA: readonly Rol[] = ['admin', 'contador', 'cobranza'];   // CENTRO DE COBROS (033): quien cobra + control
 const REGISTRAN: readonly Rol[] = ['admin', 'contador', 'auxiliar'];
 const CONTROL: readonly Rol[] = ['admin', 'contador'];   // aprobar / pagar / anular: separación de funciones
 const SOLO_ADMIN: readonly Rol[] = ['admin'];
@@ -90,11 +95,13 @@ export const MATRIZ: Record<Accion, readonly Rol[]> = {
   ceder_factura:      REGISTRAN,   // registrar la cesión de facturas a un factoraje (tracking)
   factoraje:          CONTROL,     // crear factoraje, liberar/recomprar/pagar cesiones, contabilizar
   flujo:              CONTROL,     // ver flujo de caja proyectado (posición de caja y compromisos)
-  ver_presupuesto:    TODOS,       // ver presupuesto y comparativo (para sacar al auxiliar: REGISTRAN → CONTROL+lectura acá)
+  ver_presupuesto:    ['admin', 'contador', 'auxiliar', 'lectura'], // ver presupuesto y comparativo (cobranza no: no ve finanzas)
   presupuesto:        CONTROL,     // crear, editar celdas, precargar y aprobar el presupuesto
   reabrir_presupuesto: SOLO_ADMIN, // reabrir un presupuesto aprobado por la junta (queda en el log)
   facturar_agenda:    CONTROL,     // FACTURACIÓN AGENDA (016): facturar expedientes de evaluación, mapear sus clientes y traer de la Agenda
   gestionar_archivo_detalle: CONTROL, // DETALLE FIRMADO EN PAPEL (032): reemplazar o quitar el archivo firmado (con motivo; el anterior se conserva)
+  ver_cobranza:       COBRANZA,    // CENTRO DE COBROS (033): bandeja del día y ficha de cobranza del cliente
+  gestionar_cobranza: COBRANZA,    // registrar gestiones y promesas, contactos y condiciones de cobro, marcar «dice que ya pagó», adjuntar
   ver_mapa_precios:   SOLO_ADMIN,  // MAPA DE PRECIOS (027): precio e índice de cada cliente contra el mercado; solo el dueño
   gestionar_usuarios: SOLO_ADMIN,
   configurar_empresa: SOLO_ADMIN,
@@ -123,6 +130,8 @@ export const ACCION_LABEL: Record<Accion, string> = {
   reabrir_presupuesto: 'reabrir un presupuesto aprobado',
   facturar_agenda:    'facturar expedientes de la Agenda',
   gestionar_archivo_detalle: 'reemplazar o quitar el detalle firmado',
+  ver_cobranza:       'ver el Centro de Cobros',
+  gestionar_cobranza: 'registrar gestiones de cobro',
   ver_mapa_precios:   'ver el mapa de precios',
   gestionar_usuarios: 'gestionar usuarios',
   configurar_empresa: 'configurar la empresa',
@@ -325,4 +334,20 @@ export function decidirAcceso(args: {
     };
   }
   return { ok: true, rol };
+}
+
+/* ============================================================
+ * CENTRO DE COBROS (033): el rol cobranza entra solo a lo suyo
+ * ============================================================ */
+
+/** Prefijos de ruta que el rol `cobranza` puede abrir; cualquier otra (planilla, gastos, bancos, deudas, presupuesto, estados, admin, IA…) lo manda a /cobranza. El layout de la app lo aplica con la ruta que pone el middleware. */
+export const RUTAS_COBRANZA: readonly string[] = ['/cobranza', '/clientes', '/facturacion', '/cobros', '/por-facturar', '/tarifario', '/imprimir', '/ayuda', '/empresas', '/no-acceso', '/m'];
+const RUTAS_COBRANZA_VEDADAS: readonly string[] = ['/facturacion/nueva'];
+
+export function rutaPermitidaParaRol(rol: Rol | null | undefined, ruta: string): boolean {
+  if (rol !== 'cobranza') return true;
+  const r = (ruta || '/').split('?')[0];
+  if (r === '/') return true;
+  if (RUTAS_COBRANZA_VEDADAS.some(p => r === p || r.startsWith(p + '/'))) return false;
+  return RUTAS_COBRANZA.some(p => r === p || r.startsWith(p + '/'));
 }

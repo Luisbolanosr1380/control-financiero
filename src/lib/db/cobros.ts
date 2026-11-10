@@ -760,6 +760,8 @@ export async function registrarCobro(input: RegistrarCobroInput): Promise<Regist
     }
 
     const ok = lotesFallidos.length === 0 && estadoFallidos.length === 0;
+    // CENTRO DE COBROS (033): el cobro entra al historial del cliente y cierra las promesas que cubre (fail-soft)
+    if (ok) { try { const { registrarEventoAutomatico, cerrarPromesas } = await import('./cobranza'); await registrarEventoAutomatico({ noFactura: nf }, { tipo: 'cobro_recibido', facturas: [nf], monto: sumaComponentes, comentario: `Cobro de ${nf}: Q${sumaComponentes.toFixed(2)}${saldoNuevo > 0.005 ? ` · saldo Q${saldoNuevo.toFixed(2)}` : ' · liquidada'}`, datos: { grupoId, estadoNuevo } }); await cerrarPromesas(); } catch { /* sin historial */ } }
     return {
       ok,
       noFactura: nf,

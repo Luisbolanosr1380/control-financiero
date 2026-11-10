@@ -27,6 +27,7 @@ const ROL_BADGE: Record<Rol, { cls: string; label: string }> = {
   contador: { cls: 'badge-olive',   label: 'Contador' },
   auxiliar: { cls: 'badge-outline', label: 'Auxiliar' },
   lectura:  { cls: 'badge-mute',    label: 'Lectura' },
+  cobranza: { cls: 'badge-warn',    label: 'Cobranza' },
 };
 const SIN_ROL = { cls: 'badge-mute', label: 'Sin acceso' };
 

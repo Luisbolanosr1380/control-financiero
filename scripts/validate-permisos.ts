@@ -159,12 +159,17 @@ function archivosUseServer(dir: string): string[] {
     ['ver_mapa_precios', 'Mapa de precios (027, solo admin)', true, false, false, false],
     ['gestionar_usuarios', 'Gestionar usuarios', true, false, false, false],
     ['configurar_empresa', 'Configurar empresa', true, false, false, false],
+    ['ver_cobranza', 'Centro de Cobros (033): ver bandeja y ficha', true, true, false, false],
+    ['gestionar_cobranza', 'Centro de Cobros (033): gestiones, promesas, contactos, condiciones', true, true, false, false],
   ];
+  // CENTRO DE COBROS (033): quinta columna, el rol cobranza: ver + lo suyo; nada de finanzas
+  const COBRANZA_SI = new Set(['ver', 'ver_cobranza', 'gestionar_cobranza']);
   for (const [acc, label, ad, co, au, le] of BRIEF) {
     const m = MATRIZ[acc as keyof typeof MATRIZ];
-    const real = [m.includes('admin'), m.includes('contador'), m.includes('auxiliar'), m.includes('lectura')];
-    ok(JSON.stringify(real) === JSON.stringify([ad, co, au, le]), `${label}: ${real.map(x => (x ? '✓' : '✗')).join(' ')}`);
+    const real = [m.includes('admin'), m.includes('contador'), m.includes('auxiliar'), m.includes('lectura'), m.includes('cobranza')];
+    ok(JSON.stringify(real) === JSON.stringify([ad, co, au, le, COBRANZA_SI.has(acc as string)]), `${label}: ${real.map(x => (x ? '✓' : '✗')).join(' ')}`);
   }
+  ok((Object.keys(MATRIZ) as string[]).every(a => COBRANZA_SI.has(a) === MATRIZ[a as keyof typeof MATRIZ].includes('cobranza')), 'cobranza solo en ver, ver_cobranza y gestionar_cobranza (ninguna otra acción)');
 
   /* ───────────── C. Escenarios ───────────── */
   const legacy = {
@@ -191,6 +196,14 @@ function archivosUseServer(dir: string): string[] {
   const cont = { accesos: [{ empresa_slug: 'golden', rol: 'contador' }] };
   for (const a of ['aprobar_gasto', 'pagar', 'anular', 'planilla', 'cerrar_periodo', 'catalogos'] as const) ok(decide(cont, 'c@x.com', a, 'golden').ok, `contador/Golden puede ${a}`);
   ok(!decide(cont, 'c@x.com', 'gestionar_usuarios', 'golden').ok, 'contador NO gestiona usuarios');
+
+  console.log('\nC5. Cobranza (033): ve y gestiona lo suyo; no registra cobros, no factura, no entra a finanzas');
+  const cob = { accesos: [{ empresa_slug: 'golden', rol: 'cobranza' }] };
+  for (const a of ['ver', 'ver_cobranza', 'gestionar_cobranza'] as const) ok(decide(cob, 'cob@x.com', a, 'golden').ok, `cobranza/Golden puede ${a}`);
+  for (const a of ['registrar_cobro', 'emitir_factura', 'anular', 'conciliar', 'registrar_gasto', 'planilla', 'gestionar_deudas', 'ver_presupuesto', 'ver_mapa_precios', 'facturar_agenda', 'catalogos', 'gestionar_usuarios'] as const) ok(!decide(cob, 'cob@x.com', a, 'golden').ok, `cobranza rechazado en ${a}`);
+  ok(!decide({ accesos: [{ empresa_slug: 'golden', rol: 'auxiliar' }] }, 'a@x.com', 'ver_cobranza', 'golden').ok && !decide({ accesos: [{ empresa_slug: 'golden', rol: 'lectura' }] }, 'l@x.com', 'gestionar_cobranza', 'golden').ok && decide(cont, 'c@x.com', 'gestionar_cobranza', 'golden').ok, 'auxiliar y lectura no entran al Centro de Cobros; contador sí gestiona');
+  const { rutaPermitidaParaRol } = R;
+  ok(['/cobranza', '/cobranza/rec123', '/clientes/rec1', '/facturacion', '/facturacion/rec9', '/facturacion/pendientes', '/cobros', '/cobros/identificar', '/por-facturar/n-123', '/por-facturar/detalle/abc', '/tarifario', '/imprimir/cobranza/rec1', '/ayuda/centro-de-cobros', '/'].every(r => rutaPermitidaParaRol('cobranza', r)) && ['/planillas', '/planilla', '/conciliacion', '/gastos', '/deudas', '/presupuesto', '/estados', '/admin/precios', '/admin/usuarios', '/ai', '/dashboard', '/facturacion/nueva', '/tesoreria', '/analitica'].every(r => !rutaPermitidaParaRol('cobranza', r)) && rutaPermitidaParaRol('contador', '/planillas') && rutaPermitidaParaRol('lectura', '/admin/precios'), 'rutas del rol cobranza: entra a cobranza, clientes, facturas, cobros, por facturar y ayuda; no a planilla, bancos, gastos, deudas, presupuesto, estados, admin, IA ni a emitir facturas; los demás roles no cambian');
 
   console.log('\nC3. Admin en Golden + auxiliar en HIT');
   const mixto = { accesos: [{ empresa_slug: 'golden', rol: 'admin' }, { empresa_slug: 'hit', rol: 'auxiliar' }] };

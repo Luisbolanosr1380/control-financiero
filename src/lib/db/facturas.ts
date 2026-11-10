@@ -647,6 +647,8 @@ export async function createFactura(input: NewFacturaInput): Promise<CreateFactu
     for (let i = 1; i < input.lineas.length; i++) {
       if (input.lineas[i].total > input.lineas[maxIdx].total) maxIdx = i;
     }
+    // CENTRO DE COBROS (033): la factura emitida entra al historial del cliente (fail-soft)
+    try { const { registrarEventoAutomatico } = await import('./cobranza'); await registrarEventoAutomatico({ idApp: input.custId }, { tipo: 'factura_emitida', facturas: [nf], monto: Math.round(input.lineas.reduce((s, l) => s + l.total, 0) * 100) / 100, comentario: `Factura ${nf} emitida`, datos: { facturaId: filas[maxIdx]?.airtable_id ?? filas[0].airtable_id } }); } catch { /* sin historial */ }
     return {
       noFactura: nf,
       recordsCreados: creadas?.length ?? filas.length,
