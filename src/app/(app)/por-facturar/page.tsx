@@ -3,6 +3,7 @@ import { configAgenda } from '@/lib/facturacion-agenda/config';
 import { kpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
 import { facturacionAgendaDisponible, vistaPorFacturar, type VistaPorFacturar } from '@/lib/db/facturacion-agenda';
 import { listarDetalles, resumenAperturasPorDetalle } from '@/lib/db/detalle-facturacion';
+import { detallesConFirmado } from '@/lib/db/detalle-archivo';
 import { PorFacturarClient } from '@/components/por-facturar/por-facturar-client';
 
 export const dynamic = 'force-dynamic';
@@ -20,8 +21,10 @@ export default async function PorFacturarPage() {
   const disponible = await facturacionAgendaDisponible();
   const vista: VistaPorFacturar = disponible ? await vistaPorFacturar() : { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], clientes: [], detalles: { borrador: { n: 0, total: 0 }, enviada: { n: 0, total: 0 }, con_observaciones: { n: 0, total: 0 }, aprobada: { n: 0, total: 0 }, facturada: { n: 0, total: 0 }, anulada: { n: 0, total: 0 } }, agregadoEnSql: false };
   const detallesLista = disponible ? await listarDetalles({ limite: 300 }) : [];
+  // 032: ícono «firmado en papel» en los detalles con archivo vigente
+  const firmados = disponible ? await detallesConFirmado(detallesLista.map(d => d.id)) : [];
   // 031: Visto / Sin abrir de los enviados (aperturas del último link, sin las de la red de quien envió)
   const aperturas = disponible ? await resumenAperturasPorDetalle(detallesLista.filter(d => d.estado === 'enviada').map(d => d.id)) : {};
   const cfg = configAgenda();
-  return <PorFacturarClient detallesLista={detallesLista} aperturas={aperturas} disponible={disponible} configurada={cfg.apiKey.length > 0} writeback={cfg.writeback} grupos={vista.grupos} kpis={vista.kpis} sync={vista.sync} total={vista.total} sinMapear={vista.sinMapear} noFacturan={vista.noFacturan} clientes={vista.clientes} detalles={vista.detalles} agregadoEnSql={vista.agregadoEnSql} />;
+  return <PorFacturarClient detallesLista={detallesLista} aperturas={aperturas} firmados={firmados} disponible={disponible} configurada={cfg.apiKey.length > 0} writeback={cfg.writeback} grupos={vista.grupos} kpis={vista.kpis} sync={vista.sync} total={vista.total} sinMapear={vista.sinMapear} noFacturan={vista.noFacturan} clientes={vista.clientes} detalles={vista.detalles} agregadoEnSql={vista.agregadoEnSql} />;
 }
