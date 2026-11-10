@@ -21,6 +21,7 @@ import type { EmpresaNoFactura, SyncEstado } from '@/lib/facturacion-agenda/tipo
 import { quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
 import { SinMapearLista } from './sin-mapear-lista';
 import type { ClienteSlim, VistaPorFacturar } from '@/lib/db/facturacion-agenda';
+import { nitComparable } from '@/lib/clientes/nit';
 import { BADGE_ESTADO_DETALLE, ETIQUETA_ESTADO_DETALLE, type DetalleFacturacion, type EstadoDetalle } from '@/lib/facturacion-agenda/detalle';
 import { badgeVisto, type ResumenAperturas } from '@/lib/detalle-link/aperturas';
 import { formatearFechaCompacta } from '@/lib/utils/fechas';
@@ -127,7 +128,7 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
         <button role="tab" aria-selected={pestana === 'no_facturan'} className={'btn ' + (pestana === 'no_facturan' ? 'btn-secondary' : 'btn-ghost')} onClick={() => setPestana('no_facturan')} data-tab="no-facturan">No se facturan <span className="cell-mute">({noFacturan.length} empresa{noFacturan.length === 1 ? '' : 's'} · {kpis.excluidosNoFactura} exp.)</span></button>
       </div>
 
-      {pestana === 'detalles' ? <DetallesLista detalles={detallesLista} aperturas={aperturas} firmados={firmados} /> : pestana === 'no_facturan' ? <NoFacturanLista empresas={noFacturan} puede={puedeFacturar} /> : pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} clientes={clientes} puede={puedeFacturar} /> : <>
+      {pestana === 'detalles' ? <DetallesLista detalles={detallesLista} aperturas={aperturas} firmados={firmados} clientes={clientes} /> : pestana === 'no_facturan' ? <NoFacturanLista empresas={noFacturan} puede={puedeFacturar} /> : pestana === 'sin_mapear' ? <SinMapearLista totalEmpresas={sinMapear.empresas} totalExpedientes={sinMapear.expedientes} clientes={clientes} puede={puedeFacturar} /> : <>
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-pad" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
           <input className="input" placeholder="Buscar cliente por nombre o NIT…" value={q} onChange={e => setQ(e.target.value)} style={{ minWidth: 300 }} aria-label="Buscar cliente" />
@@ -211,7 +212,10 @@ function NoFacturanLista({ empresas, puede }: { empresas: EmpresaNoFactura[]; pu
 }
 
 /** 019: tablero de detalles de facturación (pre-liquidaciones) por estado: qué espera aprobación del cliente y qué ya se puede facturar. 031: Visto / Sin abrir en los enviados. 032: ícono de firmado en papel. */
-function DetallesLista({ detalles, aperturas, firmados }: { detalles: DetalleFacturacion[]; aperturas: Record<string, ResumenAperturas>; firmados: string[] }) {
+function DetallesLista({ detalles, aperturas, firmados, clientes }: { detalles: DetalleFacturacion[]; aperturas: Record<string, ResumenAperturas>; firmados: string[]; clientes: ClienteSlim[] }) {
+  // nombre del cliente por NIT (antes solo se veía «NIT …»)
+  const nombrePorNit = new Map<string, string>();
+  for (const c of clientes) { const k = nitComparable(c.nit); if (k && !nombrePorNit.has(k)) nombrePorNit.set(k, (c.name || c.razonSocial || '').trim()); }
   const router = useRouter();
   const conFirmado = new Set(firmados);
   const [estado, setEstado] = useState<EstadoDetalle | 'vivos' | 'todos'>('vivos');
@@ -236,7 +240,7 @@ function DetallesLista({ detalles, aperturas, firmados }: { detalles: DetalleFac
             {filas.map(d => (
               <tr key={d.id} className="clickable" style={{ cursor: 'pointer' }} onClick={() => router.push(`/por-facturar/detalle/${d.id}`)} data-detalle={d.correlativo}>
                 <td><Link href={`/por-facturar/detalle/${d.id}`} onClick={ev => ev.stopPropagation()} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{d.correlativo}</Link><div className="cell-mute" style={{ fontSize: 11 }}>{formatearFechaCorta(d.createdAt)} · {d.creadoPor || '—'}</div></td>
-                <td className="num" style={{ fontSize: 12 }}>NIT {d.nit}</td>
+                <td style={{ fontSize: 12.5 }} data-cliente-detalle><span className="cell-strong">{nombrePorNit.get(nitComparable(d.nit)) || '—'}</span>{d.titulo ? <div className="cell-mute" style={{ fontSize: 11 }}>{d.titulo}</div> : null}<div className="cell-mute num" style={{ fontSize: 11 }}>NIT {d.nit}</div></td>
                 <td><span className={'badge ' + BADGE_ESTADO_DETALLE[d.estado]} style={{ fontSize: 10 }} data-estado-detalle={d.estado}>{ETIQUETA_ESTADO_DETALLE[d.estado]}</span>{d.version > 1 ? <span className="cell-mute" style={{ fontSize: 11, marginLeft: 4 }}>v{d.version}</span> : null}{conFirmado.has(d.id) && <span title="Detalle firmado en papel subido (respaldo en el sistema)" aria-label="Firmado en papel" style={{ marginLeft: 6, color: 'var(--olive)', verticalAlign: 'middle' }} data-firmado="si"><I.Paperclip size={12} /></span>}</td>
                 <td className="num">{d.expedientes}</td>
                 <td className="num cell-strong">{Q(d.total)}</td>
