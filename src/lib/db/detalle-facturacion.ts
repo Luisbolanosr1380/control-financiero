@@ -18,6 +18,7 @@ import { getClientes } from './clientes';
 import { getCentrosCostoActivos, type CentroCosto } from './centros';
 import type { AgendaApi } from '@/lib/facturacion-agenda/agenda-api';
 import { archivosDeDetalle, type ArchivoDetalle } from './detalle-archivo';
+import { resumenAperturas, type AperturaLink, type ResumenAperturas } from '@/lib/detalle-link/aperturas';
 
 const FUENTE = 'agenda';
 
@@ -114,7 +115,7 @@ export async function getDetalleBasico(id: string): Promise<DetalleFacturacion |
   return rowToDetalle(data as Row);
 }
 
-export interface LinkDetalle { id: string; version: number; creadoEn: string; expiraEn: string; revocadoEn: string | null; abiertoEn: string | null; usadoEn: string | null; vigente: boolean }
+export interface LinkDetalle { id: string; version: number; creadoEn: string; expiraEn: string; revocadoEn: string | null; abiertoEn: string | null; usadoEn: string | null; vigente: boolean; /** 031: hash de la red de quien envió (sus aperturas no cuentan) */ creadorIpHash: string | null }
 export interface EnvioDetalle { id: string; version: number; tipo: 'envio' | 'aviso'; destinatarios: string[]; cc: string[]; asunto: string; modo: string; resultado: string; error: string; enviadoPor: string; createdAt: string }
 export interface DetalleCompleto {
   detalle: DetalleFacturacion; expedientes: ExpedienteLocal[]; /** 024: las pruebas reservadas en el detalle */ pruebas: PruebaLocal[]; documento: DocumentoDetalle;
@@ -123,10 +124,14 @@ export interface DetalleCompleto {
   respuestas: RespuestaDetalle[]; link: LinkDetalle | null; envios: EnvioDetalle[]; correosCliente: string[];
   /** 032: el detalle firmado en papel (vigentes y anteriores, el más nuevo primero; miniaturas firmadas de 5 min para las imágenes). Sin la 032 → []. */
   archivos: ArchivoDetalle[];
+  /** 031: todos los links (el más nuevo primero; `link` es el primero) y las aperturas (todas las versiones, la más nueva primero). Sin la 031 → []. */
+  links: LinkDetalle[]; aperturas: AperturaLink[];
 }
 
 const rowToRespuesta = (r: Record<string, unknown>): RespuestaDetalle => ({ id: String(r.id), version: Number(r.version), componenteId: String(r.componente_id), decision: r.decision as RespuestaDetalle['decision'], nota: String(r.nota ?? ''), respuestaGolden: String(r.respuesta_golden ?? ''), createdAt: String(r.created_at ?? '') });
-const rowToLink = (r: Record<string, unknown>): LinkDetalle => { const revocadoEn = (r.revocado_en as string | null) ?? null, usadoEn = (r.usado_en as string | null) ?? null, expiraEn = String(r.expira_en); return { id: String(r.id), version: Number(r.version), creadoEn: String(r.creado_en), expiraEn, revocadoEn, abiertoEn: (r.abierto_en as string | null) ?? null, usadoEn, vigente: !revocadoEn && !usadoEn && Date.parse(expiraEn) > Date.now() }; };
+const rowToLink = (r: Record<string, unknown>): LinkDetalle => { const revocadoEn = (r.revocado_en as string | null) ?? null, usadoEn = (r.usado_en as string | null) ?? null, expiraEn = String(r.expira_en); return { id: String(r.id), version: Number(r.version), creadoEn: String(r.creado_en), expiraEn, revocadoEn, abiertoEn: (r.abierto_en as string | null) ?? null, usadoEn, vigente: !revocadoEn && !usadoEn && Date.parse(expiraEn) > Date.now(), creadorIpHash: (r.creador_ip_hash as string | null) ?? null }; };
+const DISPOSITIVOS = new Set(['movil', 'escritorio', 'tablet', 'desconocido']);
+const rowToApertura = (r: Record<string, unknown>): AperturaLink => ({ id: String(r.id), linkId: String(r.link_id), version: Number(r.version), abiertoEn: String(r.abierto_en), dispositivo: (DISPOSITIVOS.has(String(r.dispositivo)) ? String(r.dispositivo) : 'desconocido') as AperturaLink['dispositivo'], navegador: String(r.navegador ?? 'desconocido'), ipHash: (r.ip_hash as string | null) ?? null, respondio: r.respondio === true });
 const rowToEnvio = (r: Record<string, unknown>): EnvioDetalle => ({ id: String(r.id), version: Number(r.version), tipo: (r.tipo as 'envio' | 'aviso') ?? 'envio', destinatarios: Array.isArray(r.destinatarios) ? r.destinatarios.map(String) : [], cc: Array.isArray(r.cc) ? r.cc.map(String) : [], asunto: String(r.asunto ?? ''), modo: String(r.modo ?? ''), resultado: String(r.resultado ?? ''), error: String(r.error ?? ''), enviadoPor: String(r.enviado_por ?? ''), createdAt: String(r.created_at ?? '') });
 
 /** 029: respuestas del cliente de un detalle (todas las versiones, la última primero). Sin la 029 → []. */
@@ -136,12 +141,40 @@ export async function respuestasDeDetalle(id: string): Promise<RespuestaDetalle[
   if (error) return [];
   return ((data ?? []) as Record<string, unknown>[]).map(rowToRespuesta);
 }
-/** 029: el último link emitido del detalle (sin el token: en la base solo vive su hash). */
-export async function ultimoLinkDeDetalle(id: string): Promise<LinkDetalle | null> {
-  const sb = supabase(); if (!sb) return null;
-  const { data, error } = await sb.from('detalle_facturacion_link').select('id, version, creado_en, expira_en, revocado_en, abierto_en, usado_en').eq('detalle_id', id).order('creado_en', { ascending: false }).limit(1).maybeSingle();
-  if (error || !data) return null;
-  return rowToLink(data as Record<string, unknown>);
+/** 029/031: los links emitidos del detalle, el más nuevo primero (sin el token: en la base solo vive su hash). */
+export async function linksDeDetalle(id: string): Promise<LinkDetalle[]> {
+  const sb = supabase(); if (!sb) return [];
+  // select('*'): en una base sin la 031 no existe creador_ip_hash y pedirla a mano tiraría los links enteros
+  const { data, error } = await sb.from('detalle_facturacion_link').select('*').eq('detalle_id', id).order('creado_en', { ascending: false }).limit(50);
+  if (error) return [];
+  return ((data ?? []) as Record<string, unknown>[]).map(rowToLink);
+}
+/** 029: el último link emitido del detalle. */
+export async function ultimoLinkDeDetalle(id: string): Promise<LinkDetalle | null> { return (await linksDeDetalle(id))[0] ?? null; }
+/** 031: aperturas del link del detalle (todas las versiones, la más nueva primero). Sin la 031 → []. */
+export async function aperturasDeDetalle(id: string): Promise<AperturaLink[]> {
+  const sb = supabase(); if (!sb) return [];
+  const { data, error } = await sb.from('detalle_facturacion_link_apertura').select('*').eq('detalle_id', id).order('abierto_en', { ascending: false }).limit(500);
+  if (error) return [];
+  return ((data ?? []) as Record<string, unknown>[]).map(rowToApertura);
+}
+/**
+ * 031: para la lista de Por facturar: el resumen de aperturas del ÚLTIMO link de cada detalle (las de la red de quien
+ * envió no cuentan). Dos consultas (links → aperturas), fail-soft: sin la 031 → {}.
+ */
+export async function resumenAperturasPorDetalle(detalleIds: string[]): Promise<Record<string, ResumenAperturas>> {
+  const sb = supabase(); const ids = [...new Set(detalleIds)].filter(x => /^[0-9a-f-]{36}$/i.test(x)); if (!sb || !ids.length) return {};
+  const { data: links, error } = await sb.from('detalle_facturacion_link').select('*').in('detalle_id', ids).order('creado_en', { ascending: false }).limit(2000);
+  if (error || !links?.length) return {};
+  const ultimo = new Map<string, LinkDetalle & { detalleId: string }>();
+  for (const r of links as Record<string, unknown>[]) { const d = String(r.detalle_id); if (!ultimo.has(d)) ultimo.set(d, { ...rowToLink(r), detalleId: d }); }
+  const { data: aps, error: e2 } = await sb.from('detalle_facturacion_link_apertura').select('*').in('link_id', [...ultimo.values()].map(l => l.id)).limit(5000);
+  if (e2) return {};
+  const porLink = new Map<string, AperturaLink[]>();
+  for (const r of (aps ?? []) as Record<string, unknown>[]) { const a = rowToApertura(r); porLink.set(a.linkId, [...(porLink.get(a.linkId) ?? []), a]); }
+  const out: Record<string, ResumenAperturas> = {};
+  for (const l of ultimo.values()) out[l.detalleId] = resumenAperturas(porLink.get(l.id) ?? [], l.creadorIpHash);
+  return out;
 }
 export async function enviosDeDetalle(id: string): Promise<EnvioDetalle[]> {
   const sb = supabase(); if (!sb) return [];
@@ -165,10 +198,11 @@ export async function correosDelCliente(nit: string): Promise<string[]> {
 /** El detalle con sus pruebas y expedientes, el documento imprimible (faltantes marcados) y el cliente. */
 export async function getDetalle(id: string): Promise<DetalleCompleto | null> {
   const detalle = await getDetalleBasico(id); if (!detalle) return null;
-  const [pruebas, expedientes, clientes, centros, respuestas, link, envios, correosCliente, archivos] = await Promise.all([pruebasDeDetalle(id), listarExpedientesLocal({ detalleId: id }), getClientes(), getCentrosCostoActivos(), respuestasDeDetalle(id), ultimoLinkDeDetalle(id), enviosDeDetalle(id), correosDelCliente(detalle.nit), archivosDeDetalle(id, { miniaturas: true })]);
+  const [pruebas, expedientes, clientes, centros, respuestas, links, envios, correosCliente, aperturas, archivos] = await Promise.all([pruebasDeDetalle(id), listarExpedientesLocal({ detalleId: id }), getClientes(), getCentrosCostoActivos(), respuestasDeDetalle(id), linksDeDetalle(id), enviosDeDetalle(id), correosDelCliente(detalle.nit), aperturasDeDetalle(id), archivosDeDetalle(id, { miniaturas: true })]);
+  const link = links[0] ?? null;
   // Una facturada conserva detalle_id en sus pruebas (histórico); una anulada las liberó (la lista queda vacía).
   const c = clientes.find(x => x.activo !== false && nitComparable(x.nit) === detalle.nit) ?? clientes.find(x => nitComparable(x.nit) === detalle.nit);
-  return { detalle, expedientes, pruebas, documento: documentoDetalle(expedientes, pruebas), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '', respuestas, link, envios, correosCliente, archivos };
+  return { detalle, expedientes, pruebas, documento: documentoDetalle(expedientes, pruebas), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '', respuestas, link, links, envios, correosCliente, aperturas, archivos };
 }
 
 export async function listarDetalles(f: { nit?: string; estados?: EstadoDetalle[]; limite?: number } = {}): Promise<DetalleFacturacion[]> {

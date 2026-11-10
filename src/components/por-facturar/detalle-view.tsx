@@ -15,6 +15,9 @@
  * revoca el link). El archivo va directo al bucket privado por URL firmada de subida y el servidor lo valida por sus
  * bytes. Sección «Detalle firmado» con Ver / Descargar (URL firmada de 5 min) y reemplazar / quitar con motivo
  * (admin / contador; el anterior queda como versión anterior).
+ * 031: junto a "Enviado al cliente", las aperturas del link («Abierto N veces · primera · última · dispositivos» o
+ * «Sin abrir»; las de la red de quien envió se marcan y no cuentan) con la lista desplegable; en la bitácora, las
+ * aperturas van junto a los envíos. «Abierto» ≠ «leído por el cliente» (un antivirus de correo puede abrirlo).
  */
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
@@ -23,7 +26,8 @@ import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
 import { Q } from '@/lib/utils';
-import { formatearFechaConHora } from '@/lib/utils/fechas';
+import { formatearFechaCompacta, formatearFechaConHora } from '@/lib/utils/fechas';
+import { ETIQUETA_DISPOSITIVO, ETIQUETA_MARCA_RED, marcaRed, resumenAperturas, textoAperturas, type AperturaLink } from '@/lib/detalle-link/aperturas';
 import { anularDetalleAction, editarEncabezadoDetalleAction, enviarDetalleAction, facturarDetalleAction, marcarAprobadaAction, marcarEnviadaAction, quitarLineaDetalleAction, reresolverPreciosAction, responderNotaDetalleAction, revocarLinkDetalleAction } from '@/app/(app)/por-facturar/actions';
 import { BADGE_DECISION_DETALLE, BADGE_ESTADO_DETALLE, ETIQUETA_CANAL_APROBACION, ETIQUETA_DECISION_DETALLE, ETIQUETA_ESTADO_DETALLE, primerDiaMesSiguiente, type CanalAprobacion, type RespuestaDetalle } from '@/lib/facturacion-agenda/detalle';
 import { huellaCorta } from '@/lib/detalle-link/publico';
@@ -128,7 +132,7 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
       <div className="card" style={{ marginBottom: 14 }} data-flujo>
         <div className="card-pad" style={{ display: 'flex', gap: 18, flexWrap: 'wrap', fontSize: 12.5 }}>
           <Paso hecho n={1} titulo="Generado" sub={`${formatearFechaConHora(d.createdAt)} · ${d.creadoPor || '—'}`} />
-          <Paso hecho={!!d.enviadaEn} n={2} titulo="Enviado al cliente" sub={d.enviadaEn ? `${formatearFechaConHora(d.enviadaEn)} · ${d.enviadaPor}` : 'por correo (manual)'} />
+          <Paso hecho={!!d.enviadaEn} n={2} titulo="Enviado al cliente" sub={d.enviadaEn ? `${formatearFechaConHora(d.enviadaEn)} · ${d.enviadaPor}` : 'por correo (manual)'} extra={datos.link ? <Aperturas aperturas={datos.aperturas.filter(a => a.linkId === datos.link!.id)} creadorIpHash={datos.link.creadorIpHash} version={datos.link.version} /> : null} />
           <Paso hecho={!!d.aprobadaEn} n={3} titulo="Aprobado por el cliente" sub={d.aprobadaEn ? `${formatearFechaConHora(d.aprobadaEn)} · ${d.aprobadoPor} · ${d.aprobadoCanal ? ETIQUETA_CANAL_APROBACION[d.aprobadoCanal] : '—'}` : conObs ? `con observaciones (${observaciones.length}) · versión ${d.version}` : 'pendiente'}
             extra={(puede && puedeSubirFirmadoEn(d.estado)) || firmadoPapel ? (
               <div style={{ marginTop: 4, fontSize: 11.5, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }} data-firmado-papel={firmadoPapel ? 'si' : 'no'}>
@@ -297,12 +301,15 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
       </div>
       {d.notas && <div className="card" style={{ marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}><strong>Notas:</strong> {d.notas}</div></div>}
 
-      {datos.envios.length > 0 && (
+      {(datos.envios.length > 0 || datos.aperturas.length > 0) && (
         <div className="card" style={{ marginBottom: 14 }} data-bitacora-envios>
-          <div className="card-head"><div className="card-title">Envíos</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>bitácora: fecha, a quién, versión y resultado del proveedor</span></div></div>
+          <div className="card-head"><div className="card-title">Envíos y aperturas</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>bitácora: fecha, a quién, versión y resultado del proveedor; cada apertura del link con dispositivo, navegador y red (abierto ≠ leído)</span></div></div>
           <table className="table" style={{ fontSize: 12 }}>
-            <thead><tr><th>Fecha</th><th>Tipo</th><th className="num">Versión</th><th>Destinatarios</th><th>Modo</th><th>Resultado</th><th>Por</th></tr></thead>
-            <tbody>{datos.envios.map(e => <tr key={e.id}><td className="cell-mute" style={{ whiteSpace: 'nowrap' }}>{formatearFechaConHora(e.createdAt)}</td><td>{e.tipo === 'aviso' ? 'Aviso a Finanzas' : 'Envío al cliente'}</td><td className="num">{e.version}</td><td>{e.destinatarios.join(', ') || '—'}{e.cc.length ? <span className="cell-mute"> · cc {e.cc.join(', ')}</span> : null}</td><td>{e.modo === 'resend' ? 'Resend' : e.modo === 'mock' ? 'Prueba (mock)' : 'Copiar link'}</td><td><span className={'badge ' + (e.resultado === 'enviado' ? 'badge-olive' : e.resultado === 'error' ? 'badge-wine' : 'badge-mute')} style={{ fontSize: 10 }} title={e.error || undefined}>{e.resultado === 'enviado' ? 'enviado' : e.resultado === 'error' ? 'error' : 'sin correo'}</span></td><td className="cell-mute">{e.enviadoPor}</td></tr>)}</tbody>
+            <thead><tr><th>Fecha</th><th>Tipo</th><th className="num">Versión</th><th>Destinatarios / dispositivo</th><th>Modo / red</th><th>Resultado</th><th>Por</th></tr></thead>
+            <tbody>{[
+              ...datos.envios.map(e => ({ fecha: e.createdAt, fila: <tr key={'e' + e.id} data-bitacora-fila="envio"><td className="cell-mute" style={{ whiteSpace: 'nowrap' }}>{formatearFechaConHora(e.createdAt)}</td><td>{e.tipo === 'aviso' ? 'Aviso a Finanzas' : 'Envío al cliente'}</td><td className="num">{e.version}</td><td>{e.destinatarios.join(', ') || '—'}{e.cc.length ? <span className="cell-mute"> · cc {e.cc.join(', ')}</span> : null}</td><td>{e.modo === 'resend' ? 'Resend' : e.modo === 'mock' ? 'Prueba (mock)' : 'Copiar link'}</td><td><span className={'badge ' + (e.resultado === 'enviado' ? 'badge-olive' : e.resultado === 'error' ? 'badge-wine' : 'badge-mute')} style={{ fontSize: 10 }} title={e.error || undefined}>{e.resultado === 'enviado' ? 'enviado' : e.resultado === 'error' ? 'error' : 'sin correo'}</span></td><td className="cell-mute">{e.enviadoPor}</td></tr> })),
+              ...datos.aperturas.map(a => { const lk = datos.links.find(l => l.id === a.linkId); const marca = marcaRed(a, datos.aperturas.filter(x => x.linkId === a.linkId), lk?.creadorIpHash); return { fecha: a.abiertoEn, fila: <tr key={'a' + a.id} data-bitacora-fila="apertura" data-marca={marca}><td className="cell-mute" style={{ whiteSpace: 'nowrap' }}>{formatearFechaConHora(a.abiertoEn)}</td><td>Apertura del link</td><td className="num">{a.version}</td><td>{ETIQUETA_DISPOSITIVO[a.dispositivo]} · {a.navegador}</td><td className={marca === 'creador' ? 'cell-mute' : undefined}>{ETIQUETA_MARCA_RED[marca]}</td><td><span className={'badge ' + (a.respondio ? 'badge-olive' : 'badge-mute')} style={{ fontSize: 10 }} title="Alguien abrió el link (puede ser un antivirus del correo); no confirma quién lo leyó">{a.respondio ? 'abierto · respondió' : 'abierto'}</span></td><td className="cell-mute">—</td></tr> }; }),
+            ].sort((x, y) => Date.parse(y.fecha) - Date.parse(x.fecha)).map(f => f.fila)}</tbody>
           </table>
         </div>
       )}
@@ -491,6 +498,31 @@ function SubirFirmadoDialogo({ datos, reemplazaId, busy, setBusy, onClose, onLis
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+const AYUDA_ABIERTO = 'Abierto = alguien abrió el link (puede ser un antivirus del correo); no confirma quién lo leyó.';
+
+/** 031: «Abierto N veces · primera · última · N dispositivos» o «Sin abrir», con la lista de aperturas desplegable. */
+function Aperturas({ aperturas, creadorIpHash, version }: { aperturas: AperturaLink[]; creadorIpHash: string | null; version: number }) {
+  const [abierto, setAbierto] = useState(false);
+  const r = resumenAperturas(aperturas, creadorIpHash);
+  const orden = [...aperturas].sort((x, y) => Date.parse(y.abiertoEn) - Date.parse(x.abiertoEn));
+  return (
+    <div style={{ marginTop: 4, fontSize: 11.5 }} data-aperturas={r.n} data-aperturas-propias={r.propias} title={AYUDA_ABIERTO}>
+      <span className={r.n > 0 ? 'cell-strong' : 'cell-mute'} style={{ fontSize: 11.5 }}>{textoAperturas(r, formatearFechaCompacta)}</span>
+      {aperturas.length > 0 && <button type="button" className="btn btn-ghost" style={{ fontSize: 10.5, padding: '0 6px', marginLeft: 6 }} onClick={() => setAbierto(v => !v)} aria-expanded={abierto} data-accion="ver-aperturas">{abierto ? 'ocultar' : `ver ${aperturas.length === 1 ? 'la apertura' : `las ${aperturas.length} aperturas`}`}</button>}
+      {abierto && (
+        <ul style={{ margin: '4px 0 0', paddingLeft: 14, display: 'grid', gap: 2 }} data-lista-aperturas={version}>
+          {orden.map(a => { const marca = marcaRed(a, aperturas, creadorIpHash); return (
+            <li key={a.id} className={marca === 'creador' ? 'cell-mute' : undefined} data-apertura data-marca={marca} data-dispositivo={a.dispositivo}>
+              <span className="num">{formatearFechaCompacta(a.abiertoEn)}</span> · {ETIQUETA_DISPOSITIVO[a.dispositivo]} · {a.navegador} · <em>{ETIQUETA_MARCA_RED[marca]}</em>{a.respondio ? ' · respondió' : ''}
+            </li>
+          ); })}
+        </ul>
+      )}
+      <div className="cell-mute" style={{ fontSize: 10.5, marginTop: 2 }}>{AYUDA_ABIERTO}</div>
     </div>
   );
 }

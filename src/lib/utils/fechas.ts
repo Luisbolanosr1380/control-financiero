@@ -62,6 +62,8 @@ export const formatearFechaCorta    = (f: FechaInput) => formatearFecha(f, 'dd/M
 export const formatearFechaLarga    = (f: FechaInput) => formatearFecha(f, "d 'de' MMMM yyyy");
 export const formatearFechaConHora  = (f: FechaInput) => formatearFecha(f, 'dd/MM/yyyy HH:mm');
 export const formatearFechaConDia   = (f: FechaInput) => formatearFecha(f, "EEEE d 'de' MMMM yyyy");
+/** 031: «4-nov 13:20» para listas apretadas (aperturas del link). */
+export const formatearFechaCompacta = (f: FechaInput) => formatearFecha(f, 'd-MMM HH:mm').replace('.', '');
 
 /** "hace 3 días", "en 5 días", "hace 2 minutos". */
 export function fechaRelativa(fecha: FechaInput): string {

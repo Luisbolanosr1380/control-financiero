@@ -175,7 +175,10 @@ async function baseUrlPublica(): Promise<string> {
 export async function enviarDetalleAction(id: string, input: { destinatarios: string[]; cc?: string[]; asunto?: string; mensaje?: string }): Promise<EmitirLinkResult> {
   const permiso = await autorizar('facturar_agenda');
   if (!permiso.ok) return { ok: false, error: permiso.error };
-  const r = await emitirLinkDetalle(id, { email: permiso.email, nombre: permiso.nombre }, { ...input, baseUrl: await baseUrlPublica() });
+  // 031: la red de quien envía (solo su hash llega a la base) para no contar sus propias aperturas del link
+  const h = await headers();
+  const ip = (h.get('x-forwarded-for') ?? '').split(',')[0].trim() || h.get('x-real-ip') || null;
+  const r = await emitirLinkDetalle(id, { email: permiso.email, nombre: permiso.nombre }, { ...input, baseUrl: await baseUrlPublica(), ip });
   if (r.ok) revalidatePath('/por-facturar', 'layout');
   return r;
 }
