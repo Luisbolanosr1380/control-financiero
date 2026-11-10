@@ -12,6 +12,9 @@ import { HelpButton } from '@/components/ayuda/help-button';
 import type { Invoice, Customer } from '@/lib/types';
 import { predicadoFiltro, type InvoiceLiviano, type FiltroTabFactura, type TopClienteMes } from '@/lib/db/facturas';
 import { etiquetaMes } from '@/lib/utils/mes-activo';
+import { CRITERIOS_VACIOS, TOLERANCIA_DEFAULT, interpretarBusqueda, type CriteriosBusqueda } from '@/lib/facturacion/buscar-monto';
+import { ChipBusqueda, FiltrosBusqueda, ResultadosBusqueda, useIrABusqueda } from './buscar-resultados';
+import type { ResultadoBusqueda } from '@/lib/db/facturas-buscar';
 
 // F-034: nueva estructura de tabs. "Por cobrar" es solo EMITIDA (sin PENDIENTE).
 // "Cartera total" agrupa EMITIDA + PENDIENTE (todo lo no cobrado). Stark prefiere
@@ -236,15 +239,22 @@ interface Props {
   totalMesQ?: number;
   /** FIX-DASHBOARD-ANALITICA-HIT: ccId → nombre, para mostrar las líneas REALES de la base. */
   nombresCC?: Record<string, string>;
+  /** BUSCAR POR MONTO: resultado del servidor cuando la URL trae criterios (reemplaza el listado paginado). */
+  busqueda?: { criterios: CriteriosBusqueda; resultado: ResultadoBusqueda } | null;
+  criteriosUrl?: CriteriosBusqueda;
 }
 
 export function FacturasListClient({
   initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes,
   initialTab = 'todas', ncsActivasAnio = 0, mesActivo,
-  topClientes = [], totalMesQ = 0, nombresCC = {},
+  topClientes = [], totalMesQ = 0, nombresCC = {}, busqueda = null, criteriosUrl,
 }: Props) {
   const puede = usePuede();
   const router = useRouter();
+  // BUSCAR POR MONTO: el buscador entiende montos y rangos (8000, Q8,000, 8 mil, 8000-10000) y manda al servidor
+  const irABusqueda = useIrABusqueda();
+  const [masFiltros, setMasFiltros] = useState(false);
+  const criteriosBase: CriteriosBusqueda = busqueda?.criterios ?? criteriosUrl ?? CRITERIOS_VACIOS;
   // Nombre de línea = CC real de la base; fallback legacy a LINES solo si
   // la línea no trae centroCostoId (datos viejos sin CC).
   const nombreLinea = (l: { line: Invoice['line']; centroCostoId?: string }): string =>
@@ -258,6 +268,11 @@ export function FacturasListClient({
   const [cargandoMas, setCargandoMas] = useState(false);
 
   const [search, setSearch] = useState('');
+  const interpretacion = interpretarBusqueda(search);
+  const buscarEnServidor = () => {
+    if (interpretacion.tipo === 'monto') irABusqueda({ ...criteriosBase, monto: interpretacion.monto, tol: criteriosBase.tol ?? TOLERANCIA_DEFAULT, desde: undefined, hasta: undefined, texto: undefined });
+    else if (interpretacion.tipo === 'rango') irABusqueda({ ...criteriosBase, monto: undefined, tol: undefined, desde: interpretacion.desde, hasta: interpretacion.hasta, texto: undefined });
+  };
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const custById = Object.fromEntries(clientes.map(c => [c.id, c]));
@@ -404,17 +419,30 @@ export function FacturasListClient({
       {tab === 'por_cobrar'    && <PorCobrarSummary facturas={facturasLivianas} />}
       {tab === 'cartera_total' && <CarteraTotalSummary facturas={facturasLivianas} />}
 
-      <div className="toolbar">
+      <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
         <div className="toolbar-search">
           <I.Search size={13} style={{ color: 'var(--ink-4)' }} />
-          <input placeholder="Factura, cliente, NIT…" value={search} onChange={(e) => setSearch(e.target.value)} />
+          <input placeholder="Factura, cliente, NIT… o un monto: 8000, Q9,450, 8000-10000" value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') buscarEnServidor(); }} aria-label="Buscar factura, cliente, NIT o monto" data-campo="buscar" />
         </div>
-        <div style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--ink-3)' }}>
-          <span>{rows.length} resultados</span>
-          <span style={{ margin: '0 8px', color: 'var(--line-2)' }}>·</span>
-          <span className="num">Total: {Q(totalSaldo)}</span>
-        </div>
+        {(interpretacion.tipo === 'monto' || interpretacion.tipo === 'rango') && (
+          <button type="button" className="btn btn-primary" style={{ fontSize: 12 }} onClick={buscarEnServidor} data-accion="buscar-monto" title="Enter también busca">
+            <I.Search size={12} /> {interpretacion.tipo === 'monto' ? `Buscar ${Q(interpretacion.monto)} ±${Q(criteriosBase.tol ?? TOLERANCIA_DEFAULT)}` : `Buscar entre ${Q(interpretacion.desde)} y ${Q(interpretacion.hasta)}`} en todas
+          </button>
+        )}
+        <button type="button" className={'btn ' + (masFiltros ? 'btn-secondary' : 'btn-ghost')} style={{ fontSize: 12 }} onClick={() => setMasFiltros(v => !v)} aria-expanded={masFiltros} data-accion="mas-filtros"><I.Filter size={12} /> Más filtros</button>
+        {!busqueda && (
+          <div style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--ink-3)' }}>
+            <span>{rows.length} resultados</span>
+            <span style={{ margin: '0 8px', color: 'var(--line-2)' }}>·</span>
+            <span className="num">Total: {Q(totalSaldo)}</span>
+          </div>
+        )}
       </div>
+      {masFiltros && <FiltrosBusqueda criterios={criteriosBase} onCerrar={() => setMasFiltros(false)} />}
+      {busqueda && <ChipBusqueda criterios={busqueda.criterios} />}
+      {busqueda && <ResultadosBusqueda resultado={busqueda.resultado} criterios={busqueda.criterios} />}
+
+      {!busqueda && <>
 
       <div className="table-wrap" style={{ borderRadius: '0 0 var(--r-3) var(--r-3)', borderTop: 'none' }}>
         <table className="table">
@@ -545,6 +573,7 @@ export function FacturasListClient({
           </button>
         )}
       </div>
+      </>}
     </div>
   );
 }
