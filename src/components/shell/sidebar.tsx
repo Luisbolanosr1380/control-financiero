@@ -49,7 +49,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
   const groups: NavGroup[] = [
     { group: 'Operación', items: [
       { href: '/dashboard',    label: 'Dashboard',    icon: 'Dashboard' },
-      ...(p('ver_cobranza') ? [{ href: '/cobranza', label: 'Centro de Cobros', icon: 'Phone' as IconName }] : []),   // CENTRO DE COBROS (033)
+      ...(p('ver_cobranza') ? [{ href: '/cobranza', label: 'Centro de Cobros', icon: 'Phone' as IconName }, { href: '/cobranza/recordatorios', label: 'Recordatorios de cobro', icon: 'Mail' as IconName }] : []),   // CENTRO DE COBROS (033 · 035)
       { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: facturasBadge },
       { href: '/facturacion/pendientes', label: 'Pendientes de cobro', icon: 'Clock' },   // F-CXC-PEND
       { href: '/reportes/facturacion', label: 'Reporte Facturación', icon: 'TrendUp' },   // F-REPORTE-FACTURACION

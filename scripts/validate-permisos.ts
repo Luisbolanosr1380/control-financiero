@@ -161,6 +161,7 @@ function archivosUseServer(dir: string): string[] {
     ['configurar_empresa', 'Configurar empresa', true, false, false, false],
     ['ver_cobranza', 'Centro de Cobros (033): ver bandeja y ficha', true, true, false, false],
     ['gestionar_cobranza', 'Centro de Cobros (033): gestiones, promesas, contactos, condiciones', true, true, false, false],
+    ['configurar_cobranza', 'Centro de Cobros (035): plantillas y reglas de recordatorios', true, true, false, false],
   ];
   // CENTRO DE COBROS (033): quinta columna, el rol cobranza: ver + lo suyo; nada de finanzas
   const COBRANZA_SI = new Set(['ver', 'ver_cobranza', 'gestionar_cobranza']);
