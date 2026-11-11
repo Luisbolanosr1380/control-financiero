@@ -16,6 +16,8 @@ import { coincideCriterios, montoSegun, ordenarResultados, type CriteriosBusqued
 export interface FacturaBuscada extends FacturaBuscable {
   /** id del listado (/facturacion/<id>): la línea principal, como en la consolidación */ id: string;
   clienteId: string | null; iva: number; cobrado: number; ncs: number; fechaCobro: string | null; lineas: number;
+  /** IDENTIFICAR PAGO: vencimiento = emisión + días de crédito del cliente (como la fórmula «Dias vencidos»); días vencida = hoy − vencimiento (negativo = por vencer; 0 sin fecha) */
+  fechaVencimiento: string; diasVencida: number;
   /** diferencia contra el monto buscado (solo con monto exacto) */ diff?: number;
 }
 export interface ResultadoBusqueda {
@@ -26,12 +28,14 @@ export interface ResultadoBusqueda {
 }
 export const TOPE_FILAS_BUSQUEDA = 500;
 
-type FilaFactura = { id: string; airtable_id: string | null; no_factura: string | null; cliente_id: string | null; fecha_emision: string | null; subtotal: number | string | null; iva: number | string | null; total: number | string | null; estado: string | null; cliente: { airtable_id: string | null; razon_social: string | null; nombre_empresa: string | null; nit: string | null; nombre_comercial?: string | null; aliases?: string[] | null } | null };
-type FilaCobro = { factura_id: string | null; monto_cobrado: number | string | null; fecha_cobro: string | null; estado_cobro: string | null };
-type FilaNc = { factura_id: string | null; monto: number | string | null; estado: string | null };
-
-const n = (v: unknown): number => { const x = Number(v ?? 0); return Number.isFinite(x) ? x : 0; };
+export type FilaFactura = { id: string; airtable_id: string | null; no_factura: string | null; cliente_id: string | null; fecha_emision: string | null; subtotal: number | string | null; iva: number | string | null; total: number | string | null; estado: string | null; cliente: { airtable_id: string | null; razon_social: string | null; nombre_empresa: string | null; nit: string | null; nombre_comercial?: string | null; aliases?: string[] | null; dias_credito?: number | string | null } | null };
+/** IDENTIFICAR PAGO: el componente «Retención IVA/ISR» de un cobro es una fila con monto_cobrado = la retención y monto_retencion_* con el mismo monto (cobros.ts); por eso el saldo ya la descuenta. */
+export type FilaCobro = { factura_id: string | null; monto_cobrado: number | string | null; fecha_cobro: string | null; estado_cobro: string | null; monto_retencion_iva?: number | string | null; monto_retencion_isr?: number | string | null };
+export type FilaNc = { factura_id: string | null; monto: number | string | null; estado: string | null };
+export const n = (v: unknown): number => { const x = Number(v ?? 0); return Number.isFinite(x) ? x : 0; };
 const round2 = (v: number) => Math.round(v * 100) / 100;
+const diaUTC = (iso: string) => Date.UTC(Number(iso.slice(0, 4)), Number(iso.slice(5, 7)) - 1, Number(iso.slice(8, 10)));
+const sumarDias = (iso: string, d: number) => new Date(diaUTC(iso) + d * 86_400_000).toISOString().slice(0, 10);
 
 function estadoDe(estados: string[], cobrada: boolean): EstadoFila {
   if (cobrada) return 'cobrada';
@@ -41,8 +45,8 @@ function estadoDe(estados: string[], cobrada: boolean): EstadoFila {
   return 'otro';
 }
 
-/** Consolida las filas crudas en facturas (puro; el validador lo usa con filas sembradas). */
-export function consolidarParaBusqueda(filas: FilaFactura[], cobros: FilaCobro[], ncs: FilaNc[]): FacturaBuscada[] {
+/** Consolida las filas crudas en facturas (puro; el validador lo usa con filas sembradas). `hoy` (YYYY-MM-DD) solo para los días vencida. */
+export function consolidarParaBusqueda(filas: FilaFactura[], cobros: FilaCobro[], ncs: FilaNc[], hoy?: string): FacturaBuscada[] {
   const cobradoPorLinea = new Map<string, { monto: number; ultima: string | null }>();
   for (const c of cobros) {
     if (!c.factura_id || estadoFacturaCanon(c.estado_cobro) === 'ANULADO') continue;   // F-036: solo cobros activos
@@ -73,13 +77,16 @@ export function consolidarParaBusqueda(filas: FilaFactura[], cobros: FilaCobro[]
     cobrado = round2(cobrado); ncsMonto = round2(ncsMonto);
     const saldo = inactiva ? 0 : round2(Math.max(0, total - cobrado - ncsMonto));
     const cli = principal.cliente;
+    const fechaEmision = String(principal.fecha_emision ?? '').slice(0, 10);
+    const fechaVencimiento = /^\d{4}-\d{2}-\d{2}$/.test(fechaEmision) ? sumarDias(fechaEmision, Math.max(0, Math.round(n(cli?.dias_credito)))) : '';
+    const diasVencida = fechaVencimiento && hoy ? Math.round((diaUTC(hoy) - diaUTC(fechaVencimiento)) / 86_400_000) : 0;
     out.push({
       id: String(principal.airtable_id ?? principal.id), noFactura: String(principal.no_factura ?? '').trim(), fechaEmision: String(principal.fecha_emision ?? '').slice(0, 10),
       clienteId: cli?.airtable_id ?? principal.cliente_id ?? null, clienteNombre: String(cli?.nombre_empresa || cli?.razon_social || '').trim(), nit: String(cli?.nit ?? '').trim(),
       clienteNombres: [cli?.razon_social, cli?.nombre_comercial, ...(Array.isArray(cli?.aliases) ? cli!.aliases! : [])].map(x => String(x ?? '').trim()).filter(Boolean),
       total, subtotal, iva, cobrado, ncs: ncsMonto, saldo, cobrada,
       estado: inactiva ? (estadoFacturaCanon(principal.estado).startsWith('REFACTURAD') ? 'refacturada' : 'anulada') : estadoDe(estados, cobrada),
-      fechaCobro, lineas: lineas.length,
+      fechaCobro, lineas: lineas.length, fechaVencimiento, diasVencida,
     });
   }
   return out;
@@ -95,14 +102,20 @@ export function resultadoDe(facturas: FacturaBuscada[], c: CriteriosBusqueda): R
   };
 }
 
-/** Todas las facturas consolidadas para la búsqueda (tres lecturas: facturas con cliente, cobros, NC). Solo Supabase. */
-export async function facturasParaBusqueda(): Promise<FacturaBuscada[]> {
+/** Las tres lecturas crudas (facturas con cliente, cobros con retenciones, NC). Solo Supabase. Las comparte Identificar pago. */
+export async function leerFilasBusqueda(): Promise<{ filas: FilaFactura[]; cobros: FilaCobro[]; ncs: FilaNc[] }> {
   const [filas, cobros, ncs] = await Promise.all([
-    fetchAll<FilaFactura>('facturas_clientes', { select: 'id, airtable_id, no_factura, cliente_id, fecha_emision, subtotal, iva, total, estado, cliente:clientes(airtable_id, razon_social, nombre_empresa, nit, nombre_comercial, aliases)' }),
-    fetchAll<FilaCobro>('cobros_clientes', { select: 'factura_id, monto_cobrado, fecha_cobro, estado_cobro' }),
+    fetchAll<FilaFactura>('facturas_clientes', { select: 'id, airtable_id, no_factura, cliente_id, fecha_emision, subtotal, iva, total, estado, cliente:clientes(airtable_id, razon_social, nombre_empresa, nit, nombre_comercial, aliases, dias_credito)' }),
+    fetchAll<FilaCobro>('cobros_clientes', { select: 'factura_id, monto_cobrado, fecha_cobro, estado_cobro, monto_retencion_iva, monto_retencion_isr' }),
     fetchAll<FilaNc>('notas_credito', { select: 'factura_id, monto, estado' }).catch(() => [] as FilaNc[]),
   ]);
-  return consolidarParaBusqueda(filas, cobros, ncs);
+  return { filas, cobros, ncs };
+}
+
+/** Todas las facturas consolidadas para la búsqueda. Solo Supabase. */
+export async function facturasParaBusqueda(hoy?: string): Promise<FacturaBuscada[]> {
+  const { filas, cobros, ncs } = await leerFilasBusqueda();
+  return consolidarParaBusqueda(filas, cobros, ncs, hoy);
 }
 
 export async function buscarFacturas(c: CriteriosBusqueda): Promise<ResultadoBusqueda> {

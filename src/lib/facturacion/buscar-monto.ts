@@ -24,6 +24,7 @@ export interface CriteriosBusqueda {
   sobre: SobreMonto; estado: EstadoBusqueda;
   /** emisión desde / hasta (YYYY-MM-DD) */ emisionDesde?: string; emisionHasta?: string;
   /** número de factura, cliente o NIT */ texto?: string;
+  /** IDENTIFICAR PAGO: la tolerancia viene ampliada para cubrir la retención de IVA esperada (el chip lo avisa) */ aviso?: 'retencion';
 }
 export const CRITERIOS_VACIOS: CriteriosBusqueda = { sobre: 'total', estado: 'todas' };
 
@@ -75,6 +76,7 @@ export function criteriosDesdeParams(get: (k: string) => string | null | undefin
     estado: estado === 'pagadas' || estado === 'pendientes' || estado === 'parcial' || estado === 'anuladas' ? estado : 'todas',
     emisionDesde: fecha(get('edesde')), emisionHasta: fecha(get('ehasta')),
     texto: String(get('q') ?? '').trim().slice(0, 80) || undefined,
+    aviso: get('aviso') === 'retencion' ? 'retencion' : undefined,
   };
   if (c.monto !== undefined) { c.desde = undefined; c.hasta = undefined; if (c.tol === undefined) c.tol = TOLERANCIA_DEFAULT; }
   else c.tol = undefined;
@@ -86,7 +88,7 @@ export function criteriosDesdeParams(get: (k: string) => string | null | undefin
 /** Params de la URL a partir de los criterios (sin los vacíos ni los valores por defecto). Conserva otros params (tab, mes). */
 export function paramsDeCriterios(c: CriteriosBusqueda, base?: URLSearchParams): string {
   const p = new URLSearchParams(base ?? '');
-  for (const k of ['monto', 'tol', 'desde', 'hasta', 'sobre', 'estado', 'edesde', 'ehasta', 'q']) p.delete(k);
+  for (const k of ['monto', 'tol', 'desde', 'hasta', 'sobre', 'estado', 'edesde', 'ehasta', 'q', 'aviso']) p.delete(k);
   if (c.monto !== undefined) { p.set('monto', String(c.monto)); if (c.tol !== undefined && c.tol !== TOLERANCIA_DEFAULT) p.set('tol', String(c.tol)); }
   else { if (c.desde !== undefined) p.set('desde', String(c.desde)); if (c.hasta !== undefined) p.set('hasta', String(c.hasta)); }
   if (c.sobre !== 'total') p.set('sobre', c.sobre);
@@ -94,6 +96,7 @@ export function paramsDeCriterios(c: CriteriosBusqueda, base?: URLSearchParams):
   if (c.emisionDesde) p.set('edesde', c.emisionDesde);
   if (c.emisionHasta) p.set('ehasta', c.emisionHasta);
   if (c.texto) p.set('q', c.texto);
+  if (c.aviso) p.set('aviso', c.aviso);
   const qs = p.toString();
   return qs ? `?${qs}` : '';
 }
@@ -114,6 +117,7 @@ export function describirCriterios(c: CriteriosBusqueda): string {
   else if (c.emisionDesde) partes.push(`emitidas desde ${fechaCorta(c.emisionDesde)}`);
   else if (c.emisionHasta) partes.push(`emitidas hasta ${fechaCorta(c.emisionHasta)}`);
   if (c.texto) partes.push(`«${c.texto}»`);
+  if (c.aviso === 'retencion') partes.push('tolerancia que cubre la retención de IVA');
   return partes.join(' · ');
 }
 
