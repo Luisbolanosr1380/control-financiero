@@ -13,7 +13,9 @@
  *    (eso es la frontera normal). Importar y LLAMAR una función no.
  *    Como estáticamente no distinguimos uso, la regla es: desde servidor,
  *    de un módulo cliente solo se importan identificadores PascalCase
- *    (componentes) o tipos. Cualquier helper camelCase/const → error.
+ *    (componentes) o tipos. Cualquier helper camelCase o constante
+ *    (también las SCREAMING_SNAKE como TABS_CARTERA: llegan al servidor
+ *    como referencia de cliente, y `.includes` no es una función) → error.
  *  · `import type` y especificadores `type X` se ignoran.
  *
  * Uso: npx tsx scripts/validate-frontera-cliente.ts   (exit 1 si hay violaciones)
@@ -82,7 +84,8 @@ for (const f of ladoServidor) {
         }
       } else if (!c.startsWith('*')) nombres.push(c.trim());   // default import
     }
-    const sospechosos = nombres.filter(n => !/^[A-Z]/.test(n));   // camelCase/const = helper, no componente
+    // componente = PascalCase (mayúscula inicial y alguna minúscula); camelCase y SCREAMING_SNAKE son helpers / constantes
+    const sospechosos = nombres.filter(n => !(/^[A-Z]/.test(n) && /[a-z]/.test(n)));
     if (sospechosos.length) {
       violaciones.push({ archivo: path.relative(process.cwd(), f), linea: src.slice(0, m.index).split('\n').length, modulo: spec, nombres: sospechosos });
     }
@@ -91,7 +94,7 @@ for (const f of ladoServidor) {
 
 console.log(`\nFrontera servidor/cliente: ${ladoServidor.length} archivos de servidor revisados contra ${esCliente.size} módulos cliente.`);
 if (violaciones.length === 0) {
-  console.log('  🟢 ningún server component / server action importa helpers de un módulo \'use client\'\n');
+  console.log('  🟢 ningún server component / server action importa helpers ni constantes de un módulo \'use client\'\n');
   process.exit(0);
 }
 for (const v of violaciones) {

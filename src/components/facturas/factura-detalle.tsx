@@ -19,6 +19,8 @@ import type { Invoice, InvoiceStatus } from '@/lib/types';
 import { EtiquetasEditor } from '@/components/common/etiquetas-chips';
 import { ProcesosAgendaSection } from '@/components/por-facturar/procesos-agenda-section';
 import type { ProcesosDeFactura } from '@/lib/db/facturacion-agenda';
+import { SeguimientoCobroSection } from '@/components/facturas/seguimiento-cobro-section';
+import type { SeguimientoDeFactura } from '@/lib/db/cobranza-facturas';
 
 const STATUS_BADGE: Record<InvoiceStatus, { cls: string; text: string }> = {
   vencido:       { cls: 'badge-wine',    text: 'Vencida' },
@@ -42,6 +44,8 @@ interface Props {
   nombresCC?: Record<string, string>;
   /** FACTURACIÓN AGENDA: procesos de la Agenda que cubre esta factura (null si no viene de ahí). */
   procesosAgenda?: ProcesosDeFactura | null;
+  /** SEGUIMIENTO DE COBRO: estado de cobro, promesa, contacto e historial de cobranza de esta factura. */
+  seguimiento?: SeguimientoDeFactura | null;
 }
 
 const formatFechaShort = (s: string): string =>
@@ -74,7 +78,7 @@ function dedupeComponentes(g: GrupoCobro): { metodo: string; bancoNombre: string
   return [...buckets.values()];
 }
 
-export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros, notasCredito, esAdmin, nombresCC = {}, procesosAgenda = null }: Props) {
+export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros, notasCredito, esAdmin, nombresCC = {}, procesosAgenda = null, seguimiento = null }: Props) {
   const badge = STATUS_BADGE[inv.status] ?? { cls: 'badge-mute', text: inv.status };
   // Línea = CC real de la base; fallback legacy a LINES si no hay centroCostoId.
   const nombreLinea = (l: { line: Invoice['line']; centroCostoId?: string }): string =>
@@ -194,6 +198,9 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
           <div style={{ marginTop: 6 }}><span className={'badge ' + badge.cls} style={{ fontSize: 12, padding: '4px 12px' }}>{badge.text}</span></div>
         </div>
       </div>
+
+      {/* SEGUIMIENTO DE COBRO: debajo de los totales; plegado cuando la factura ya está cobrada */}
+      {seguimiento && <SeguimientoCobroSection datos={seguimiento} />}
 
       {/* 3. LÍNEAS */}
       <div className="card" style={{ marginBottom: 22 }}>

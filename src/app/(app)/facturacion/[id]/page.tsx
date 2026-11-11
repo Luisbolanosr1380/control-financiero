@@ -8,6 +8,7 @@ import { getCentrosCosto } from '@/lib/db/centros';
 import { procesosDeFactura } from '@/lib/db/facturacion-agenda';
 import { getSesion } from '@/lib/auth/guard';
 import { FacturaDetalle } from '@/components/facturas/factura-detalle';
+import { getSeguimientoFactura } from '@/lib/db/cobranza-facturas';
 import { I } from '@/components/common/icons';
 
 export const revalidate = 30;
@@ -47,6 +48,8 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
 
   const cliente = clientes.find(c => c.id === factura.custId);
   const saldoPendiente = saldoInfo?.saldoPendiente ?? factura.balance;
+  // SEGUIMIENTO DE COBRO: estado, promesa, contacto preferido e historial de cobranza de ESTA factura (fail-soft: null si no hay Supabase)
+  const seguimiento = await getSeguimientoFactura(factura, saldoPendiente);
 
   return (
     <FacturaDetalle
@@ -59,6 +62,7 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
       esAdmin={rol === 'admin'}
       nombresCC={nombresCC}
       procesosAgenda={procesosAgenda}
+      seguimiento={seguimiento}
     />
   );
 }

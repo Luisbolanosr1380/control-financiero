@@ -11,7 +11,7 @@ import { confirmarSubidaAdjuntos, prepararSubidaAdjuntos, type SubidaAdjunto } f
 import type { GestionInput } from '@/lib/cobranza/estado';
 import type { CondicionesCobro } from '@/lib/db/cobranza';
 
-const revalidar = (idApp?: string) => { revalidatePath('/cobranza'); if (idApp) revalidatePath(`/cobranza/${idApp}`); revalidatePath('/facturacion/pendientes'); };
+const revalidar = (idApp?: string) => { revalidatePath('/cobranza'); if (idApp) revalidatePath(`/cobranza/${idApp}`); revalidatePath('/facturacion/pendientes'); revalidatePath('/facturacion'); revalidatePath('/facturacion/[id]', 'page'); };   // SEGUIMIENTO DE COBRO: la lista y la factura se refrescan al guardar
 
 export async function registrarGestionCobranzaAction(idApp: string, input: GestionInput): Promise<RegistrarGestionResult> {
   const permiso = await autorizar('gestionar_cobranza');
