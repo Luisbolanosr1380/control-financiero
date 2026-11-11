@@ -43,6 +43,8 @@ export interface FacturaPendiente {
   vencida: boolean;           // diasVencidos > 0
   bucket: AgingBucket;
   esParcial: boolean;         // ya tuvo cobros (estadoBruto = cobrado_parcial)
+  /** SEGUIMIENTO DE COBRO: estado bruto de la factura (emitida / pendiente / cobrado_parcial) para las pestañas de Facturación. */
+  estadoBruto: 'emitida' | 'pendiente' | 'cobrado_parcial';
   centros: string[];          // nombres de centro de costo de sus líneas
   adjuntoUrl?: string;
   /** FACTORAJE — control de doble cobro: la factura está cedida a un
@@ -121,6 +123,7 @@ export async function getFacturasPendientesCobro(): Promise<PendientesCobro> {
         vencida: dias > 0,
         bucket: bucketDeDias(dias),
         esParcial: f.estadoBruto === 'cobrado_parcial',
+        estadoBruto: (f.estadoBruto === 'pendiente' ? 'pendiente' : f.estadoBruto === 'cobrado_parcial' ? 'cobrado_parcial' : 'emitida') as FacturaPendiente['estadoBruto'],
         centros: nombresCC,
         adjuntoUrl: f.adjuntoUrl,
         cedida: cedidas[f.id],

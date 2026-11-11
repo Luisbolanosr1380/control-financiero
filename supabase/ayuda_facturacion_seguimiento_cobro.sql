@@ -1,0 +1,12 @@
+-- SEGUIMIENTO DE COBRO A LA VISTA · una línea en la ayuda de Facturación y otra en la del Centro de Cobros.
+-- No es una migración numerada (sin cambios de esquema): es contenido. Aplicada en HIT; en Golden la aplica el CFO.
+-- Idempotente: si la línea ya está, no hace nada.
+update ayuda
+   set contenido = contenido || E'\n\n**Seguimiento de cobro en la factura:** en las pestañas *Cartera total, Por cobrar, Vencidas, Pendientes y Parciales* la lista trae **todas** las facturas abiertas de todos los meses, de la más vieja sin pagar a la más nueva (clic en un encabezado para cambiar el orden), con la columna **Cobranza**: *Paga hoy*, *Promesa 15-nov*, *Promesa incumplida*, *En disputa*, *Pide documentos*, *Dice que pagó*, *Seguimiento hoy / atrasado* o *Sin gestión* (vencida sin ningún evento en 7 días), y debajo la última nota con fecha y quién la escribió. Los chips *Pagan hoy*, *Promesas esta semana*, *Promesas incumplidas*, *Seguimiento para hoy* y *Vencidas sin gestión* filtran la lista. El buscador también encuentra el cliente por nombre, razón social, nombre comercial, alias o NIT en **todas** las facturas al presionar Enter. En la página de la factura, la sección **Seguimiento de cobro** muestra el estado, la promesa vigente, el próximo seguimiento, el responsable, el contacto preferido y el historial de esa factura; *Registrar seguimiento* abre el formulario del Centro de Cobros con la factura preseleccionada (admin, contador y cobranza).',
+       updated_at = now()
+ where slug = 'como-emitir-una-factura-paso-a-paso' and contenido not like '%Seguimiento de cobro en la factura:%';
+
+update ayuda
+   set contenido = contenido || E'\n\n## Seguimiento de cobro desde Facturación\n\nLo mismo que ves acá también está en **Facturación**: en las pestañas de cartera cada factura trae la columna **Cobranza** (el badge del caso y la última nota) y los chips *Pagan hoy*, *Promesas esta semana*, *Promesas incumplidas*, *Seguimiento para hoy* y *Vencidas sin gestión*. En la página de una factura, la sección **Seguimiento de cobro** muestra su estado, la promesa vigente, el próximo seguimiento, el contacto preferido y el historial de esa factura, y *Registrar seguimiento* abre este mismo formulario con la factura ya marcada. Lo que registrás ahí aparece enseguida en la bandeja y en la ficha del cliente.',
+       updated_at = now()
+ where slug = 'centro-de-cobros' and contenido not like '%Seguimiento de cobro desde Facturación%';

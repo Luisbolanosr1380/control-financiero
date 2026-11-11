@@ -15,6 +15,20 @@ import { etiquetaMes } from '@/lib/utils/mes-activo';
 import { CRITERIOS_VACIOS, TOLERANCIA_DEFAULT, interpretarBusqueda, type CriteriosBusqueda } from '@/lib/facturacion/buscar-monto';
 import { ChipBusqueda, FiltrosBusqueda, ResultadosBusqueda, useIrABusqueda } from './buscar-resultados';
 import type { ResultadoBusqueda } from '@/lib/db/facturas-buscar';
+import { CarteraTabla } from './cartera-tabla';
+import { coincideCliente } from '@/lib/clientes/buscar';
+import type { FilaCartera } from '@/lib/db/cobranza-facturas';
+import type { FiltroCobranza, OrdenCartera } from '@/lib/cobranza/seguimiento';
+
+/** SEGUIMIENTO DE COBRO: en las pestañas de cartera (TABS_CARTERA, en src/lib/cobranza/seguimiento.ts) la lista trae todas las facturas abiertas de todos los meses, del más viejo sin pagar al más nuevo (como Cobros → Pendientes). */
+export interface CarteraProps {
+  hoy: string;
+  /** las filas de la pestaña (ya filtradas por chip en el servidor) */ filas: FilaCartera[];
+  /** conteos de las 5 pestañas de cartera sobre TODAS las abiertas (todos los meses) */ counts: Partial<Record<FacturasTab, number>>;
+  /** las de la pestaña sin el chip, para los sub-totales */ filasTab: FilaCartera[];
+  orden: OrdenCartera; dir: 'asc' | 'desc'; filtro: FiltroCobranza | null; conteoFiltros: Record<FiltroCobranza, number>;
+  kpiPromesas: { n: number; monto: number }; error?: string;
+}
 
 // F-034: nueva estructura de tabs. "Por cobrar" es solo EMITIDA (sin PENDIENTE).
 // "Cartera total" agrupa EMITIDA + PENDIENTE (todo lo no cobrado). Stark prefiere
@@ -242,12 +256,14 @@ interface Props {
   /** BUSCAR POR MONTO: resultado del servidor cuando la URL trae criterios (reemplaza el listado paginado). */
   busqueda?: { criterios: CriteriosBusqueda; resultado: ResultadoBusqueda } | null;
   criteriosUrl?: CriteriosBusqueda;
+  /** SEGUIMIENTO DE COBRO: la cartera abierta con su columna «Cobranza» (solo en las pestañas de cartera, sin búsqueda). */
+  cartera?: CarteraProps | null;
 }
 
 export function FacturasListClient({
   initialInvoices, initialHayMas, initialUltimaFecha, facturasLivianas, clientes,
   initialTab = 'todas', ncsActivasAnio = 0, mesActivo,
-  topClientes = [], totalMesQ = 0, nombresCC = {}, busqueda = null, criteriosUrl,
+  topClientes = [], totalMesQ = 0, nombresCC = {}, busqueda = null, criteriosUrl, cartera = null,
 }: Props) {
   const puede = usePuede();
   const router = useRouter();
@@ -272,6 +288,13 @@ export function FacturasListClient({
   const buscarEnServidor = () => {
     if (interpretacion.tipo === 'monto') irABusqueda({ ...criteriosBase, monto: interpretacion.monto, tol: criteriosBase.tol ?? TOLERANCIA_DEFAULT, desde: undefined, hasta: undefined, texto: undefined });
     else if (interpretacion.tipo === 'rango') irABusqueda({ ...criteriosBase, monto: undefined, tol: undefined, desde: interpretacion.desde, hasta: interpretacion.hasta, texto: undefined });
+    // SEGUIMIENTO DE COBRO: el texto (cliente, nombre comercial, alias, NIT o número) también va al servidor, sobre TODAS las facturas y sin el mes
+    else if (interpretacion.tipo === 'texto') irABusqueda({ ...criteriosBase, texto: interpretacion.texto });
+  };
+  // vista previa local mientras se escribe: número de factura o cualquier nombre del cliente (sin tildes ni mayúsculas)
+  const coincideLocal = (noFactura: string, custId: string) => {
+    const c = custById[custId];
+    return noFactura.toLowerCase().includes(search.toLowerCase()) || coincideCliente({ id: custId, name: c?.name ?? custId, nit: c?.nit, razonSocial: c?.razonSocial, nombreComercial: c?.nombreComercial, aliases: c?.aliases }, search);
   };
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
@@ -290,13 +313,14 @@ export function FacturasListClient({
   // F-033: counts y sumas se computan SIEMPRE sobre el dataset liviano completo
   // (no sobre las facturas paginadas). Así el header refleja el universo real
   // bajo el tab actual, no "lo cargado en pantalla".
-  const counts = {
+  // SEGUIMIENTO DE COBRO: las 5 pestañas de cartera cuentan TODAS las abiertas (todos los meses); las demás, el mes activo.
+  const counts: Record<FacturasTab, number> = {
     todas:         facturasLivianas.length,
-    cartera_total: facturasLivianas.filter(i => esCobranzaActiva(i) || esPendiente(i)).length,
-    por_cobrar:    facturasLivianas.filter(esCobranzaActiva).length,
-    vencidas:      facturasLivianas.filter(i => esCobranzaActiva(i) && i.vencida).length,
-    pendientes:    facturasLivianas.filter(esPendiente).length,
-    parciales:     facturasLivianas.filter(esCobradoParcial).length,
+    cartera_total: cartera?.counts.cartera_total ?? facturasLivianas.filter(i => esCobranzaActiva(i) || esPendiente(i)).length,
+    por_cobrar:    cartera?.counts.por_cobrar ?? facturasLivianas.filter(esCobranzaActiva).length,
+    vencidas:      cartera?.counts.vencidas ?? facturasLivianas.filter(i => esCobranzaActiva(i) && i.vencida).length,
+    pendientes:    cartera?.counts.pendientes ?? facturasLivianas.filter(esPendiente).length,
+    parciales:     cartera?.counts.parciales ?? facturasLivianas.filter(esCobradoParcial).length,
     cobradas:      facturasLivianas.filter(i => i.estadoBruto === 'cobrado').length,
     anuladas:      facturasLivianas.filter(i => i.estadoBruto === 'anulado').length,
     refacturadas:  facturasLivianas.filter(i => i.estadoBruto === 'refacturado').length,
@@ -322,25 +346,13 @@ export function FacturasListClient({
   // F-034: el server ya filtró por el tab activo, así que las filas visibles
   // (`facturas`) son TODAS del tab actual. El search es el único filtro client-side.
   let rows: Invoice[] = facturas;
-  if (search) {
-    const q = search.toLowerCase();
-    rows = rows.filter(i =>
-      i.noFactura.toLowerCase().includes(q) ||
-      (custById[i.custId]?.name ?? '').toLowerCase().includes(q)
-    );
-  }
+  if (search) rows = rows.filter(i => coincideLocal(i.noFactura, i.custId));
   const totalSaldo = rows.reduce((s, i) => s + i.balance, 0);
 
   // F-033: agregado REAL del tab actual (sobre TODAS las facturas, no solo las cargadas).
   // El search también filtra el agregado para coherencia visual cuando el usuario busca.
   let livianasTab = facturasLivianas.filter(predicadoFiltro(tab));
-  if (search) {
-    const q = search.toLowerCase();
-    livianasTab = livianasTab.filter(i =>
-      i.noFactura.toLowerCase().includes(q) ||
-      (custById[i.custId]?.name ?? '').toLowerCase().includes(q)
-    );
-  }
+  if (search) livianasTab = livianasTab.filter(i => coincideLocal(i.noFactura, i.custId));
   const agregadoTab = {
     cantidad: livianasTab.length,
     suma:     livianasTab.reduce((s, i) => s + i.total, 0),
@@ -363,22 +375,31 @@ export function FacturasListClient({
             Facturación
             <HelpButton tag="modulo-facturacion" />
           </h1>
+          {cartera ? (
+            <div className="page-subtitle" style={{ fontSize: 14, color: 'var(--ink-2)' }} data-resumen-cartera>
+              <span style={{ fontWeight: 500 }}>{TAB_LABELS[tab]}:</span>{' '}
+              <span className="num" style={{ fontWeight: 500 }}>{cartera.filasTab.length}</span> facturas de todos los meses
+              {' · '}saldo <span className="num" style={{ fontWeight: 500 }}>{Q(cartera.filasTab.reduce((s, f) => s + f.saldo, 0))}</span>
+              {' · '}<span style={{ color: 'var(--ink-4)', fontSize: 12 }}>del más viejo sin pagar al más nuevo</span>
+            </div>
+          ) : (
           <div className="page-subtitle" style={{ fontSize: 14, color: 'var(--ink-2)' }}>
             <span style={{ fontWeight: 500 }}>{TAB_LABELS[tab]}:</span>{' '}
             <span className="num" style={{ fontWeight: 500 }}>{agregadoTab.cantidad}</span> facturas
             {' · '}
             <span className="num" style={{ fontWeight: 500 }}>{Q(agregadoTab.suma)}</span>
           </div>
-          {agregadoTab.lineasCrudas > agregadoTab.cantidad && (
+          )}
+          {!cartera && agregadoTab.lineasCrudas > agregadoTab.cantidad && (
             <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-4)', marginTop: 2, fontStyle: 'italic' }}>
               Algunas facturas tienen múltiples servicios (<span className="num">{agregadoTab.lineasCrudas}</span> servicios facturados en total)
             </div>
           )}
-          <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-4)', marginTop: 2 }}>
+          {!cartera && <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-4)', marginTop: 2 }}>
             Mostrando <span className="num">{rows.length}</span> de <span className="num">{agregadoTab.cantidad}</span>
             {agregadoTab.cantidad > rows.length && <> · faltan <span className="num">{agregadoTab.cantidad - rows.length}</span> por cargar</>}
             {' · '}ordenadas por fecha
-          </div>
+          </div>}
           {ncsActivasAnio > 0 && (
             <div className="page-subtitle" style={{ fontSize: 11.5, color: 'var(--ink-3)', marginTop: 4 }}>
               + <span className="num" style={{ color: 'var(--wine)' }}>{Q(ncsActivasAnio)}</span> en NCs activas del año reducen el facturado neto. <a href="/notas-credito" style={{ color: 'var(--accent)', textDecoration: 'none' }}>Ver notas de crédito →</a>
@@ -396,9 +417,10 @@ export function FacturasListClient({
         </div>
       </div>
 
-      <div className="tabs">
+      {/* la fila de pestañas se desplaza dentro de su contenedor en pantallas angostas (a 390 px ensanchaba la página a 952 px) */}
+      <div className="tabs" style={{ overflowX: 'auto', flexWrap: 'nowrap', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'thin' }} data-tabs-facturacion>
         {FACTURAS_TABS.map(t => (
-          <button key={t} className={'tab' + (tab === t ? ' active' : '')} onClick={() => cambiarTab(t)}>
+          <button key={t} className={'tab' + (tab === t ? ' active' : '')} style={{ flex: '0 0 auto', whiteSpace: 'nowrap' }} onClick={() => cambiarTab(t)} data-tab={t}>
             {TAB_LABELS[t]}
             <span className="tab-count num">{counts[t]}</span>
           </button>
@@ -416,8 +438,8 @@ export function FacturasListClient({
       )}
 
       {/* Sub-totales por tab (sobre livianas = universo completo). */}
-      {tab === 'por_cobrar'    && <PorCobrarSummary facturas={facturasLivianas} />}
-      {tab === 'cartera_total' && <CarteraTotalSummary facturas={facturasLivianas} />}
+      {tab === 'por_cobrar'    && <PorCobrarSummary facturas={cartera ? cartera.filasTab : facturasLivianas} />}
+      {tab === 'cartera_total' && <CarteraTotalSummary facturas={cartera ? cartera.filasTab : facturasLivianas} />}
 
       <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
         <div className="toolbar-search">
@@ -429,8 +451,13 @@ export function FacturasListClient({
             <I.Search size={12} /> {interpretacion.tipo === 'monto' ? `Buscar ${Q(interpretacion.monto)} ±${Q(criteriosBase.tol ?? TOLERANCIA_DEFAULT)}` : `Buscar entre ${Q(interpretacion.desde)} y ${Q(interpretacion.hasta)}`} en todas
           </button>
         )}
+        {interpretacion.tipo === 'texto' && (
+          <button type="button" className="badge badge-outline" style={{ fontSize: 11.5, padding: '4px 10px', cursor: 'pointer', display: 'inline-flex', gap: 6, alignItems: 'center' }} onClick={buscarEnServidor} data-accion="buscar-texto" title="Busca el cliente (nombre, razón social, nombre comercial, alias o NIT) o el número en todas las facturas, de cualquier mes">
+            <I.Search size={11} /> Enter para buscar «{interpretacion.texto}» en todas
+          </button>
+        )}
         <button type="button" className={'btn ' + (masFiltros ? 'btn-secondary' : 'btn-ghost')} style={{ fontSize: 12 }} onClick={() => setMasFiltros(v => !v)} aria-expanded={masFiltros} data-accion="mas-filtros"><I.Filter size={12} /> Más filtros</button>
-        {!busqueda && (
+        {!busqueda && !cartera && (
           <div style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--ink-3)' }}>
             <span>{rows.length} resultados</span>
             <span style={{ margin: '0 8px', color: 'var(--line-2)' }}>·</span>
@@ -442,7 +469,9 @@ export function FacturasListClient({
       {busqueda && <ChipBusqueda criterios={busqueda.criterios} />}
       {busqueda && <ResultadosBusqueda resultado={busqueda.resultado} criterios={busqueda.criterios} />}
 
-      {!busqueda && <>
+      {!busqueda && cartera && <CarteraTabla filas={cartera.filas} hoy={cartera.hoy} orden={cartera.orden} dir={cartera.dir} filtro={cartera.filtro} kpiPromesas={cartera.kpiPromesas} conteoFiltros={cartera.conteoFiltros} search={search} clientes={clientes} error={cartera.error} />}
+
+      {!busqueda && !cartera && <>
 
       <div className="table-wrap" style={{ borderRadius: '0 0 var(--r-3) var(--r-3)', borderTop: 'none' }}>
         <table className="table">

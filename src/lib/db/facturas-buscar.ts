@@ -26,7 +26,7 @@ export interface ResultadoBusqueda {
 }
 export const TOPE_FILAS_BUSQUEDA = 500;
 
-type FilaFactura = { id: string; airtable_id: string | null; no_factura: string | null; cliente_id: string | null; fecha_emision: string | null; subtotal: number | string | null; iva: number | string | null; total: number | string | null; estado: string | null; cliente: { airtable_id: string | null; razon_social: string | null; nombre_empresa: string | null; nit: string | null } | null };
+type FilaFactura = { id: string; airtable_id: string | null; no_factura: string | null; cliente_id: string | null; fecha_emision: string | null; subtotal: number | string | null; iva: number | string | null; total: number | string | null; estado: string | null; cliente: { airtable_id: string | null; razon_social: string | null; nombre_empresa: string | null; nit: string | null; nombre_comercial?: string | null; aliases?: string[] | null } | null };
 type FilaCobro = { factura_id: string | null; monto_cobrado: number | string | null; fecha_cobro: string | null; estado_cobro: string | null };
 type FilaNc = { factura_id: string | null; monto: number | string | null; estado: string | null };
 
@@ -76,6 +76,7 @@ export function consolidarParaBusqueda(filas: FilaFactura[], cobros: FilaCobro[]
     out.push({
       id: String(principal.airtable_id ?? principal.id), noFactura: String(principal.no_factura ?? '').trim(), fechaEmision: String(principal.fecha_emision ?? '').slice(0, 10),
       clienteId: cli?.airtable_id ?? principal.cliente_id ?? null, clienteNombre: String(cli?.nombre_empresa || cli?.razon_social || '').trim(), nit: String(cli?.nit ?? '').trim(),
+      clienteNombres: [cli?.razon_social, cli?.nombre_comercial, ...(Array.isArray(cli?.aliases) ? cli!.aliases! : [])].map(x => String(x ?? '').trim()).filter(Boolean),
       total, subtotal, iva, cobrado, ncs: ncsMonto, saldo, cobrada,
       estado: inactiva ? (estadoFacturaCanon(principal.estado).startsWith('REFACTURAD') ? 'refacturada' : 'anulada') : estadoDe(estados, cobrada),
       fechaCobro, lineas: lineas.length,
@@ -97,7 +98,7 @@ export function resultadoDe(facturas: FacturaBuscada[], c: CriteriosBusqueda): R
 /** Todas las facturas consolidadas para la búsqueda (tres lecturas: facturas con cliente, cobros, NC). Solo Supabase. */
 export async function facturasParaBusqueda(): Promise<FacturaBuscada[]> {
   const [filas, cobros, ncs] = await Promise.all([
-    fetchAll<FilaFactura>('facturas_clientes', { select: 'id, airtable_id, no_factura, cliente_id, fecha_emision, subtotal, iva, total, estado, cliente:clientes(airtable_id, razon_social, nombre_empresa, nit)' }),
+    fetchAll<FilaFactura>('facturas_clientes', { select: 'id, airtable_id, no_factura, cliente_id, fecha_emision, subtotal, iva, total, estado, cliente:clientes(airtable_id, razon_social, nombre_empresa, nit, nombre_comercial, aliases)' }),
     fetchAll<FilaCobro>('cobros_clientes', { select: 'factura_id, monto_cobrado, fecha_cobro, estado_cobro' }),
     fetchAll<FilaNc>('notas_credito', { select: 'factura_id, monto, estado' }).catch(() => [] as FilaNc[]),
   ]);

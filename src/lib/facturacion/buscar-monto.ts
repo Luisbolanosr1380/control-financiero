@@ -10,6 +10,8 @@
  *  - el filtro y el orden sobre facturas ya consolidadas (una factura = la suma de sus líneas vivas).
  */
 
+import { coincideCliente, normalizarBusqueda } from '@/lib/clientes/buscar';
+
 export type SobreMonto = 'total' | 'subtotal' | 'saldo';
 export type EstadoBusqueda = 'todas' | 'pagadas' | 'pendientes' | 'parcial' | 'anuladas';
 export const TOLERANCIA_DEFAULT = 1;   // ±Q1: los depósitos llegan con centavos de diferencia
@@ -57,9 +59,9 @@ export function interpretarBusqueda(entrada: string): Interpretacion {
   return { tipo: 'texto', texto: t };
 }
 
-/** true si hay algo que buscar en el servidor (monto, rango, estado distinto de todas o fechas). El texto solo, no. */
+/** true si hay algo que buscar en el servidor: monto, rango, estado distinto de todas, fechas o TEXTO (cliente, NIT o número; SEGUIMIENTO DE COBRO: «fogel» con Enter busca en todas las facturas, sin el mes). */
 export const hayBusquedaServidor = (c: CriteriosBusqueda): boolean =>
-  c.monto !== undefined || c.desde !== undefined || c.hasta !== undefined || c.estado !== 'todas' || !!c.emisionDesde || !!c.emisionHasta;
+  c.monto !== undefined || c.desde !== undefined || c.hasta !== undefined || c.estado !== 'todas' || !!c.emisionDesde || !!c.emisionHasta || !!c.texto;
 
 const num = (v: string | null | undefined): number | undefined => { const n = Number(String(v ?? '').replace(/,/g, '')); return v != null && v !== '' && Number.isFinite(n) && n >= 0 ? Math.round(n * 100) / 100 : undefined; };
 const fecha = (v: string | null | undefined): string | undefined => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(v)) ? v : undefined);
@@ -125,12 +127,20 @@ export interface FacturaBuscable {
   total: number; subtotal: number; saldo: number;
   /** regla 026 (facturacion_factura_cobrada): todas las líneas vivas cobradas */ cobrada: boolean;
   estado: EstadoFila;
+  /** otros nombres del cliente (razón social, nombre comercial, aliases): la búsqueda por texto los mira todos */ clienteNombres?: string[];
 }
 
 export const montoSegun = (f: Pick<FacturaBuscable, 'total' | 'subtotal' | 'saldo'>, sobre: SobreMonto): number => sobre === 'subtotal' ? f.subtotal : sobre === 'saldo' ? f.saldo : f.total;
 
-const normalizarTexto = (s: string) => s.normalize('NFKD').replace(/[̀-ͯ]/g, '').toLowerCase();
 const EPS = 0.005;
+
+/** Texto contra número de factura, NIT y TODOS los nombres del cliente (nombre, razón social, nombre comercial, aliases), sin tildes ni mayúsculas (src/lib/clientes/buscar.ts). */
+export const coincideTexto = (f: Pick<FacturaBuscable, 'noFactura' | 'clienteNombre' | 'nit' | 'clienteNombres'>, texto: string): boolean => {
+  const t = normalizarBusqueda(texto);
+  if (!t) return true;
+  if (normalizarBusqueda(f.noFactura).includes(t)) return true;
+  return coincideCliente({ id: f.noFactura, name: f.clienteNombre, nit: f.nit, aliases: f.clienteNombres ?? null }, texto);
+};
 
 export function coincideCriterios(f: FacturaBuscable, c: CriteriosBusqueda): boolean {
   const esAnulada = f.estado === 'anulada' || f.estado === 'refacturada';
@@ -147,10 +157,7 @@ export function coincideCriterios(f: FacturaBuscable, c: CriteriosBusqueda): boo
   if (c.hasta !== undefined && m > c.hasta + EPS) return false;
   if (c.emisionDesde && f.fechaEmision < c.emisionDesde) return false;
   if (c.emisionHasta && f.fechaEmision > c.emisionHasta) return false;
-  if (c.texto) {
-    const t = normalizarTexto(c.texto);
-    if (!normalizarTexto(f.noFactura).includes(t) && !normalizarTexto(f.clienteNombre).includes(t) && !normalizarTexto(f.nit).includes(t)) return false;
-  }
+  if (c.texto && !coincideTexto(f, c.texto)) return false;
   return true;
 }
 
