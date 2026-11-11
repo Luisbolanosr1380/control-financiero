@@ -9,12 +9,16 @@ import { procesosDeFactura } from '@/lib/db/facturacion-agenda';
 import { getSesion } from '@/lib/auth/guard';
 import { FacturaDetalle } from '@/components/facturas/factura-detalle';
 import { getSeguimientoFactura } from '@/lib/db/cobranza-facturas';
+import { prellenadoDesdeParams } from '@/lib/cobros/identificar';
 import { I } from '@/components/common/icons';
 
 export const revalidate = 30;
 
-export default async function FacturaDetallePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function FacturaDetallePage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { id } = await params;
+  // IDENTIFICAR PAGO: ?cobro=442.77&retiva=7.23 abre el modal «Registrar cobro» prellenado (solo si el rol puede registrar)
+  const sp = await searchParams;
+  const prellenadoCobro = prellenadoDesdeParams(k => { const v = sp[k]; return Array.isArray(v) ? v[0] : v; });
   const factura = await getFactura(id);
 
   if (!factura) {
@@ -63,6 +67,7 @@ export default async function FacturaDetallePage({ params }: { params: Promise<{
       nombresCC={nombresCC}
       procesosAgenda={procesosAgenda}
       seguimiento={seguimiento}
+      prellenadoCobro={prellenadoCobro}
     />
   );
 }

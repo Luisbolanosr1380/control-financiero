@@ -10,6 +10,7 @@ import { EditarFacturaButton } from '@/components/facturas/editar-factura-button
 import { EmitirNCButton } from '@/components/facturas/emitir-nc-button';
 import { NotasCreditoSection } from '@/components/facturas/notas-credito-section';
 import { RegistrarCobroButton } from '@/components/facturas/registrar-cobro-button';
+import type { PrellenadoCobro } from '@/lib/cobros/identificar';
 import { AnularCobroButton } from '@/components/facturas/anular-cobro-button';
 import { HelpButton } from '@/components/ayuda/help-button';
 import type { Banco } from '@/lib/db/bancos';
@@ -46,6 +47,8 @@ interface Props {
   procesosAgenda?: ProcesosDeFactura | null;
   /** SEGUIMIENTO DE COBRO: estado de cobro, promesa, contacto e historial de cobranza de esta factura. */
   seguimiento?: SeguimientoDeFactura | null;
+  /** IDENTIFICAR PAGO: cobro + retención calculados para abrir el modal de cobro prellenado */
+  prellenadoCobro?: PrellenadoCobro | null;
 }
 
 const formatFechaShort = (s: string): string =>
@@ -78,7 +81,7 @@ function dedupeComponentes(g: GrupoCobro): { metodo: string; bancoNombre: string
   return [...buckets.values()];
 }
 
-export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros, notasCredito, esAdmin, nombresCC = {}, procesosAgenda = null, seguimiento = null }: Props) {
+export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendiente, cobros, notasCredito, esAdmin, nombresCC = {}, procesosAgenda = null, seguimiento = null, prellenadoCobro = null }: Props) {
   const badge = STATUS_BADGE[inv.status] ?? { cls: 'badge-mute', text: inv.status };
   // Línea = CC real de la base; fallback legacy a LINES si no hay centroCostoId.
   const nombreLinea = (l: { line: Invoice['line']; centroCostoId?: string }): string =>
@@ -164,6 +167,7 @@ export function FacturaDetalle({ factura: inv, clienteNombre, bancos, saldoPendi
               status={inv.status}
               estadoBruto={inv.estadoBruto === 'cobrado_parcial' ? 'COBRADO PARCIAL' : undefined}
               bancos={bancos}
+              prefill={prellenadoCobro ?? null}
             />
             <HelpButton tag="registrar-cobro" />
           </span>

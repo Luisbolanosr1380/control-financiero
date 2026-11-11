@@ -12,6 +12,7 @@ import { registrarCobroAction } from '@/app/(app)/facturacion/[id]/actions';
 import type { Banco } from '@/lib/db/bancos';
 import type { MetodoCobro, MonedaCobro, ComponenteCobro } from '@/lib/db/cobros';
 import type { InvoiceStatus } from '@/lib/types';
+import type { PrellenadoCobro } from '@/lib/cobros/identificar';
 
 interface Props {
   noFactura: string;
@@ -20,6 +21,8 @@ interface Props {
   status: InvoiceStatus;
   estadoBruto?: string;     // F-035: si es 'COBRADO PARCIAL' habilita seguir cobrando
   bancos: Banco[];
+  /** IDENTIFICAR PAGO: abre el modal de entrada con el depósito y la retención calculada como componentes. */
+  prefill?: PrellenadoCobro | null;
 }
 
 const METODOS: { value: MetodoCobro; label: string; esRetencion: boolean }[] = [
@@ -59,9 +62,9 @@ function nuevoComponente(): ComponenteUI {
   };
 }
 
-function RegistrarCobroButtonInner({ noFactura, total, saldoPendiente, status, estadoBruto, bancos }: Props) {
+function RegistrarCobroButtonInner({ noFactura, total, saldoPendiente, status, estadoBruto, bancos, prefill }: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(!!prefill);
 
   // F-035: además de EMITIDA/PENDIENTE, COBRADO PARCIAL permite seguir cobrando.
   const cobrable =
@@ -78,7 +81,7 @@ function RegistrarCobroButtonInner({ noFactura, total, saldoPendiente, status, e
 
   return (
     <>
-      <button className="btn btn-primary" onClick={() => setOpen(true)}>
+      <button className="btn btn-primary" onClick={() => setOpen(true)} data-accion="registrar-cobro">
         <I.Coins size={13} /> Registrar cobro
       </button>
       {open && (
@@ -87,6 +90,7 @@ function RegistrarCobroButtonInner({ noFactura, total, saldoPendiente, status, e
           total={total}
           saldoPendiente={saldoPendiente}
           bancos={bancos}
+          prefill={prefill ?? null}
           onClose={() => setOpen(false)}
           onSuccess={() => {
             setOpen(false);
@@ -103,20 +107,28 @@ interface ModalProps {
   total: number;
   saldoPendiente: number;
   bancos: Banco[];
+  prefill?: PrellenadoCobro | null;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSuccess }: ModalProps) {
+/** IDENTIFICAR PAGO: componentes iniciales desde el prellenado (depósito al banco + retención IVA / ISR); si no, uno vacío. */
+function componentesIniciales(bancos: Banco[], prefill: PrellenadoCobro | null | undefined): ComponenteUI[] {
+  const base = nuevoComponente();
+  base.bancoId = bancos[0]?.id;
+  if (!prefill || !(prefill.monto > 0)) return [base];
+  const out: ComponenteUI[] = [{ ...base, monto: round2(prefill.monto), montoStr: prefill.monto.toFixed(2) }];
+  if (prefill.retIva > 0) out.push({ ...nuevoComponente(), metodo: 'Retención IVA', bancoId: undefined, monto: round2(prefill.retIva), montoStr: prefill.retIva.toFixed(2) });
+  if (prefill.retIsr > 0) out.push({ ...nuevoComponente(), metodo: 'Retención ISR', bancoId: undefined, monto: round2(prefill.retIsr), montoStr: prefill.retIsr.toFixed(2) });
+  return out;
+}
+
+function CobroModal({ noFactura, total, saldoPendiente, bancos, prefill, onClose, onSuccess }: ModalProps) {
   const hoy = obtenerFechaHoyGuatemala();
   const [fecha, setFecha]         = useState(hoy);
   const [moneda, setMoneda]       = useState<MonedaCobro>('GTQ');
   const [tipoCambio, setTipoCambio] = useState<string>('1');
-  const [componentes, setComponentes] = useState<ComponenteUI[]>(() => {
-    const c = nuevoComponente();
-    c.bancoId = bancos[0]?.id;
-    return [c];
-  });
+  const [componentes, setComponentes] = useState<ComponenteUI[]>(() => componentesIniciales(bancos, prefill));
   const [confirmando, setConfirmando] = useState(false);
   const [loading, setLoading]         = useState(false);
 
@@ -255,6 +267,7 @@ function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSucce
     >
       <div
         onClick={(e) => e.stopPropagation()}
+        data-modal="registrar-cobro" data-prellenado={prefill ? '1' : '0'}
         style={{
           width: 'min(720px, 96vw)', maxHeight: '92vh',
           background: 'var(--paper)', borderRadius: 'var(--r-3)',
@@ -368,6 +381,7 @@ function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSucce
                           value={c.metodo}
                           onChange={(e) => handleMetodoChange(c.uid, e.target.value as MetodoCobro)}
                           disabled={loading}
+                          data-componente-metodo
                         >
                           {METODOS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
                         </select>
@@ -382,6 +396,7 @@ function CobroModal({ noFactura, total, saldoPendiente, bancos, onClose, onSucce
                           placeholder="0.00"
                           onChange={(e) => handleMontoChange(c.uid, e.target.value)}
                           disabled={loading}
+                          data-componente-monto
                         />
                       </div>
                       {!ret ? (
