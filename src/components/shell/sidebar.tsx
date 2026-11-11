@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import type { Role } from '@/lib/auth/allowlist';
 import { PERMISSIONS } from '@/lib/auth/permissions';
-import { puede, type Accion } from '@/lib/auth/roles';
+import { puede, type Accion, rutaPermitidaParaRol } from '@/lib/auth/roles';
 
 interface NavItem {
   href: string;
@@ -49,6 +49,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
   const groups: NavGroup[] = [
     { group: 'Operación', items: [
       { href: '/dashboard',    label: 'Dashboard',    icon: 'Dashboard' },
+      ...(p('ver_cobranza') ? [{ href: '/cobranza', label: 'Centro de Cobros', icon: 'Phone' as IconName }] : []),   // CENTRO DE COBROS (033)
       { href: '/facturacion',  label: 'Facturación',  icon: 'Receipt', badge: facturasBadge },
       { href: '/facturacion/pendientes', label: 'Pendientes de cobro', icon: 'Clock' },   // F-CXC-PEND
       { href: '/reportes/facturacion', label: 'Reporte Facturación', icon: 'TrendUp' },   // F-REPORTE-FACTURACION
@@ -112,6 +113,8 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
     ...(opts.multiEmpresa ? [{ href: '/empresas', label: 'Cambiar de empresa', icon: 'Bank' as IconName }] : []),
   ]});
 
+  // CENTRO DE COBROS (033): el rol cobranza ve solo sus pantallas (el layout de la app redirige el resto).
+  if (rol === 'cobranza') return groups.map(g => ({ ...g, items: g.items.filter(it => rutaPermitidaParaRol('cobranza', it.href)) })).filter(g => g.items.length > 0);
   return groups;
 }
 

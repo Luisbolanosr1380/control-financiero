@@ -20,7 +20,7 @@ interface Props {
   colorMarca: string;
 }
 
-const ROL_LABEL: Record<Role, string> = { admin: 'Admin', contador: 'Contador', auxiliar: 'Auxiliar', lectura: 'Solo lectura' };
+const ROL_LABEL: Record<Role, string> = { admin: 'Admin', contador: 'Contador', auxiliar: 'Auxiliar', lectura: 'Solo lectura', cobranza: 'Cobranza' };
 const SECCION: Record<SeccionMovil, { href: string; label: string; Icono: typeof Sparkles }> = {
   auros: { href: '/m/auros', label: 'Auros', Icono: Sparkles },
   captura: { href: '/m/captura', label: 'Capturar', Icono: Camera },

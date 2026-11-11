@@ -77,7 +77,7 @@ export function PendientesCobroClient({ data, gestiones, etiquetasFacturas = {} 
   // F-COBRANZA: promesa vigente de una fila — la específica de la factura
   // pisa a la general del cliente.
   const promesaDe = (f: FacturaPendiente): { fecha: string; vencida: boolean } | null => {
-    const porFac = gestiones.porFactura[f.id];
+    const porFac = gestiones.porFactura[f.noFactura];
     if (porFac) return { fecha: porFac.fechaPromesa, vencida: porFac.promesaVencida };
     const porCli = gestiones.porCliente[f.custId];
     if (porCli?.fechaPagoPromesa) return { fecha: porCli.fechaPagoPromesa, vencida: porCli.promesaVencida };

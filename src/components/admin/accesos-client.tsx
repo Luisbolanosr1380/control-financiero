@@ -32,7 +32,7 @@ interface Props {
 type Mapa = Record<string, Rol | ''>;   // slug → rol ('' = sin acceso)
 
 const ROL_CLS: Record<Rol, string> = {
-  admin: 'badge-wine', contador: 'badge-olive', auxiliar: 'badge-outline', lectura: 'badge-mute',
+  admin: 'badge-wine', contador: 'badge-olive', auxiliar: 'badge-outline', lectura: 'badge-mute', cobranza: 'badge-warn',
 };
 
 const aMapa = (accesos: Acceso[]): Mapa => Object.fromEntries(accesos.map(a => [a.empresa_slug, a.rol]));

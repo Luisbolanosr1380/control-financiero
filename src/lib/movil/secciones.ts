@@ -24,6 +24,7 @@ export const HOME_POR_ROL: Record<Rol, SeccionMovil> = {
   lectura: 'auros',
   contador: 'captura',
   auxiliar: 'captura',
+  cobranza: 'resumen',
 };
 
 export const ACCION_CAPTURA: Record<TipoCaptura, Accion> = {

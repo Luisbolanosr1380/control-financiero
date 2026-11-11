@@ -245,8 +245,10 @@ export async function marcarAprobada(id: string, input: { aprobadoPor: string; c
   const quien = String(input.aprobadoPor ?? '').trim().replace(/\s+/g, ' ').slice(0, 200);
   if (!quien) return { ok: false, error: 'Indicá quién aprobó el detalle del lado del cliente.' };
   const canal: CanalAprobacion = input.canal === 'link' || input.canal === 'otro' || input.canal === 'papel' ? input.canal : 'correo';
-  void actor;   // quien registra la aprobación queda en el log de la app; el detalle guarda quién aprobó del lado del cliente
-  return transicion(id, 'aprobada', { aprobada_en: new Date().toISOString(), aprobado_por: quien, aprobado_canal: canal });
+  const r = await transicion(id, 'aprobada', { aprobada_en: new Date().toISOString(), aprobado_por: quien, aprobado_canal: canal });
+  // CENTRO DE COBROS (033): la aprobación entra al historial de cobranza del cliente (fail-soft)
+  if (r.ok) { try { const { registrarEventoAutomatico } = await import('./cobranza'); await registrarEventoAutomatico({ idApp: r.detalle.clienteId ?? `n-${r.detalle.nit}` }, { tipo: 'detalle_aprobado', comentario: `Detalle ${r.detalle.correlativo} aprobado por ${quien} (${canal})`, monto: r.detalle.total, actor, datos: { detalleId: id, canal } }); } catch { /* sin historial */ } }
+  return r;
 }
 
 /** 029: quita una línea del detalle (borrador / con observaciones): la prueba vuelve a la cola, los totales se recalculan; opcionalmente queda diferida. */

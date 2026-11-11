@@ -124,6 +124,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
         <div className="page-actions">
           {datos.nit && sinTarifa > 0 && puedeFacturar && !generando && <button className="btn btn-secondary" onClick={() => setGenerando(true)} data-accion="generar-tarifas"><I.Plus size={13} /> Generar tarifas faltantes</button>}
           {datos.nit && <Link href={`/tarifario/${encodeURIComponent(datos.nit)}`} className="btn btn-ghost"><I.Coins size={13} /> Tarifario del cliente</Link>}
+          {datos.nit && <Link href={`/cobranza/${encodeURIComponent('n-' + datos.nit)}`} className="btn btn-ghost" data-accion="ir-cobranza"><I.Phone size={13} /> Cobranza</Link>}
         </div>
       </div>
 

@@ -91,6 +91,8 @@ export async function emitirLinkDetalle(id: string, actor: { email: string; nomb
       await registrarEnvio(id, version, link.id, 'envio', destinatarios, cc, asunto, res.modo === 'sin_llave' ? 'copiar_link' : 'resend', res.modo === 'sin_llave' ? 'sin_llave' : 'error', null, res.error, actor.email);
     }
   }
+  // CENTRO DE COBROS (033): el envío del detalle entra al historial de cobranza del cliente (fail-soft)
+  try { const { registrarEventoAutomatico } = await import('./cobranza'); await registrarEventoAutomatico({ idApp: datos.clienteAppId ?? `n-${d.nit}` }, { tipo: 'detalle_enviado', comentario: `Detalle ${d.correlativo} v${version} enviado${destinatarios.length ? ` a ${destinatarios.join(', ')}` : ' (link para copiar)'} · ${datos.documento.incluidas.length} pruebas · Q${datos.documento.total.toFixed(2)}`, monto: datos.documento.total, actor: actor.email, datos: { detalleId: id, version } }); } catch { /* sin historial */ }
   return { ok: true, detalle, link, url, huella, correo };
 }
 
@@ -190,6 +192,8 @@ export async function responderLinkPublico(envio: EnvioCliente, meta: MetaPetici
   const r = data as { estado: 'aprobada' | 'con_observaciones'; observaciones: number; version: number };
   const { data: lk } = await sb.from('detalle_facturacion_link').select('id, detalle_id').eq('token_hash', th).maybeSingle();
   await marcarAperturaRespondio(String((lk as { id?: string } | null)?.id ?? ''), meta);
+  // CENTRO DE COBROS (033): la respuesta del cliente entra a su historial de cobranza (fail-soft)
+  try { const dd = await getDetalleBasico(String((lk as { detalle_id?: string } | null)?.detalle_id ?? '')); if (dd) { const { registrarEventoAutomatico } = await import('./cobranza'); await registrarEventoAutomatico({ idApp: dd.clienteId ?? `n-${dd.nit}` }, { tipo: r.estado === 'aprobada' ? 'detalle_aprobado' : 'detalle_observaciones', comentario: r.estado === 'aprobada' ? `Detalle ${dd.correlativo} aprobado y firmado por link` : `Detalle ${dd.correlativo}: el cliente mandó ${r.observaciones} observaciones`, monto: dd.total, datos: { detalleId: dd.id, version: r.version } }); } } catch { /* sin historial */ }
   return { ok: true, estado: r.estado, observaciones: Number(r.observaciones ?? 0), detalleId: String((lk as { detalle_id?: string } | null)?.detalle_id ?? ''), version: Number(r.version) };
 }
 

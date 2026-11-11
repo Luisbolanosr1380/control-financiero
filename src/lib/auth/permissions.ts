@@ -54,6 +54,8 @@ export const PERMISSIONS: Record<Role, PermisosRol> = {
     verAnaliticaAvanzada: false,
   },
   lectura: { ...AI_LIMITADA, gestionUsuarios: false, crearEditar: false },
+  // CENTRO DE COBROS (033): sin IA general ni analítica; lo suyo pasa por la matriz de roles.ts
+  cobranza: { aurosChat: false, aurosLimiteMensual: 0, analisisManual: false, analisisManualVentanaTiempo: false, gestionUsuarios: false, crearEditar: true, verAnaliticaAvanzada: false },
 };
 
 type PermisoBooleano = {
