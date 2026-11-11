@@ -17,6 +17,7 @@ import { Q } from '@/lib/utils';
 import { formatearFechaConHora } from '@/lib/utils/fechas';
 import { reresolverPreciosAction, sincronizarAgendaAction } from '@/app/(app)/por-facturar/actions';
 import { filtrarGrupos, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
+import { estadoEfectivo, type Paquete } from '@/lib/paquetes/paquete';
 import type { EmpresaNoFactura, SyncEstado } from '@/lib/facturacion-agenda/tipos';
 import { quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
 import { SinMapearLista } from './sin-mapear-lista';
@@ -27,10 +28,11 @@ import { badgeVisto, type ResumenAperturas } from '@/lib/detalle-link/aperturas'
 import { formatearFechaCompacta } from '@/lib/utils/fechas';
 import { formatearFechaCorta } from '@/lib/utils/fechas';
 
-interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; noFacturan: EmpresaNoFactura[]; clientes: ClienteSlim[]; detalles: VistaPorFacturar['detalles']; detallesLista: DetalleFacturacion[]; agregadoEnSql: boolean; /** 031: resumen de aperturas del último link por detalle enviado (Visto / Sin abrir) */ aperturas?: Record<string, ResumenAperturas>; /** 032: detalles con el papel firmado subido */ firmados?: string[] }
+interface Props { disponible: boolean; configurada: boolean; writeback: boolean; grupos: GrupoCliente[]; kpis: KpisPorFacturar; sync: SyncEstado | null; total: number; sinMapear: { expedientes: number; empresas: number }; noFacturan: EmpresaNoFactura[]; clientes: ClienteSlim[]; detalles: VistaPorFacturar['detalles']; detallesLista: DetalleFacturacion[]; agregadoEnSql: boolean; /** 031: resumen de aperturas del último link por detalle enviado (Visto / Sin abrir) */ aperturas?: Record<string, ResumenAperturas>; /** 032: detalles con el papel firmado subido */ firmados?: string[]; /** 034: paquetes prepagados vigentes por NIT */ paquetesPorNit?: Record<string, Paquete[]> }
 type Pestana = 'facturables' | 'sin_mapear' | 'no_facturan' | 'detalles';
 
-export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, noFacturan, clientes, detalles, detallesLista, agregadoEnSql, aperturas = {}, firmados = [] }: Props) {
+const hoyGt = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' });
+export function PorFacturarClient({ disponible, configurada, writeback, grupos, kpis, sync, total, sinMapear, noFacturan, clientes, detalles, detallesLista, agregadoEnSql, aperturas = {}, firmados = [] , paquetesPorNit }: Props) {
   const [pestana, setPestana] = useState<Pestana>('facturables');
   const router = useRouter();
   const puede = usePuede();
@@ -166,6 +168,7 @@ export function PorFacturarClient({ disponible, configurada, writeback, grupos, 
                     {!g.sinMapear && !g.sinTarifa && g.listos > 0 && <span className="badge badge-olive" style={{ fontSize: 10 }}>Listo</span>}
                     {!g.sinMapear && !g.sinTarifa && !g.listos && <span className="badge badge-mute" style={{ fontSize: 10 }}>Al día</span>}
                     {g.conMegapaca > 0 && <span className="badge badge-outline" style={{ fontSize: 10, marginLeft: 4 }} title="Expedientes con cobro Megapaca aparte">Megapaca</span>}
+                    {g.nit && (paquetesPorNit?.[g.nit] ?? []).map(pq => { const est = estadoEfectivo(pq, hoyGt); return est === 'por_agotarse' || est === 'agotado' || est === 'vence_pronto' || est === 'vencido' ? <span key={pq.id} className={'badge ' + (est === 'por_agotarse' || est === 'vence_pronto' ? 'badge-warn' : 'badge-wine')} style={{ fontSize: 10, marginLeft: 4 }} data-badge-paquete={est} title={`Paquete ${pq.correlativo}`}>{est === 'por_agotarse' ? 'Por agotarse' : est === 'agotado' ? 'Agotado' : est === 'vence_pronto' ? 'Vence pronto' : 'Paquete vencido'}</span> : <span key={pq.id} className="badge badge-outline" style={{ fontSize: 10, marginLeft: 4 }} data-badge-paquete={est} title={`Paquete ${pq.correlativo}`}>Paquete</span>; })}
                   </td>
                 </tr>
               );

@@ -95,6 +95,7 @@ export function canonTipoPrueba(s: string | null | undefined): string {
   if (c.includes('INSIGHT'))  return 'INSIGHT';
   if (c.includes('MIDOT'))    return 'MIDOT';
   if (c.includes('BACKGROUND')) return 'BACKGROUND CHECK';
+  if (c.includes('PSICOMETRIC')) return 'PSICOMETRICAS';   // 034: servicio canónico de las psicométricas (solo las descuenta un paquete prepagado; no se tarifan)
   if (/\bPDA\b/.test(normalizarTexto(s))) return 'PDA';
   return normalizarTexto(s);
 }

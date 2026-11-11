@@ -4,6 +4,8 @@ import { listarHistorialPorNit, listarTarifasPorNit, tarifarioDisponible, umbral
 import { antiguedades, ultimoCambioPrecio } from '@/lib/tarifario/antiguedad';
 import { nitComparable } from '@/lib/clientes/nit';
 import { EmpresaDetalle } from '@/components/tarifario/empresa-detalle';
+import { listarPaquetes } from '@/lib/db/paquetes';
+import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,8 +19,9 @@ export default async function TarifarioEmpresaPage({ params }: { params: Promise
   const k = nitComparable(decodeURIComponent(nit));
   if (!k) notFound();
   if (!(await tarifarioDisponible())) notFound();
-  const [tarifas, historial] = await Promise.all([listarTarifasPorNit(k), listarHistorialPorNit(k)]);
+  // 034: paquetes prepagados del cliente (sección «Paquetes»)
+  const [tarifas, historial, paquetes] = await Promise.all([listarTarifasPorNit(k), listarHistorialPorNit(k), listarPaquetes(k)]);
   if (tarifas.length === 0) notFound();
   const umbralMeses = umbralEstancada();
-  return <EmpresaDetalle nit={k} tarifas={tarifas} antiguedad={antiguedades(tarifas, ultimoCambioPrecio(historial), umbralMeses)} umbralMeses={umbralMeses} />;
+  return <EmpresaDetalle nit={k} tarifas={tarifas} antiguedad={antiguedades(tarifas, ultimoCambioPrecio(historial), umbralMeses)} umbralMeses={umbralMeses} paquetes={paquetes} hoy={obtenerFechaHoyGuatemala()} />;
 }

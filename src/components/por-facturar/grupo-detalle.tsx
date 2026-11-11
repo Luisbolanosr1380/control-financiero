@@ -16,6 +16,8 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
+import { BADGE_ESTADO, ETIQUETA_ESTADO, estadoEfectivo, textoBanner } from '@/lib/paquetes/paquete';
+import { NOMBRE_SERVICIO } from '@/lib/facturacion-agenda/situacion';
 import { Q } from '@/lib/utils';
 import { crearDetalleAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
 import { armarFactura, centroPorServicio, enCola, esMitadDeCompleto, facturable, montoFacturable, montoFacturableConIva, pruebaEnCola, pruebasEnCola, pruebasFacturables, pruebasParaFactura, pruebasPendientes } from '@/lib/facturacion-agenda/mapeo';
@@ -131,6 +133,17 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
       {generando && generarInicial && datos.nit && <div className="card" role="status" data-recien-mapeado style={{ borderColor: 'var(--olive)', marginBottom: 10 }}><div className="card-pad" style={{ fontSize: 13 }}><strong>{datos.nombre}</strong> quedó creado y mapeado a <strong>{datos.nombreExterno || 'la empresa de la Agenda'}</strong>. Si todavía no tiene tarifario, generalo acá abajo: las filas nacen en Q0 y al cargar el precio los expedientes se resuelven solos.</div></div>}
       {generando && datos.nit && <GenerarTarifas nit={datos.nit} razonSocial={datos.nombre} modo="tarjeta" />}
       {datos.noFactura && <NoFacturaBanner datos={datos} puede={puedeFacturar} />}
+      {/* 034: paquetes prepagados activos del cliente: remanente por línea; las pruebas cubiertas se ven abajo como «Cubierta por PAQ-…» */}
+      {datos.paquetes?.filter(pq => pq.estado !== 'cerrado').map(pq => { const est = estadoEfectivo(pq, hoyGt); return (
+        <div key={pq.id} className="card" role="status" data-banner-paquete={pq.correlativo} data-estado={est} style={{ marginBottom: 10, borderColor: est === 'activo' ? 'var(--olive)' : est === 'cerrado' ? 'var(--line-2)' : 'var(--burnt, #b5651d)' }}>
+          <div className="card-pad" style={{ fontSize: 13, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span><I.Coins size={13} /> <strong>{textoBanner(pq, s => NOMBRE_SERVICIO[s] ?? (s === 'PSICOMETRICAS' ? 'Psicométricas' : s))}</strong></span>
+            <span className={'badge ' + BADGE_ESTADO[est]} data-badge-estado={est}>{ETIQUETA_ESTADO[est]}</span>
+            <span className="cell-mute" style={{ fontSize: 12 }}>{est === 'vencido' ? 'vencido: no descuenta; extendelo o cerralo en el detalle' : est === 'agotado' ? 'agotado: las siguientes pruebas se facturan a tarifa' : 'cada prueba terminada que calza se descuenta y no se factura'}</span>
+            <Link href={`/tarifario/paquetes/${pq.id}`} className="btn btn-ghost" style={{ marginLeft: 'auto', fontSize: 12 }} data-accion="ver-paquete">Detalle del paquete →</Link>
+          </div>
+        </div>
+      ); })}
       {datos.arranque && <div className="card" role="status" data-arranque style={{ marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Este cliente se factura por este flujo <strong>desde el {datos.arranque.facturarDesde}</strong>: <strong>{datos.arranque.fuera}</strong> expediente{datos.arranque.fuera === 1 ? '' : 's'} con ingreso anterior quedan <strong>fuera de la cola</strong> (histórico ya cubierto, p. ej. por provisión). Siguen en la lista, atenuados y marcados &quot;antes del arranque&quot;, para conciliar.</div></div>}
       {!datos.nit && !datos.noFactura && puedeFacturar && <MapearCliente datos={datos} />}
       {!datos.nit && !datos.noFactura && !puedeFacturar && <div className="card" role="status" style={{ borderColor: 'var(--wine)', marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}>Esta empresa de la Agenda todavía no está mapeada a un cliente: un admin o contador tiene que mapearla antes de facturar.</div></div>}
@@ -227,16 +240,17 @@ function ServicioCell({ e }: { e: ExpedienteLocal }) {
 
 function FilaExpediente({ e, p, primera, puede, sel, onToggle }: { e: ExpedienteLocal; p: PruebaLocal | null; primera: boolean; puede: boolean; sel: boolean; onToggle: () => void }) {
   const esFacturable = p ? pruebaEnCola(p, e) && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 : facturable(e);
+  const cubierta = p?.cubiertaPor ?? null;   // 034: cubierta por un paquete prepagado: sin checkbox, en gris, fuera de los totales
   const estadoCobro = [e.statusCobroExterno, e.estatusPagoExterno].filter(Boolean).join(' · ') || 'sin estado';
   const cobrada = !!p?.facturaId;
   const enColaP = !!p && pruebaEnCola(p, e);
-  const icono = cobrada ? '✅' : p ? (enColaP ? '🟡' : ICONO_SITUACION[p.situacion]) : '';
-  const etiqueta = cobrada ? `cobrada · factura ${p!.noFactura ?? ''}` : p ? (p.situacion === 'cobra' ? (enColaP ? 'por cobrar' : 'con resultado · fuera de la cola') : ETIQUETA_SITUACION[p.situacion].toLowerCase()) : '';
+  const icono = cobrada ? '✅' : cubierta ? '📦' : p ? (enColaP ? '🟡' : ICONO_SITUACION[p.situacion]) : '';
+  const etiqueta = cobrada ? `cobrada · factura ${p!.noFactura ?? ''}` : cubierta ? `cubierta por ${cubierta.correlativo}` : p ? (p.situacion === 'cobra' ? (enColaP ? 'por cobrar' : 'con resultado · fuera de la cola') : ETIQUETA_SITUACION[p.situacion].toLowerCase()) : '';
   const atenuada = p ? (!enColaP && !cobrada) : (!enCola(e) && !e.facturaId);
   const cat = p ? p.categoria : e.categoriaCanon, ter = p ? p.territorio : e.territorioResuelto;
   return (
-    <tr data-expediente={e.idExterno} data-prueba={p?.id ?? ''} data-situacion={p ? (cobrada ? 'cobrada' : enColaP ? 'en_cola' : p.situacion) : ''} style={{ opacity: atenuada ? 0.65 : 1 }}>
-      {puede && <td className="col-sel">{p ? <input type="checkbox" checked={sel} onChange={onToggle} disabled={!esFacturable} aria-label={`Seleccionar ${e.persona || e.idExterno} · ${p.servicio}`} /> : null}</td>}
+    <tr data-expediente={e.idExterno} data-prueba={p?.id ?? ''} data-situacion={p ? (cobrada ? 'cobrada' : cubierta ? 'cubierta' : enColaP ? 'en_cola' : p.situacion) : ''} data-cubierta-por={cubierta?.correlativo ?? ''} style={{ opacity: atenuada ? 0.65 : 1 }}>
+      {puede && <td className="col-sel">{p && !cubierta ? <input type="checkbox" checked={sel} onChange={onToggle} disabled={!esFacturable} aria-label={`Seleccionar ${e.persona || e.idExterno} · ${p.servicio}`} /> : null}</td>}
       <td className="col-persona">
         {primera ? <>
           <span className="cell-strong cell-ellipsis" title={e.persona || e.idExterno}>{e.persona || '—'}</span>
@@ -248,6 +262,7 @@ function FilaExpediente({ e, p, primera, puede, sel, onToggle }: { e: Expediente
         {p ? <>
           <div data-servicio={p.servicio}>{icono} {p.servicio === 'FEE VISITA SOCIO CANCELADO' ? resultadoLegible(p.servicio, p.estadoPrueba) : p.servicio}</div>
           <div className="cell-mute" style={{ fontSize: 11 }} title={p.motivo}>{etiqueta}{p.estadoPrueba ? ` · ${p.estadoPrueba}` : ''}</div>
+          {cubierta && <Link href={`/tarifario/paquetes/${cubierta.paqueteId}`} className="badge badge-mute" style={{ fontSize: 10, textDecoration: 'none' }} data-etiqueta-cubierta={cubierta.correlativo} title={`Pagada por adelantado con el paquete ${cubierta.correlativo}${cubierta.noFactura ? ` (factura ${cubierta.noFactura})` : ''}: no se vuelve a facturar`}>Cubierta por {cubierta.correlativo}</Link>}
           {p.diferidaHasta && diferidaVigente(p.diferidaHasta, new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' })) && <span className="badge badge-warn" style={{ fontSize: 10 }} data-diferida={p.diferidaHasta} title="El cliente pidió cobrarla el próximo mes (quedó fuera de un detalle); sigue en la cola">Diferida a {etiquetaMes(p.diferidaHasta.slice(0, 7))}</span>}
           {primera && esMitadDeCompleto(e) && <div className="cell-mute" style={{ fontSize: 11 }} title="La Agenda parte un completo en dos expedientes: esta fila cobra solo su prueba; la otra mitad es su propia fila.">COMPLETO · mitad</div>}
         </> : <ServicioCell e={e} />}

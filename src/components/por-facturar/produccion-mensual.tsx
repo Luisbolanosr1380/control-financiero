@@ -69,10 +69,11 @@ export function ProduccionMensualView({ datos, desde, hasta, disponible }: Props
         </div>
       </div>
 
-      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)', marginBottom: 14 }}>
+      <div className="kpi-grid" style={{ gridTemplateColumns: 'repeat(7, 1fr)', marginBottom: 14 }}>
         <div className="kpi" data-kpi="terminado"><div className="kpi-label">Terminado (producción)</div><div className="kpi-value">{Q(total.terminado_q)}</div><div className="kpi-delta"><span className="vs">{total.terminado_n} prueba{total.terminado_n === 1 ? '' : 's'}{total.sin_tarifa_n ? ` · ${total.sin_tarifa_n} sin tarifa (no suman)` : ''}</span></div></div>
         <div className="kpi" data-kpi="facturado"><div className="kpi-label">Facturado</div><div className="kpi-value">{Q(total.facturado_q)}</div><div className="kpi-delta"><span className="vs">{total.facturado_n} prueba{total.facturado_n === 1 ? '' : 's'} · {pct(total.facturado_n, total.terminado_n)} de lo terminado</span></div></div>
         <div className="kpi" data-kpi="cobrado"><div className="kpi-label">Cobrado</div><div className="kpi-value">{Q(total.cobrado_q)}</div><div className="kpi-delta"><span className="vs">{total.cobrado_n} prueba{total.cobrado_n === 1 ? '' : 's'} · {pct(total.cobrado_n, total.facturado_n)} de lo facturado</span></div></div>
+        <div className="kpi" data-kpi="cubiertas" title="Pruebas cubiertas por un paquete prepagado: producidas, valoradas a su precio unitario; no son backlog de facturación"><div className="kpi-label">Cubiertas por anticipo</div><div className="kpi-value">{total.cubierta_n}</div><div className="kpi-delta"><span className="vs">{Q(total.cubierta_q)} sin IVA</span></div></div>
         <div className="kpi" data-kpi="backlog" title="Terminado y todavía sin factura, en cola (cobro pendiente en la Agenda, dentro del arranque del cliente)"><div className="kpi-label">Backlog de facturación</div><div className="kpi-value" style={{ color: total.backlog_n ? 'var(--burnt, #b5651d)' : undefined }}>{Q(total.backlog_q)}</div><div className="kpi-delta"><span className="vs">{total.backlog_n} prueba{total.backlog_n === 1 ? '' : 's'}{total.backlog_dias_max ? ` · la más vieja ${total.backlog_dias_max} días` : ''}</span></div></div>
         <div className="kpi" data-kpi="fuera-cola" title="Terminado sin factura nuestra pero ya resuelto del lado de la Agenda: pagado por provisión, facturado fuera de la app o anterior al arranque del cliente"><div className="kpi-label">Resuelto fuera de la app</div><div className="kpi-value" style={{ color: 'var(--ink-3)' }}>{Q(total.fuera_cola_q)}</div><div className="kpi-delta"><span className="vs">{total.fuera_cola_n} prueba{total.fuera_cola_n === 1 ? '' : 's'} · {total.no_cobra_n} no se cobran</span></div></div>
         <div className="kpi" data-kpi="sin-fecha" title="Pruebas cobrables sin fecha de resultado confiable: no entran en ningún mes. Bajan cuando la Agenda mande sus fechas de resultado."><div className="kpi-label">Sin fecha (no entran)</div><div className="kpi-value" style={{ color: datos?.sin_fecha.n ? 'var(--wine)' : undefined }}>{datos?.sin_fecha.n ?? 0}</div><div className="kpi-delta"><span className="vs">{datos ? `${Q(datos.sin_fecha.q)} · ${datos.sin_fecha.sin_factura_n} sin factura` : '—'}</span></div></div>
@@ -81,7 +82,7 @@ export function ProduccionMensualView({ datos, desde, hasta, disponible }: Props
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="table-scroll">
           <table className="table" data-tabla="produccion">
-            <thead><tr><th>Mes de terminación</th><th className="num">Terminado</th><th className="num">Q sin IVA</th><th className="num">Sin tarifa</th><th className="num">Facturado</th><th className="num">Q facturado</th><th className="num">Cobrado</th><th className="num">Q cobrado</th><th className="num">Backlog</th><th className="num">Q backlog</th><th className="num" title="Antigüedad promedio / máxima del backlog, en días desde el resultado">Días</th><th className="num" title="Sin factura nuestra pero resuelto en la Agenda (pagado / facturado fuera / antes del arranque)">Fuera de cola</th><th className="num">No se cobra</th></tr></thead>
+            <thead><tr><th>Mes de terminación</th><th className="num">Terminado</th><th className="num">Q sin IVA</th><th className="num">Sin tarifa</th><th className="num">Facturado</th><th className="num">Q facturado</th><th className="num">Cobrado</th><th className="num">Q cobrado</th><th className="num" title="034: cubiertas por un paquete prepagado (producidas a su precio unitario; no son backlog)">Cubiertas</th><th className="num">Backlog</th><th className="num">Q backlog</th><th className="num" title="Antigüedad promedio / máxima del backlog, en días desde el resultado">Días</th><th className="num" title="Sin factura nuestra pero resuelto en la Agenda (pagado / facturado fuera / antes del arranque)">Fuera de cola</th><th className="num">No se cobra</th></tr></thead>
             <tbody>
               {filas.map(f => (
                 <tr key={f.mes} className="clickable" style={{ cursor: 'pointer', background: mesSel === f.mes ? 'var(--paper-2, rgba(0,0,0,0.03))' : undefined }} onClick={() => setMesSel(mesSel === f.mes ? null : f.mes)} data-mes={f.mes} aria-selected={mesSel === f.mes}>
@@ -93,6 +94,7 @@ export function ProduccionMensualView({ datos, desde, hasta, disponible }: Props
                   <td className="num">{f.facturado_q ? Q(f.facturado_q) : '—'}</td>
                   <td className="num">{f.cobrado_n || '—'}</td>
                   <td className="num">{f.cobrado_q ? Q(f.cobrado_q) : '—'}</td>
+                  <td className="num cell-mute" data-cubiertas={f.cubierta_n}>{f.cubierta_n ? `${f.cubierta_n} · ${Q(f.cubierta_q)}` : '—'}</td>
                   <td className="num" style={{ color: f.backlog_n ? 'var(--burnt, #b5651d)' : undefined }}>{f.backlog_n || '—'}</td>
                   <td className="num">{f.backlog_q ? Q(f.backlog_q) : '—'}</td>
                   <td className="num cell-mute" style={{ fontSize: 12 }}>{f.backlog_n ? `${f.backlog_dias_prom ?? '—'} / ${f.backlog_dias_max ?? '—'}` : '—'}</td>
@@ -104,7 +106,7 @@ export function ProduccionMensualView({ datos, desde, hasta, disponible }: Props
                 <td>Total del rango</td>
                 <td className="num">{total.terminado_n}</td><td className="num">{Q(total.terminado_q)}</td><td className="num">{total.sin_tarifa_n || '—'}</td>
                 <td className="num">{total.facturado_n}</td><td className="num">{Q(total.facturado_q)}</td>
-                <td className="num">{total.cobrado_n}</td><td className="num">{Q(total.cobrado_q)}</td>
+                <td className="num">{total.cobrado_n}</td><td className="num">{Q(total.cobrado_q)}</td><td className="num cell-mute">{total.cubierta_n ? `${total.cubierta_n} · ${Q(total.cubierta_q)}` : '—'}</td>
                 <td className="num">{total.backlog_n}</td><td className="num">{Q(total.backlog_q)}</td><td className="num cell-mute">{total.backlog_dias_max ? `máx ${total.backlog_dias_max}` : '—'}</td>
                 <td className="num cell-mute">{total.fuera_cola_n ? `${total.fuera_cola_n} · ${Q(total.fuera_cola_q)}` : '—'}</td><td className="num cell-mute">{total.no_cobra_n || '—'}</td>
               </tr>
@@ -118,24 +120,24 @@ export function ProduccionMensualView({ datos, desde, hasta, disponible }: Props
           <div className="card-head"><div className="card-title">{etiquetaMes(mesSel)} · por línea de negocio y por cliente</div><div className="card-actions"><button className="btn btn-ghost" style={{ fontSize: 12 }} onClick={() => setMesSel(null)}>Cerrar</button></div></div>
           <div className="table-scroll">
             <table className="table" data-tabla="por-servicio">
-              <thead><tr><th>Línea</th><th className="num">Terminado</th><th className="num">Q sin IVA</th><th className="num">Sin tarifa</th><th className="num">Facturado</th><th className="num">Q facturado</th><th className="num">Cobrado</th><th className="num">Q cobrado</th><th className="num">Backlog</th><th className="num">Q backlog</th><th className="num">No se cobra</th></tr></thead>
+              <thead><tr><th>Línea</th><th className="num">Terminado</th><th className="num">Q sin IVA</th><th className="num">Sin tarifa</th><th className="num">Facturado</th><th className="num">Q facturado</th><th className="num">Cobrado</th><th className="num">Q cobrado</th><th className="num" title="034: cubiertas por un paquete prepagado (producidas a su precio unitario; no son backlog)">Cubiertas</th><th className="num">Backlog</th><th className="num">Q backlog</th><th className="num">No se cobra</th></tr></thead>
               <tbody>
-                {detLineas.length === 0 && <tr><td colSpan={11} style={{ textAlign: 'center', padding: 18, color: 'var(--ink-4)' }}>Sin pruebas con resultado en este mes.</td></tr>}
-                {detLineas.map(x => <tr key={x.linea} data-linea={x.linea}><td className="cell-strong">{ETIQUETA_LINEA[x.linea] ?? x.linea}</td><td className="num">{x.terminado_n}</td><td className="num">{Q(x.terminado_q)}</td><td className="num">{x.sin_tarifa_n || '—'}</td><td className="num">{x.facturado_n || '—'}</td><td className="num">{x.facturado_q ? Q(x.facturado_q) : '—'}</td><td className="num">{x.cobrado_n || '—'}</td><td className="num">{x.cobrado_q ? Q(x.cobrado_q) : '—'}</td><td className="num">{x.backlog_n || '—'}</td><td className="num">{x.backlog_q ? Q(x.backlog_q) : '—'}</td><td className="num cell-mute">{x.no_cobra_n || '—'}</td></tr>)}
+                {detLineas.length === 0 && <tr><td colSpan={13} style={{ textAlign: 'center', padding: 18, color: 'var(--ink-4)' }}>Sin pruebas con resultado en este mes.</td></tr>}
+                {detLineas.map(x => <tr key={x.linea} data-linea={x.linea}><td className="cell-strong">{ETIQUETA_LINEA[x.linea] ?? x.linea}</td><td className="num">{x.terminado_n}</td><td className="num">{Q(x.terminado_q)}</td><td className="num">{x.sin_tarifa_n || '—'}</td><td className="num">{x.facturado_n || '—'}</td><td className="num">{x.facturado_q ? Q(x.facturado_q) : '—'}</td><td className="num">{x.cobrado_n || '—'}</td><td className="num">{x.cobrado_q ? Q(x.cobrado_q) : '—'}</td><td className="num cell-mute" data-cubiertas={x.cubierta_n}>{x.cubierta_n ? `${x.cubierta_n} · ${Q(x.cubierta_q)}` : '—'}</td><td className="num">{x.backlog_n || '—'}</td><td className="num">{x.backlog_q ? Q(x.backlog_q) : '—'}</td><td className="num cell-mute">{x.no_cobra_n || '—'}</td></tr>)}
               </tbody>
             </table>
           </div>
           <div className="table-scroll" style={{ marginTop: 8 }}>
             <table className="table" data-tabla="por-cliente">
-              <thead><tr><th>Cliente</th><th className="num">Terminado</th><th className="num">Q sin IVA</th><th className="num">Sin tarifa</th><th className="num">Facturado</th><th className="num">Q facturado</th><th className="num">Cobrado</th><th className="num">Q cobrado</th><th className="num">Backlog</th><th className="num">Q backlog</th><th className="num">Días</th><th className="num">No se cobra</th></tr></thead>
+              <thead><tr><th>Cliente</th><th className="num">Terminado</th><th className="num">Q sin IVA</th><th className="num">Sin tarifa</th><th className="num">Facturado</th><th className="num">Q facturado</th><th className="num">Cobrado</th><th className="num">Q cobrado</th><th className="num" title="034: cubiertas por un paquete prepagado (producidas a su precio unitario; no son backlog)">Cubiertas</th><th className="num">Backlog</th><th className="num">Q backlog</th><th className="num">Días</th><th className="num">No se cobra</th></tr></thead>
               <tbody>
-                {detClientes.length === 0 && <tr><td colSpan={12} style={{ textAlign: 'center', padding: 18, color: 'var(--ink-4)' }}>Sin clientes con resultado en este mes.</td></tr>}
+                {detClientes.length === 0 && <tr><td colSpan={13} style={{ textAlign: 'center', padding: 18, color: 'var(--ink-4)' }}>Sin clientes con resultado en este mes.</td></tr>}
                 {detClientes.map(x => (
                   <tr key={`${x.nit_resuelto ?? ''}|${x.empresa}`} data-cliente={x.nit_resuelto ?? x.empresa}>
                     <td>{x.nit_resuelto ? <Link href={`/por-facturar/${encodeURIComponent(`n-${x.nit_resuelto}`)}`} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{x.empresa}</Link> : <span className="cell-strong">{x.empresa}</span>}<div className="cell-mute" style={{ fontSize: 11 }}>{x.nit_resuelto ? <span className="num">NIT {x.nit_resuelto}</span> : 'sin mapear'}</div></td>
                     <td className="num">{x.terminado_n}</td><td className="num">{Q(x.terminado_q)}</td><td className="num">{x.sin_tarifa_n || '—'}</td>
                     <td className="num">{x.facturado_n || '—'}</td><td className="num">{x.facturado_q ? Q(x.facturado_q) : '—'}</td>
-                    <td className="num">{x.cobrado_n || '—'}</td><td className="num">{x.cobrado_q ? Q(x.cobrado_q) : '—'}</td>
+                    <td className="num">{x.cobrado_n || '—'}</td><td className="num">{x.cobrado_q ? Q(x.cobrado_q) : '—'}</td><td className="num cell-mute" data-cubiertas={x.cubierta_n}>{x.cubierta_n ? `${x.cubierta_n} · ${Q(x.cubierta_q)}` : '—'}</td>
                     <td className="num" style={{ color: x.backlog_n ? 'var(--burnt, #b5651d)' : undefined }}>{x.backlog_n || '—'}</td><td className="num">{x.backlog_q ? Q(x.backlog_q) : '—'}</td>
                     <td className="num cell-mute" style={{ fontSize: 12 }}>{x.backlog_n ? `${x.backlog_dias_prom ?? '—'} / ${x.backlog_dias_max ?? '—'}` : '—'}</td>
                     <td className="num cell-mute">{x.no_cobra_n || '—'}</td>

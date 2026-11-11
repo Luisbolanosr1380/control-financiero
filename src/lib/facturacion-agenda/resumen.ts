@@ -4,7 +4,7 @@
  * empresa de la Agenda no está mapeada, por su empresa.id.
  */
 import { normalizarTexto, round2 } from '@/lib/tarifario/canon';
-import { conPrecio, enCola, facturable, montoFacturable, pruebasEnCola, pruebasFacturables, pruebasPendientes, montoFacturableConIva } from './mapeo';
+import { conPrecio, enCola, facturable, montoFacturable, pruebasCubiertas, pruebasEnCola, pruebasFacturables, pruebasPendientes, montoFacturableConIva } from './mapeo';
 import { servicioPorEstado } from './situacion';
 import { mesGuatemala } from './fecha-resultado';
 import { ESTADOS_EXCLUIDOS, type ExpedienteLocal, type PruebaLocal } from './tipos';
@@ -44,7 +44,7 @@ export function parseClave(clave: string): { tipo: 'nit'; nit: string } | { tipo
 }
 
 /** Vigente para la pantalla: no eliminado, no excluido, y terminado (o con alguna prueba que se cobra por su propio estado: 024, el polígrafo de un expediente abierto). */
-export const vigente = (e: ExpedienteLocal): boolean => !e.eliminado && !ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && ((e.terminado && !e.cancelado) || e.pruebas.some(p => servicioPorEstado(p.servicio)));
+export const vigente = (e: ExpedienteLocal): boolean => !e.eliminado && ((!ESTADOS_EXCLUIDOS.includes(e.estadoTarifa) && ((e.terminado && !e.cancelado) || e.pruebas.some(p => servicioPorEstado(p.servicio)))) || e.pruebas.some(p => !!p.cubiertaPor));   // 034: una psicométrica cubierta por paquete se ve
 
 export function agruparPorCliente(expedientes: readonly ExpedienteLocal[], razonPorNit: ReadonlyMap<string, string> = new Map()): GrupoCliente[] {
   const grupos = new Map<string, GrupoCliente>();
@@ -120,7 +120,8 @@ export function filtrarExpedientes(exps: readonly ExpedienteLocal[], f: { mes?: 
     if (f.mesResultado && !pruebasTerminadasEn(e, f.mesResultado).length) return false;
     const cobro = f.cobro ?? 'por_facturar';
     // 024: "por facturar" = con alguna prueba en cola O con pruebas pendientes de resultado (se ven ⏳ para saber qué falta).
-    if (cobro === 'por_facturar' && !enCola(e) && !pruebasPendientes(e).length) return false;
+    // 034: también las que tienen una prueba cubierta por un paquete prepagado (se ven en gris «Cubierta por PAQ-…»).
+    if (cobro === 'por_facturar' && !enCola(e) && !pruebasPendientes(e).length && !pruebasCubiertas(e).length) return false;
     if (cobro === 'facturados' && !(e.facturaId || e.pruebas.some(p => p.facturaId) || !enCola(e))) return false;
     if (f.soloListos && !facturable(e)) return false;
     return true;

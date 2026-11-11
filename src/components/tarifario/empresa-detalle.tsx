@@ -21,10 +21,12 @@ import { fechaDesdeTexto, precioDesdeMasAntiguo, type AntiguedadPrecio } from '@
 import { TarifasTabla } from './tarifas-tabla';
 import { GenerarTarifas } from './generar-tarifas';
 import { CambiarNitModal } from '@/components/clientes/cambiar-nit-modal';
+import { PaquetesSection } from '@/components/paquetes/paquetes-section';
+import type { Paquete } from '@/lib/paquetes/paquete';
 
-interface Props { nit: string; tarifas: Tarifa[]; antiguedad: Record<string, AntiguedadPrecio>; umbralMeses: number }
+interface Props { nit: string; tarifas: Tarifa[]; antiguedad: Record<string, AntiguedadPrecio>; umbralMeses: number; /** 034: paquetes prepagados del cliente */ paquetes?: Paquete[]; hoy?: string }
 
-export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses }: Props) {
+export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses, paquetes = [], hoy = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Guatemala' }) }: Props) {
   const router = useRouter();
   const puede = usePuede();
   const puedeAprobar = puede('catalogos');
@@ -94,6 +96,9 @@ export function EmpresaDetalle({ nit, tarifas, antiguedad, umbralMeses }: Props)
         <div className="kpi"><div className="kpi-label">Sin tarifa (Q0)</div><div className="kpi-value" style={{ color: sinTarifa ? 'var(--wine)' : undefined }}>{sinTarifa}</div><div className="kpi-delta"><span className="vs">{sem === 'rojo' ? 'falta pactar precio' : sem === 'amarillo' ? 'solo falta aprobar' : 'todo al día'}</span></div></div>
         <div className="kpi" data-kpi="estancadas"><div className="kpi-label">Estancadas (&gt; {umbralMeses} meses)</div><div className="kpi-value" style={{ color: estancadas ? 'var(--wine)' : undefined }}>{estancadas}</div><div className="kpi-delta"><span className="vs">{precioDesde ? `precio sin revisar desde ${fechaDesdeTexto(precioDesde)}` : 'sin dato de antigüedad'}</span></div></div>
       </div>
+
+      {/* 034: paquetes prepagados del cliente */}
+      <PaquetesSection nit={nit} razonSocial={razonSocial} tarifas={tarifas} paquetes={paquetes} hoy={hoy} />
 
       <TarifasTabla disponible tarifas={tarifas} nitFijo={nit} razonSocialFija={razonSocial} antiguedad={antiguedad} umbralMeses={umbralMeses} />
     </div>

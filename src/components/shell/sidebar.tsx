@@ -58,6 +58,7 @@ function buildNav(opts: { facturasVencidasCount?: number; deudasVencidasCount?: 
       { href: '/cobros/identificar', label: 'Identificar pago', icon: 'Search' },
       { href: '/clientes',     label: 'Clientes',     icon: 'Users' },
       { href: '/tarifario',    label: 'Tarifario',    icon: 'Coins' },   // TARIFARIO (014)
+      { href: '/paquetes',     label: 'Paquetes prepagados', icon: 'Coins' },   // PAQUETES PREPAGADOS (034)
       { href: '/por-facturar', label: 'Por facturar · Agenda', icon: 'Receipt' },   // FACTURACIÓN AGENDA (016)
     ]},
     { group: 'Gastos', items: [

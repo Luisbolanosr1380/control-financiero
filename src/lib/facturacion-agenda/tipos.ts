@@ -107,7 +107,12 @@ export interface PruebaLocal {
   fechaResultadoFuente: FuenteFechaResultado | null;
   /** 029: el cliente pidió cobrarla el próximo mes (YYYY-MM-DD): marca y filtro de pantalla, la cola no cambia. */
   diferidaHasta?: string | null;
+  /** 034: cubierta por un paquete prepagado (consumo vigente): sale de la cola, no entra a un detalle ni a una factura; va a la Agenda con el número del anticipo. */
+  cubiertaPor?: CubiertaPorPaquete | null;
 }
+
+/** 034: el consumo vigente que cubre la prueba. */
+export interface CubiertaPorPaquete { consumoId: string; paqueteId: string; correlativo: string; noFactura: string | null; precioUnitario: number; fecha: string }
 
 /** Un servicio dentro del precio resuelto (un COMPLETO trae dos). Monto SIN IVA. */
 export interface ComponentePrecio {

@@ -67,6 +67,7 @@ export type Accion =
   | 'ver_cobranza'
   | 'gestionar_cobranza'
   | 'ver_mapa_precios'
+  | 'gestionar_paquetes'
   | 'gestionar_usuarios'
   | 'configurar_empresa';
 
@@ -103,6 +104,7 @@ export const MATRIZ: Record<Accion, readonly Rol[]> = {
   ver_cobranza:       COBRANZA,    // CENTRO DE COBROS (033): bandeja del día y ficha de cobranza del cliente
   gestionar_cobranza: COBRANZA,    // registrar gestiones y promesas, contactos y condiciones de cobro, marcar «dice que ya pagó», adjuntar
   ver_mapa_precios:   SOLO_ADMIN,  // MAPA DE PRECIOS (027): precio e índice de cada cliente contra el mercado; solo el dueño
+  gestionar_paquetes: CONTROL,     // PAQUETES PREPAGADOS (034): crear, editar y cerrar paquetes, confirmar la aplicación retroactiva (ver: todos)
   gestionar_usuarios: SOLO_ADMIN,
   configurar_empresa: SOLO_ADMIN,
 };
@@ -135,6 +137,7 @@ export const ACCION_LABEL: Record<Accion, string> = {
   ver_mapa_precios:   'ver el mapa de precios',
   gestionar_usuarios: 'gestionar usuarios',
   configurar_empresa: 'configurar la empresa',
+  gestionar_paquetes: 'crear y cerrar paquetes prepagados',
 };
 
 export function puede(rol: Rol | null | undefined, accion: Accion): boolean {
@@ -341,7 +344,7 @@ export function decidirAcceso(args: {
  * ============================================================ */
 
 /** Prefijos de ruta que el rol `cobranza` puede abrir; cualquier otra (planilla, gastos, bancos, deudas, presupuesto, estados, admin, IA…) lo manda a /cobranza. El layout de la app lo aplica con la ruta que pone el middleware. */
-export const RUTAS_COBRANZA: readonly string[] = ['/cobranza', '/clientes', '/facturacion', '/cobros', '/por-facturar', '/tarifario', '/imprimir', '/ayuda', '/empresas', '/no-acceso', '/m'];
+export const RUTAS_COBRANZA: readonly string[] = ['/cobranza', '/clientes', '/facturacion', '/cobros', '/por-facturar', '/tarifario', '/paquetes', '/imprimir', '/ayuda', '/empresas', '/no-acceso', '/m'];   // 034: cobranza ve los paquetes
 const RUTAS_COBRANZA_VEDADAS: readonly string[] = ['/facturacion/nueva'];
 
 export function rutaPermitidaParaRol(rol: Rol | null | undefined, ruta: string): boolean {

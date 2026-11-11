@@ -25,6 +25,8 @@ export interface FilaProduccion {
   terminado_n: number; terminado_q: number; sin_tarifa_n: number;
   facturado_n: number; facturado_q: number;
   cobrado_n: number; cobrado_q: number;
+  /** 034: cubiertas por un paquete prepagado (producidas, valoradas a su precio unitario; no son backlog) */
+  cubierta_n: number; cubierta_q: number;
   backlog_n: number; backlog_q: number; backlog_dias_prom: number | null; backlog_dias_max: number | null;
   fuera_cola_n: number; fuera_cola_q: number;
   no_cobra_n: number;
@@ -49,7 +51,7 @@ const nOrNull = (v: unknown): number | null => (v === null || v === undefined ||
 const fila = <T extends Record<string, unknown>>(r: T): FilaProduccion & T => ({
   ...r, mes: String(r.mes ?? ''),
   terminado_n: n(r.terminado_n), terminado_q: n(r.terminado_q), sin_tarifa_n: n(r.sin_tarifa_n),
-  facturado_n: n(r.facturado_n), facturado_q: n(r.facturado_q), cobrado_n: n(r.cobrado_n), cobrado_q: n(r.cobrado_q),
+  facturado_n: n(r.facturado_n), facturado_q: n(r.facturado_q), cobrado_n: n(r.cobrado_n), cobrado_q: n(r.cobrado_q), cubierta_n: n(r.cubierta_n), cubierta_q: n(r.cubierta_q),
   backlog_n: n(r.backlog_n), backlog_q: n(r.backlog_q), backlog_dias_prom: nOrNull(r.backlog_dias_prom), backlog_dias_max: nOrNull(r.backlog_dias_max),
   fuera_cola_n: n(r.fuera_cola_n), fuera_cola_q: n(r.fuera_cola_q), no_cobra_n: n(r.no_cobra_n),
 });
@@ -75,11 +77,11 @@ export function totalProduccion(filas: readonly FilaProduccion[]): FilaProduccio
   const t = fila({ mes: 'total' });
   for (const f of filas) {
     t.terminado_n += f.terminado_n; t.terminado_q += f.terminado_q; t.sin_tarifa_n += f.sin_tarifa_n;
-    t.facturado_n += f.facturado_n; t.facturado_q += f.facturado_q; t.cobrado_n += f.cobrado_n; t.cobrado_q += f.cobrado_q;
+    t.facturado_n += f.facturado_n; t.facturado_q += f.facturado_q; t.cobrado_n += f.cobrado_n; t.cobrado_q += f.cobrado_q; t.cubierta_n += f.cubierta_n; t.cubierta_q += f.cubierta_q;
     t.backlog_n += f.backlog_n; t.backlog_q += f.backlog_q; t.fuera_cola_n += f.fuera_cola_n; t.fuera_cola_q += f.fuera_cola_q; t.no_cobra_n += f.no_cobra_n;
     t.backlog_dias_max = Math.max(t.backlog_dias_max ?? 0, f.backlog_dias_max ?? 0) || null;
   }
-  for (const k of ['terminado_q', 'facturado_q', 'cobrado_q', 'backlog_q', 'fuera_cola_q'] as const) t[k] = Math.round(t[k] * 100) / 100;
+  for (const k of ['terminado_q', 'facturado_q', 'cobrado_q', 'cubierta_q', 'backlog_q', 'fuera_cola_q'] as const) t[k] = Math.round(t[k] * 100) / 100;
   return t;
 }
 
@@ -131,8 +133,8 @@ const celda = (v: unknown): string => { const s = v === null || v === undefined 
  * columnas. Separador coma, decimales con punto, UTF-8 (con BOM para Excel).
  */
 export function csvProduccion(p: ProduccionMensual): string {
-  const cab = ['seccion', 'mes', 'linea', 'nit', 'cliente', 'terminado_n', 'terminado_q_sin_iva', 'sin_tarifa_n', 'facturado_n', 'facturado_q_sin_iva', 'cobrado_n', 'cobrado_q_sin_iva', 'backlog_n', 'backlog_q_sin_iva', 'backlog_dias_prom', 'backlog_dias_max', 'fuera_cola_n', 'fuera_cola_q_sin_iva', 'no_cobra_n'];
-  const fila = (seccion: string, f: FilaProduccion, linea = '', nit = '', cliente = '') => [seccion, f.mes, linea, nit, cliente, f.terminado_n, f.terminado_q, f.sin_tarifa_n, f.facturado_n, f.facturado_q, f.cobrado_n, f.cobrado_q, f.backlog_n, f.backlog_q, f.backlog_dias_prom ?? '', f.backlog_dias_max ?? '', f.fuera_cola_n, f.fuera_cola_q, f.no_cobra_n].map(celda).join(',');
+  const cab = ['seccion', 'mes', 'linea', 'nit', 'cliente', 'terminado_n', 'terminado_q_sin_iva', 'sin_tarifa_n', 'facturado_n', 'facturado_q_sin_iva', 'cobrado_n', 'cobrado_q_sin_iva', 'cubierta_n', 'cubierta_q_sin_iva', 'backlog_n', 'backlog_q_sin_iva', 'backlog_dias_prom', 'backlog_dias_max', 'fuera_cola_n', 'fuera_cola_q_sin_iva', 'no_cobra_n'];
+  const fila = (seccion: string, f: FilaProduccion, linea = '', nit = '', cliente = '') => [seccion, f.mes, linea, nit, cliente, f.terminado_n, f.terminado_q, f.sin_tarifa_n, f.facturado_n, f.facturado_q, f.cobrado_n, f.cobrado_q, f.cubierta_n, f.cubierta_q, f.backlog_n, f.backlog_q, f.backlog_dias_prom ?? '', f.backlog_dias_max ?? '', f.fuera_cola_n, f.fuera_cola_q, f.no_cobra_n].map(celda).join(',');
   const lineas = [cab.join(',')];
   for (const m of p.meses) lineas.push(fila('mes', m));
   lineas.push(fila('total', totalProduccion(p.meses)));
