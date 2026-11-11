@@ -32,6 +32,8 @@ import { facturasCobradas } from '@/lib/facturacion-agenda/estado-factura';
 import type { CambioAviso } from '@/lib/facturacion-agenda/aviso';
 import { getTarifario } from './tarifario';
 import { getClientes } from './clientes';
+import { aplicarPaquetes, listarPaquetes } from './paquetes';
+import type { Paquete } from '@/lib/paquetes/paquete';
 import { getCentrosCostoActivos, type CentroCosto } from './centros';
 import type { Customer } from '@/lib/types';
 
@@ -67,7 +69,7 @@ const rowToPrueba = (r: PruebaRow): PruebaLocal => ({
   id: r.id, expedienteId: r.expediente_id, idExterno: r.id_externo, servicio: r.servicio, estadoPrueba: r.estado_prueba ?? '', situacion: r.situacion, motivo: r.motivo ?? '', categoria: r.categoria ?? '', territorio: r.territorio ?? '',
   montoCalculado: num(r.monto_calculado), estadoTarifa: r.estado_tarifa, detalleTarifa: r.detalle_tarifa ?? '', tarifarioId: r.tarifario_id, aprobada: r.aprobada,
   detalleId: r.detalle_id, facturaId: r.factura_id, noFactura: r.no_factura, facturadoEn: r.facturado_en, facturadoPor: r.facturado_por,
-  fechaResultado: r.fecha_resultado ?? null, fechaResultadoFuente: r.fecha_resultado_fuente ?? null, diferidaHasta: r.diferida_hasta ?? null,
+  fechaResultado: r.fecha_resultado ?? null, fechaResultadoFuente: r.fecha_resultado_fuente ?? null, diferidaHasta: r.diferida_hasta ?? null, cubiertaPor: null,
 });
 const num = (v: number | string | null | undefined): number | null => (v === null || v === undefined ? null : Number(v));
 const txt = (v: string | null | undefined): string => v ?? '';
@@ -289,6 +291,8 @@ export async function upsertExpedientes(filas: FilaEspejo[]): Promise<number> {
     if (eC && !rpcNoExiste(eC)) throw new Error(`facturacion_componentes_sincronizar: ${eC.message}`);   // sin la 024: el espejo queda sin pruebas (la pantalla avisa)
     n += lote.length;
   }
+  // 034: en el mismo paso, los paquetes prepagados descuentan (o revierten) según la situación nueva de cada prueba. Fail-soft.
+  if (filas.length) await aplicarPaquetes(null, 'sync').catch(e => console.error('paquete_aplicar_consumos:', e instanceof Error ? e.message : String(e)));
   return n;
 }
 
@@ -338,12 +342,30 @@ export async function reclasificar(filtro: { empresaIdExterno?: string; empresas
 async function pruebasDe(ids: readonly string[]): Promise<Map<string, PruebaLocal[]>> {
   const sb = supabase(); const out = new Map<string, PruebaLocal[]>();
   if (!sb || !ids.length) return out;
+  const todas: PruebaLocal[] = [];
   for (let i = 0; i < ids.length; i += 400) {
     const { data, error } = await sb.from('facturacion_componente').select('*').in('expediente_id', ids.slice(i, i + 400)).order('servicio');
     if (error) { if (/facturacion_componente/.test(error.message)) return out; throw new Error(`facturacion_componente: ${error.message}`); }   // sin la 024
-    for (const r of (data ?? []) as PruebaRow[]) { const p = rowToPrueba(r); (out.get(p.expedienteId) ?? out.set(p.expedienteId, []).get(p.expedienteId)!).push(p); }
+    for (const r of (data ?? []) as PruebaRow[]) { const p = rowToPrueba(r); todas.push(p); (out.get(p.expedienteId) ?? out.set(p.expedienteId, []).get(p.expedienteId)!).push(p); }
   }
+  await anotarCubiertas(todas);
   return out;
+}
+
+/** 034: marca las pruebas cubiertas por un paquete prepagado (consumo vigente) con el paquete y su precio unitario. Fail-soft sin la 034. */
+async function anotarCubiertas(pruebas: PruebaLocal[]): Promise<void> {
+  const sb = supabase(); if (!sb || !pruebas.length) return;
+  const porId = new Map(pruebas.map(p => [p.id, p]));
+  const ids = [...porId.keys()];
+  type Fila = { id: string; componente_id: string; fecha: string; paquete_linea: { precio_unitario: number | string | null; paquete: { id: string; correlativo: string; no_factura: string | null } | null } | null };
+  for (let i = 0; i < ids.length; i += 400) {
+    const { data, error } = await sb.from('paquete_consumo').select('id, componente_id, fecha, paquete_linea:paquete_linea(precio_unitario, paquete:paquete(id, correlativo, no_factura))').in('componente_id', ids.slice(i, i + 400)).is('revertido_en', null);
+    if (error) { if (!/paquete/i.test(error.message)) console.error('paquete_consumo:', error.message); return; }
+    for (const r of (data ?? []) as unknown as Fila[]) {
+      const p = porId.get(r.componente_id); const pq = r.paquete_linea?.paquete;
+      if (p && pq) p.cubiertaPor = { consumoId: r.id, paqueteId: pq.id, correlativo: pq.correlativo, noFactura: pq.no_factura, precioUnitario: Number(r.paquete_linea?.precio_unitario ?? 0), fecha: r.fecha };
+    }
+  }
 }
 /** Adjunta las pruebas (024) a los expedientes leídos. */
 async function conPruebas(exps: ExpedienteLocal[]): Promise<ExpedienteLocal[]> {
@@ -506,6 +528,8 @@ const DETALLES_VACIOS = (): VistaPorFacturar['detalles'] => ({ borrador: { n: 0,
 export interface VistaPorFacturar {
   /** Solo clientes con expedientes en cola resueltos o sin tarifa (nunca el universo). */
   grupos: GrupoCliente[];
+  /** 034: paquetes prepagados vigentes por NIT (badges «Por agotarse» / «Agotado» / «Vence pronto» en la lista). */
+  paquetesPorNit?: Record<string, Paquete[]>;
   kpis: KpisPorFacturar;
   sync: SyncEstado | null;
   /** Filas en el espejo (todas, solo como referencia). */
@@ -629,7 +653,9 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
   const sb = supabase();
   const vacio: VistaPorFacturar = { grupos: [], kpis: kpisPorFacturar([]), sync: null, total: 0, sinMapear: { expedientes: 0, empresas: 0 }, noFacturan: [], clientes: [], detalles: DETALLES_VACIOS(), agregadoEnSql: false };
   if (!sb) return vacio;
-  const [clientes, sync, mapeos] = await Promise.all([getClientes(), getSyncEstado(), getMapeos().catch(() => [] as ClienteExterno[])]);
+  const [clientes, sync, mapeos, paquetesTodos] = await Promise.all([getClientes(), getSyncEstado(), getMapeos().catch(() => [] as ClienteExterno[]), listarPaquetes().catch(() => [] as Paquete[])]);
+  const paquetesPorNit: Record<string, Paquete[]> = {};
+  for (const pq of paquetesTodos) { if (pq.estado === 'cerrado') continue; (paquetesPorNit[pq.nit] ??= []).push(pq); }
   let r: ResumenRpc | null = null; let enSql = false;
   if (!opts.sinRpc) {
     const { data, error } = await sb.rpc('facturacion_agenda_resumen', { p_fuente: FUENTE });
@@ -680,7 +706,7 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
   const clientesSlim: ClienteSlim[] = clientes.filter(c => c.activo !== false).map(c => slimDe(c, agenda));
   const detalles = DETALLES_VACIOS();
   for (const d of r.detalles ?? []) { const k = d.estado as keyof typeof detalles; if (detalles[k]) detalles[k] = { n: Number(d.n), total: Number(d.total) }; }
-  return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, noFacturan, clientes: clientesSlim, detalles, agregadoEnSql: enSql };
+  return { grupos, kpis, sync, total: Number(r.total ?? 0), sinMapear: { expedientes: kpis.sinMapear, empresas: kpis.clientesSinMapear }, noFacturan, clientes: clientesSlim, detalles, agregadoEnSql: enSql, paquetesPorNit };
 }
 
 export interface EmpresaSinMapear { empresaIdExterno: string; empresaNombreExterno: string; expedientes: number; fechaMasAntigua: string | null; fechaMasReciente: string | null }
@@ -729,13 +755,15 @@ export interface GrupoDetalle {
   noFactura: { motivo: string; marcadoPor: string } | null;
   /** 022: corte de arranque del cliente (la fecha más temprana si sus empresas tienen varias) y cuántos expedientes de la lista quedan fuera por eso. */
   arranque: { facturarDesde: string; fuera: number } | null;
+  /** 034: paquetes prepagados del cliente (sin los cerrados): banner con remanente y etiqueta «Cubierta por». */
+  paquetes: Paquete[];
 }
 
 export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
   const p = parseClave(clave); if (!p) return null;
   const exps = await listarExpedientesLocal(p.tipo === 'nit' ? { nit: p.nit } : { empresaIdExterno: p.empresaId });
   if (!exps.length) return null;
-  const [clientes, centros, mapeos] = await Promise.all([getClientes(), getCentrosCostoActivos(), getMapeos()]);
+  const [clientes, centros, mapeos, paquetes] = await Promise.all([getClientes(), getCentrosCostoActivos(), getMapeos(), p.tipo === 'nit' ? listarPaquetes(p.nit).then(l => l.filter(x => x.estado !== 'cerrado')) : Promise.resolve([] as Paquete[])]);
   const marca = mapeos.find(m => m.activo && m.noFactura && m.empresaIdExterno === exps[0].empresaIdExterno);
   const agenda = nombresAgendaPorNit(mapeos);
   const slim = (c: Customer): ClienteSlim => slimDe(c, agenda);
@@ -770,6 +798,7 @@ export async function getGrupo(clave: string): Promise<GrupoDetalle | null> {
     clave, nit: p.tipo === 'nit' ? p.nit : null, empresaIdExterno: exps[0].empresaIdExterno, nombre: grupo?.nombre ?? cliente?.name ?? nombreExterno, nombreExterno,
     grupo, expedientes: exps, cliente, sugerencias, clientes: activos.map(slim), centros,
     noFactura: marca ? { motivo: marca.motivoNoFactura, marcadoPor: marca.creadoPor } : null,
+    paquetes,
     arranque: (() => {
       const empresas = new Set(exps.map(e => e.empresaIdExterno));
       const fechas = mapeos.filter(m => empresas.has(m.empresaIdExterno) && m.facturarDesde).map(m => m.facturarDesde!).sort();

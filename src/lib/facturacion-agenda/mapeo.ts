@@ -125,8 +125,10 @@ export function clasificarExpediente(exp: ExpedienteAgenda, ctx: ContextoPrecio,
   });
   const sinPrecio = (estadoTarifa: EstadoTarifa, detalleTarifa: string): PruebaCalculada[] => decisiones.map(d => ({ ...d, categoria: cat, territorio: ter, monto: null, estadoTarifa, detalleTarifa, tarifarioId: null, aprobada: null }));
   const base = { tipoCobrado: tipo, categoriaCanon: cat, territorio: ter, componentes: [] as ComponentePrecio[] };
-  if (esPsicometrica(exp)) { const detalle = 'PSICOMETRICAS no se factura individual: trato aparte.'; return { ...base, estado: 'excluido_psicometrica', nit: null, monto: null, detalle, pruebas: sinPrecio('excluido_psicometrica', detalle) }; }
   const empresaId = String(exp.empresa?.id ?? '').trim();
+  // 034: la psicométrica sigue EXCLUIDA de la cola, pero resuelve su cliente (mismo mapeo) y conserva su componente PSICOMETRICAS
+  // (cobra al terminar) para que un paquete prepagado de psicométricas la descuente; sin paquete, como hoy.
+  if (esPsicometrica(exp)) { const detalle = 'PSICOMETRICAS no se factura individual: trato aparte (solo un paquete prepagado la descuenta).'; return { ...base, estado: 'excluido_psicometrica', nit: empresaId ? (ctx.nitPorEmpresa.get(empresaId) ?? null) : null, monto: null, detalle, pruebas: sinPrecio('excluido_psicometrica', detalle) }; }
   if (empresaId && ctx.noFacturaEmpresas?.has(empresaId)) { const detalle = `La empresa está marcada como "no se factura" por este flujo (${ctx.noFacturaEmpresas.get(empresaId) || 'interno / no aplica'}).`; return { ...base, estado: 'excluido_no_factura', nit: null, monto: null, detalle, pruebas: sinPrecio('excluido_no_factura', detalle) }; }
   const nit = empresaId ? (ctx.nitPorEmpresa.get(empresaId) ?? null) : null;
   if (!nit) { const detalle = empresaId ? `La empresa "${exp.empresa?.nombre ?? empresaId}" no está mapeada a un cliente de financiero.` : 'El expediente no trae empresa.'; return { ...base, estado: 'cliente_sin_mapear', nit: null, monto: null, detalle, pruebas: sinPrecio('cliente_sin_mapear', detalle) }; }
@@ -194,9 +196,12 @@ export function expedienteEnCola(e: Omit<ExpedienteCola, 'pruebas'>): boolean {
 }
 
 /** 024: la PRUEBA está en cola: cobra, sin factura, sin detalle vivo; POLIGRAFO/SOCIO/FEE no exigen `terminado`, los demás sí. */
-export function pruebaEnCola(p: Pick<PruebaLocal, 'servicio' | 'situacion' | 'facturaId' | 'detalleId'>, e: Omit<ExpedienteCola, 'pruebas'>): boolean {
-  return expedienteEnCola(e) && p.situacion === 'cobra' && !p.facturaId && !p.detalleId && (servicioPorEstado(p.servicio) || (e.terminado && !e.cancelado));
+export function pruebaEnCola(p: Pick<PruebaLocal, 'servicio' | 'situacion' | 'facturaId' | 'detalleId' | 'cubiertaPor'>, e: Omit<ExpedienteCola, 'pruebas'>): boolean {
+  // 034: una prueba cubierta por un paquete prepagado ya está cobrada por el anticipo: fuera de la cola (igual que facturacion_componente_en_cola en SQL).
+  return expedienteEnCola(e) && p.situacion === 'cobra' && !p.facturaId && !p.detalleId && !p.cubiertaPor && (servicioPorEstado(p.servicio) || (e.terminado && !e.cancelado));
 }
+/** 034: pruebas cubiertas por un paquete prepagado (consumo vigente): se muestran aparte, fuera de los totales por facturar. */
+export const pruebasCubiertas = (e: Pick<ExpedienteLocal, 'pruebas'>): PruebaLocal[] => e.pruebas.filter(p => !!p.cubiertaPor);
 export const pruebasEnCola = <T extends ExpedienteCola>(e: T): T['pruebas'] => e.pruebas.filter(p => pruebaEnCola(p, e));
 /** Pruebas que se pueden facturar hoy: en cola, con precio resuelto > 0. */
 export const pruebasFacturables = <T extends ExpedienteCola>(e: T): T['pruebas'] => pruebasEnCola(e).filter(p => p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0);
@@ -330,12 +335,17 @@ export function armarFactura(pruebas: readonly PruebaParaFactura[], centroDe: (t
   return { lineas, detalle, subtotal, iva, total, sinCentro: [...sinCentro] };
 }
 
-/** 024: los números de factura de un expediente (todas sus pruebas facturadas, en orden) unidos con " / ", y el monto sin IVA facturado. */
+/**
+ * 024: los números de factura de un expediente (todas sus pruebas facturadas, en orden) unidos con " / ", y el monto sin IVA facturado.
+ * 034: una prueba cubierta por un paquete aporta el número del anticipo («F-123 (PAQ-0001)», o «PAQ-0001» sin factura) y su precio unitario:
+ * «F-140 / F-123 (PAQ-0001)». Mismo token que paquete_token en SQL.
+ */
 export function facturasDelExpediente(e: Pick<ExpedienteLocal, 'pruebas' | 'noFactura' | 'montoCalculado'>): { numero: string; montoSinIva: number } {
   const fact = e.pruebas.filter(p => p.facturaId && p.noFactura).sort((a, b) => (a.facturadoEn ?? '').localeCompare(b.facturadoEn ?? '') || a.servicio.localeCompare(b.servicio));
-  const numeros = [...new Set(fact.map(p => p.noFactura!))];
+  const cub = e.pruebas.filter(p => !!p.cubiertaPor).sort((a, b) => (a.cubiertaPor!.fecha ?? '').localeCompare(b.cubiertaPor!.fecha ?? '') || a.servicio.localeCompare(b.servicio));
+  const numeros = [...new Set([...fact.map(p => p.noFactura!), ...cub.map(p => (p.cubiertaPor!.noFactura && p.cubiertaPor!.noFactura.trim() ? `${p.cubiertaPor!.noFactura.trim()} (${p.cubiertaPor!.correlativo})` : p.cubiertaPor!.correlativo))])];
   if (!numeros.length) return { numero: e.noFactura ?? '', montoSinIva: e.montoCalculado ?? 0 };
-  return { numero: numeros.join(' / '), montoSinIva: Math.round(fact.reduce((s, p) => s + (p.montoCalculado ?? 0), 0) * 100) / 100 };
+  return { numero: numeros.join(' / '), montoSinIva: Math.round((fact.reduce((s, p) => s + (p.montoCalculado ?? 0), 0) + cub.reduce((s, p) => s + (p.cubiertaPor!.precioUnitario ?? 0), 0)) * 100) / 100 };
 }
 
 /** Monto que se escribe de vuelta a la Agenda por expediente: con IVA (como lo registra Golden hoy) o sin IVA. */

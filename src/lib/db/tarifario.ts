@@ -215,7 +215,7 @@ async function tiposAgendaDeNit(nit: string): Promise<string[]> {
       const t = canonTipoPrueba(parte);
       if (t === 'COMPLETO') { tipos.add('POLIGRAFO'); tipos.add('SOCIOECONOMICO'); } else if (t) tipos.add(t);
     }
-    for (const c of r.componentes ?? []) { const ct = canonTipoPrueba(c?.tipoPrueba); if (ct && ct !== 'COMPLETO') tipos.add(ct); }
+    for (const c of r.componentes ?? []) { const ct = canonTipoPrueba(c?.tipoPrueba); if (ct && ct !== 'COMPLETO' && ct !== 'PSICOMETRICAS') tipos.add(ct); }
   }
   // 024: el FEE (socio cancelado con visita realizada) no es un tipo de la Agenda: aparece como PRUEBA; si el cliente tiene alguna, entra al plan.
   try {

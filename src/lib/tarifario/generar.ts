@@ -23,7 +23,7 @@ export const PLANTILLA: ReadonlyArray<{ tipoPrueba: string; categorias: readonly
 
 /** Filas que corresponden a un tipo según su forma (categorías de la plantilla o las 3 estándar). */
 export function filasDeTipo(tipoPrueba: string, origen: PlanFila['origen'], categorias?: readonly string[]): PlanFila[] {
-  const tipo = canonTipoPrueba(tipoPrueba); if (!tipo || tipo === 'COMPLETO') return [];
+  const tipo = canonTipoPrueba(tipoPrueba); if (!tipo || tipo === 'COMPLETO' || tipo === 'PSICOMETRICAS') return [];   // 034: las psicométricas no se tarifan (solo las descuenta un paquete prepagado)
   const forma = formaPrecio(tipo);
   if (forma === 'unico') return [{ tipoPrueba: tipo, categoria: UNICA, territorio: UNICA, forma, origen }];
   if (forma === 'territorio') return TERRITORIOS.map(ter => ({ tipoPrueba: tipo, categoria: UNICA, territorio: ter, forma, origen }));
