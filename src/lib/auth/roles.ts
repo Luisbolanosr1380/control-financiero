@@ -66,6 +66,7 @@ export type Accion =
   | 'gestionar_archivo_detalle'
   | 'ver_cobranza'
   | 'gestionar_cobranza'
+  | 'configurar_cobranza'
   | 'ver_mapa_precios'
   | 'gestionar_paquetes'
   | 'gestionar_usuarios'
@@ -102,7 +103,8 @@ export const MATRIZ: Record<Accion, readonly Rol[]> = {
   facturar_agenda:    CONTROL,     // FACTURACIÓN AGENDA (016): facturar expedientes de evaluación, mapear sus clientes y traer de la Agenda
   gestionar_archivo_detalle: CONTROL, // DETALLE FIRMADO EN PAPEL (032): reemplazar o quitar el archivo firmado (con motivo; el anterior se conserva)
   ver_cobranza:       COBRANZA,    // CENTRO DE COBROS (033): bandeja del día y ficha de cobranza del cliente
-  gestionar_cobranza: COBRANZA,    // registrar gestiones y promesas, contactos y condiciones de cobro, marcar «dice que ya pagó», adjuntar
+  gestionar_cobranza: COBRANZA,    // registrar gestiones y promesas, contactos y condiciones de cobro, marcar «dice que ya pagó», adjuntar, enviar recordatorios y estado de cuenta (035)
+  configurar_cobranza: CONTROL,    // CENTRO DE COBROS PR 2 (035): editar plantillas de correo y reglas de los recordatorios (cobranza no: separación de funciones)
   ver_mapa_precios:   SOLO_ADMIN,  // MAPA DE PRECIOS (027): precio e índice de cada cliente contra el mercado; solo el dueño
   gestionar_paquetes: CONTROL,     // PAQUETES PREPAGADOS (034): crear, editar y cerrar paquetes, confirmar la aplicación retroactiva (ver: todos)
   gestionar_usuarios: SOLO_ADMIN,
@@ -134,6 +136,7 @@ export const ACCION_LABEL: Record<Accion, string> = {
   gestionar_archivo_detalle: 'reemplazar o quitar el detalle firmado',
   ver_cobranza:       'ver el Centro de Cobros',
   gestionar_cobranza: 'registrar gestiones de cobro',
+  configurar_cobranza: 'editar plantillas y reglas de cobranza',
   ver_mapa_precios:   'ver el mapa de precios',
   gestionar_usuarios: 'gestionar usuarios',
   configurar_empresa: 'configurar la empresa',

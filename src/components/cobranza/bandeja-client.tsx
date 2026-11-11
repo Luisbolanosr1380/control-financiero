@@ -33,7 +33,7 @@ export function ContactoRapido({ c }: { c: ItemBandeja['contactoPreferido'] }) {
   );
 }
 
-export function BandejaClient({ datos, email }: { datos: DatosBandeja; email: string }) {
+export function BandejaClient({ datos, email, recordatorios = null }: { datos: DatosBandeja; email: string; /** 035: resumen de los recordatorios propuestos hoy (null sin la 035) */ recordatorios?: { total: number; listos: number; bloqueados: number; sinCorreo: number } | null }) {
   const router = useRouter();
   const puedeGestionar = usePuede()('gestionar_cobranza');
   const [categoria, setCategoria] = useState<CategoriaBandeja | 'todas'>('todas');
@@ -65,6 +65,15 @@ export function BandejaClient({ datos, email }: { datos: DatosBandeja; email: st
         <div className="kpi" data-kpi="promesas"><div className="kpi-label">Promesas de esta semana</div><div className="kpi-value">{Q(k.promesasSemana)}</div><div className="kpi-delta"><span className="vs">{k.promesasSemanaN} {k.promesasSemanaN === 1 ? 'promesa' : 'promesas'}</span></div></div>
         <div className="kpi" data-kpi="cumplidas"><div className="kpi-label">Promesas cumplidas del mes</div><div className="kpi-value">{k.pctCumplidas === null ? '—' : `${k.pctCumplidas} %`}</div><div className="kpi-delta"><span className="vs">{k.cumplidasMes} de {k.cerradasMes} cerradas</span></div></div>
       </div>
+      {recordatorios && (
+        <div className="card" style={{ marginBottom: 12 }} data-recordatorios-propuestos={recordatorios.total}>
+          <div className="card-pad" style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center', fontSize: 13 }}>
+            <I.Mail size={16} style={{ opacity: .7 }} />
+            <span><strong>{recordatorios.total}</strong> recordatorio{recordatorios.total === 1 ? '' : 's'} propuesto{recordatorios.total === 1 ? '' : 's'} para hoy{recordatorios.total ? <span className="cell-mute"> · {recordatorios.listos} listos{recordatorios.bloqueados ? ` · ${recordatorios.bloqueados} bloqueados (disputa o promesa vigente)` : ''}{recordatorios.sinCorreo ? ` · ${recordatorios.sinCorreo} sin correo` : ''}</span> : <span className="cell-mute"> · nada que recordar</span>}</span>
+            <Link href="/cobranza/recordatorios" className="btn btn-secondary" style={{ fontSize: 12, marginLeft: 'auto' }} data-accion="ver-recordatorios"><I.Send size={12} /> Revisar y enviar</Link>
+          </div>
+        </div>
+      )}
       <div className="card" style={{ marginBottom: 12 }}>
         <div className="card-pad" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', fontSize: 12.5 }}>
           <button type="button" className={'btn ' + (categoria === 'todas' ? 'btn-secondary' : 'btn-ghost')} style={{ fontSize: 12 }} onClick={() => setCategoria('todas')} data-filtro="todas">Todo ({datos.items.length})</button>

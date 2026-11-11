@@ -20,6 +20,7 @@ import { BADGE_ESTADO_BASE, ETIQUETA_CANAL, ETIQUETA_ESTADO_BASE, ETIQUETA_FORMA
 import type { CondicionesCobro, ContactoCobro, EventoCobranza, FichaCobranza } from '@/lib/db/cobranza';
 import { GestionForm } from './gestion-form';
 import { ContactoRapido } from './bandeja-client';
+import { EstadoCuentaEnviar } from './estado-cuenta-enviar';
 
 const ICONO_TIPO: Record<TipoEvento, string> = { gestion: '☎', promesa: '🤝', correo_enviado: '✉', correo_recibido: '📩', correo_copiado: '📨', factura_emitida: '🧾', cobro_recibido: '💵', detalle_enviado: '📄', detalle_aprobado: '✅', detalle_observaciones: '✏', cambio_condicion: '⚙' };
 
@@ -36,6 +37,7 @@ export function FichaCobranzaClient({ ficha, email }: { ficha: FichaCobranza; em
   const puedeGestionar = usePuede()('gestionar_cobranza');
   const f = ficha, c = ficha.condiciones;
   const [gestion, setGestion] = useState<{ facturas: string[] } | null>(null);
+  const [enviandoEC, setEnviandoEC] = useState(false);   // 035: enviar estado de cuenta
   const [editandoCond, setEditandoCond] = useState(false);
   const [cond, setCond] = useState<CondicionesCobro>(c);
   const [contactoEdit, setContactoEdit] = useState<Partial<ContactoCobro> | null>(null);
@@ -74,6 +76,8 @@ export function FichaCobranzaClient({ ficha, email }: { ficha: FichaCobranza; em
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <a className="btn btn-secondary" href={`/imprimir/cobranza/${encodeURIComponent(f.clienteId)}`} target="_blank" rel="noopener" data-accion="exportar-pdf"><I.Print size={13} /> Historial PDF</a>
+          <a className="btn btn-secondary" href={`/imprimir/estado-cuenta/${encodeURIComponent(f.clienteId)}`} target="_blank" rel="noopener" data-accion="estado-cuenta-pdf" title="Facturas abiertas con antigüedad y saldo real, para el cliente"><I.Receipt size={13} /> Estado de cuenta</a>
+          {puedeGestionar && <button type="button" className="btn btn-secondary" onClick={() => setEnviandoEC(true)} data-accion="enviar-estado-cuenta"><I.Mail size={13} /> Enviar estado de cuenta</button>}
           {puedeGestionar && <button type="button" className="btn btn-primary" onClick={() => setGestion({ facturas: [] })} data-accion="registrar-gestion"><I.Plus size={13} /> Registrar gestión</button>}
         </div>
       </div>
@@ -204,6 +208,7 @@ export function FichaCobranzaClient({ ficha, email }: { ficha: FichaCobranza; em
         </div>
       </div>
 
+      {enviandoEC && <EstadoCuentaEnviar clienteId={f.clienteId} clienteNombre={f.nombre} onClose={() => setEnviandoEC(false)} onListo={msg => { setEnviandoEC(false); toast.success(msg); router.refresh(); }} />}
       {gestion && <GestionForm clienteId={f.clienteId} clienteNombre={f.nombre} contactos={activos} facturas={f.facturas.filter(x => !x.cedida).map(x => ({ noFactura: x.noFactura, saldo: x.saldo, diasVencidos: x.diasVencidos }))} facturasPre={gestion.facturas} onClose={() => setGestion(null)} onListo={msg => { setGestion(null); toast.success(msg); router.refresh(); }} />}
     </div>
   );
