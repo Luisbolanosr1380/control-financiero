@@ -5,6 +5,8 @@
  * factura del anticipo, vencimiento), acciones (PDF «Estado del paquete», CSV, confirmar la aplicación retroactiva,
  * enlazar la factura, extender el vencimiento, cerrar con motivo), las líneas y, por línea, las pruebas descontadas
  * (persona, solicitante, fecha de resultado, resultado, expediente) y las reversiones con su motivo.
+ * 036: «Empresas que lo usan» (titular + NIT adicionales; agregar o quitar, y al quitar uno con pruebas descontadas se pide
+ * mantenerlas o revertirlas), columna «Empresa / NIT» y subtotal de usadas por NIT.
  */
 import Link from 'next/link';
 import { useState } from 'react';
@@ -14,7 +16,9 @@ import { I } from '@/components/common/icons';
 import { Q } from '@/lib/utils';
 import { usePuede } from '@/components/auth/permisos';
 import { NOMBRE_SERVICIO, resultadoLegible } from '@/lib/facturacion-agenda/situacion';
-import { BADGE_ESTADO, ETIQUETA_ESTADO, csvDetalle, diasParaVencer, estadoEfectivo, etiquetaLinea, textoUsadas, totalRemanente, valorRemanente, type PaqueteDetalle as Detalle } from '@/lib/paquetes/paquete';
+import { BADGE_ESTADO, ETIQUETA_ESTADO, csvDetalle, diasParaVencer, estadoEfectivo, etiquetaLinea, textoUsadas, totalRemanente, valorRemanente, esCompartido, subtotalesPorNit, type PaqueteDetalle as Detalle } from '@/lib/paquetes/paquete';
+import type { ClientePaquete } from '@/lib/db/paquetes';
+import { NitsAdicionalesInput } from './nits-adicionales-input';
 import { cerrarPaqueteAction, confirmarRetroactivoAction, editarPaqueteAction } from '@/app/(app)/paquetes/actions';
 import { BarraUso } from './paquetes-section';
 
@@ -29,11 +33,26 @@ export function PaqueteDetalleView({ detalle: d, hoy }: { detalle: Detalle; hoy:
   const e = estadoEfectivo(p, hoy);
   const dias = diasParaVencer(p, hoy);
   const [busy, setBusy] = useState(false);
-  const [modo, setModo] = useState<'' | 'factura' | 'vence' | 'cerrar'>('');
+  const [modo, setModo] = useState<'' | 'factura' | 'vence' | 'cerrar' | 'nits'>('');
   const [noFactura, setNoFactura] = useState(p.noFactura ?? '');
   const [vence, setVence] = useState(p.venceEn ?? '');
   const [motivo, setMotivo] = useState('');
   const cerrado = p.estado === 'cerrado';
+  // 036: empresas que lo usan
+  const actuales = (): ClientePaquete[] => p.nitsAdicionales.map(a => ({ nit: a.nit, nombre: a.nombre ?? '', razonSocial: a.razonSocial ?? a.nombre ?? '' }));
+  const [adicionales, setAdicionales] = useState<ClientePaquete[]>(actuales);
+  const [decision, setDecision] = useState<Array<{ nit: string; pruebas: number }> | null>(null);
+  const subtotales = subtotalesPorNit(d);
+  const compartido = esCompartido(p) || subtotales.length > 1;
+  const guardarNits = async (alQuitarNit?: 'mantener' | 'revertir') => {
+    setBusy(true);
+    try {
+      const r = await editarPaqueteAction(p.id, { nitsAdicionales: adicionales.map(a => a.nit), ...(alQuitarNit ? { alQuitarNit } : {}) });
+      if (!r.ok) { if (r.decision?.length) { setDecision(r.decision); return; } toast.error(r.error); return; }
+      toast.success(alQuitarNit === 'revertir' ? 'Empresas actualizadas · las pruebas del NIT que salió se revirtieron' : alQuitarNit === 'mantener' ? 'Empresas actualizadas · las pruebas ya descontadas se mantienen' : 'Empresas que usan el paquete actualizadas');
+      setDecision(null); setModo(''); router.refresh();
+    } finally { setBusy(false); }
+  };
 
   const correr = async (fn: () => Promise<{ ok: boolean; error?: string }>, okMsg: string) => {
     setBusy(true);
@@ -54,7 +73,8 @@ export function PaqueteDetalleView({ detalle: d, hoy }: { detalle: Detalle; hoy:
           <div style={{ fontSize: 12, marginBottom: 4 }}><Link href={`/tarifario/${encodeURIComponent(p.nit)}`} style={{ color: 'var(--ink-3)', textDecoration: 'none' }}>← Tarifario · {p.cliente || p.nit}</Link> · <Link href="/paquetes" style={{ color: 'var(--ink-3)', textDecoration: 'none' }}>Todos los paquetes</Link></div>
           <h1 className="page-title">{p.correlativo} · {p.nombre}</h1>
           <div className="page-subtitle" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span>{p.cliente || '—'} · <span className="num">NIT {p.nit}</span></span>
+            <span>{p.cliente || '—'} · <span className="num">NIT {p.nit}</span>{compartido ? ' (titular)' : ''}</span>
+            {esCompartido(p) && <span className="badge badge-outline" data-compartido={p.nitsAdicionales.map(a => a.nit).join(',')}>También lo usa{p.nitsAdicionales.length === 1 ? '' : 'n'}: {p.nitsAdicionales.map(a => `${a.razonSocial || a.nombre || 'sin cliente'} (${a.nit})`).join(' · ')}</span>}
             <span className={'badge ' + BADGE_ESTADO[e]} data-badge-estado={e}>{ETIQUETA_ESTADO[e]}</span>
             <span data-usadas-texto>{textoUsadas(p)}</span>
             {p.venceEn && <span className={dias !== null && dias < 0 ? 'badge badge-wine' : 'cell-mute'}>{dias !== null && dias < 0 ? `venció el ${fecha(p.venceEn)}` : `vence ${fecha(p.venceEn)}${dias !== null ? ` (${dias} d)` : ''}`}</span>}
@@ -66,6 +86,7 @@ export function PaqueteDetalleView({ detalle: d, hoy }: { detalle: Detalle; hoy:
           {puedeGestionar && !cerrado && p.retroPendientes > 0 && <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void correr(() => confirmarRetroactivoAction(p.id), 'Aplicación retroactiva confirmada')} data-accion="confirmar-retro">Aplicar a {p.retroPendientes} ya terminada{p.retroPendientes === 1 ? '' : 's'}</button>}
           {puedeGestionar && !cerrado && modo === '' && <>
             <button type="button" className="btn btn-ghost" onClick={() => setModo('factura')} data-accion="enlazar-factura">{p.noFactura ? 'Cambiar factura' : 'Enlazar factura del anticipo'}</button>
+            <button type="button" className="btn btn-ghost" onClick={() => { setAdicionales(actuales()); setDecision(null); setModo('nits'); }} data-accion="editar-nits">Empresas que lo usan</button>
             <button type="button" className="btn btn-ghost" onClick={() => setModo('vence')} data-accion="extender">{p.venceEn ? 'Extender / quitar vencimiento' : 'Poner vencimiento'}</button>
             <button type="button" className="btn btn-ghost" style={{ color: 'var(--wine)' }} onClick={() => setModo('cerrar')} data-accion="cerrar-paquete">Cerrar paquete</button>
           </>}
@@ -88,6 +109,27 @@ export function PaqueteDetalleView({ detalle: d, hoy }: { detalle: Detalle; hoy:
           <button type="button" className="btn btn-ghost" onClick={() => setModo('')} disabled={busy}>Cancelar</button>
         </div></div>
       )}
+      {modo === 'nits' && (
+        <div className="card" role="dialog" aria-label="Empresas que usan el paquete" style={{ marginBottom: 14 }}><div className="card-pad" style={{ display: 'grid', gap: 10, fontSize: 12.5 }}>
+          <div>Titular (quien pagó; a él va la factura del anticipo): <strong>{p.razonSocial || p.cliente || '—'}</strong> · <span className="num">NIT {p.nit}</span>. Las pruebas de las empresas que agregues también descuentan de este paquete, en el mismo orden (la más vieja primero).</div>
+          <NitsAdicionalesInput titularNit={p.nit} value={adicionales} onChange={v => { setAdicionales(v); setDecision(null); }} disabled={busy} />
+          {decision && (
+            <div className="card" role="alertdialog" aria-label="Pruebas descontadas del NIT que se quita" style={{ borderColor: 'var(--burnt, #b5651d)' }} data-decision-nit={decision.map(x => `${x.nit}:${x.pruebas}`).join(',')}><div className="card-pad" style={{ display: 'grid', gap: 8 }}>
+              {decision.map(x => <div key={x.nit}>Quedan <strong>{x.pruebas}</strong> prueba{x.pruebas === 1 ? '' : 's'} del NIT <span className="num">{x.nit}</span> descontada{x.pruebas === 1 ? '' : 's'} de este paquete: ¿mantenerlas o revertirlas?</div>)}
+              <div className="cell-mute" style={{ fontSize: 11.5 }}>Mantener: siguen cubiertas por el paquete y ese NIT deja de descontar de ahora en adelante. Revertir: vuelven al paquete como disponibles y esas pruebas pasan a Por facturar a tarifa.</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void guardarNits('mantener')} data-accion="quitar-nit-mantener">Mantenerlas descontadas</button>
+                <button type="button" className="btn btn-secondary" style={{ color: 'var(--wine)' }} disabled={busy} onClick={() => void guardarNits('revertir')} data-accion="quitar-nit-revertir">Revertirlas</button>
+                <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => { setDecision(null); setAdicionales(actuales()); }}>No quitar</button>
+              </div>
+            </div></div>
+          )}
+          {!decision && <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void guardarNits()} data-accion="guardar-nits">Guardar</button>
+            <button type="button" className="btn btn-ghost" onClick={() => setModo('')} disabled={busy}>Cancelar</button>
+          </div>}
+        </div></div>
+      )}
       {modo === 'cerrar' && (
         <div className="card" role="alertdialog" aria-label="Cerrar paquete" style={{ marginBottom: 14, borderColor: 'var(--wine)' }}><div className="card-pad" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
           <span>Se cierra <strong>{p.correlativo}</strong> con <strong>{totalRemanente(p)}</strong> pruebas sin usar ({Q(valorRemanente(p))} sin IVA). No vuelve a descontar. Motivo:</span>
@@ -107,6 +149,21 @@ export function PaqueteDetalleView({ detalle: d, hoy }: { detalle: Detalle; hoy:
       {cerrado && <div className="card" role="status" style={{ marginBottom: 14, borderColor: 'var(--line-2)' }}><div className="card-pad" style={{ fontSize: 12.5 }}>Cerrado el {fecha(p.cerradoEn)} por {p.cerradoPor || '—'}{p.cerradoMotivo ? ` · ${p.cerradoMotivo}` : ''}.</div></div>}
       {p.notas && <div className="card" style={{ marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 12.5 }}>{p.notas}</div></div>}
 
+      {compartido && (
+        <div className="card" style={{ marginBottom: 14 }} data-subtotal-nit={subtotales.map(t => `${t.nit}:${t.usadas}`).join(',')}>
+          <div className="card-head"><div className="card-title">Usadas por empresa <span className="cell-mute" style={{ fontWeight: 400, fontSize: 12 }}>· el paquete lo usan varias empresas del grupo</span></div></div>
+          <div className="table-wrap" style={{ border: 'none' }}>
+            <table className="table">
+              <thead><tr><th>Empresa</th><th>NIT</th><th></th><th className="num">Usadas</th></tr></thead>
+              <tbody>
+                {subtotales.map(t => <tr key={t.nit} data-nit={t.nit} data-usadas={t.usadas}><td className="cell-strong">{t.empresa}</td><td className="num">{t.nit || '—'}</td><td>{t.titular ? <span className="badge badge-olive" style={{ fontSize: 10 }}>titular</span> : !t.vigente ? <span className="badge badge-mute" style={{ fontSize: 10 }} title="Ya no usa el paquete; sus pruebas descontadas se mantuvieron">ya no lo usa</span> : null}</td><td className="num cell-strong">{t.usadas}</td></tr>)}
+                <tr><td colSpan={3} className="cell-mute">Total</td><td className="num cell-strong">{subtotales.reduce((a, t) => a + t.usadas, 0)}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       {p.lineas.map(l => { const cs = vigentes.filter(c => c.lineaId === l.id); return (
         <div className="card" key={l.id} style={{ marginBottom: 14 }} data-linea={l.id} data-remanente={l.remanente}>
           <div className="card-head">
@@ -121,12 +178,13 @@ export function PaqueteDetalleView({ detalle: d, hoy }: { detalle: Detalle; hoy:
           {cs.length === 0 ? <div className="card-pad cell-mute" style={{ fontSize: 12.5 }}>Todavía no se descontó ninguna prueba de esta línea.</div> : (
             <div className="table-wrap" style={{ border: 'none' }}>
               <table className="table" data-consumos={cs.length}>
-                <thead><tr><th>#</th><th>Persona</th><th>Solicitante</th><th>Fecha de resultado</th><th>Resultado</th><th>Expediente</th><th>Descontada el</th></tr></thead>
+                <thead><tr><th>#</th><th>Persona</th><th>Empresa / NIT</th><th>Solicitante</th><th>Fecha de resultado</th><th>Resultado</th><th>Expediente</th><th>Descontada el</th></tr></thead>
                 <tbody>
                   {cs.map((c, i) => (
                     <tr key={c.id} data-consumo={c.idExterno}>
                       <td className="num cell-mute">{i + 1}</td>
                       <td className="cell-strong">{c.persona || '—'}<div className="cell-mute" style={{ fontSize: 11 }}>{c.puesto}</div></td>
+                      <td data-nit-prueba={c.nit}>{c.empresa || '—'}<div className="cell-mute num" style={{ fontSize: 11 }}>{c.nit}</div></td>
                       <td>{c.solicitante || '—'}</td>
                       <td className="num">{fecha(c.fechaResultado)}</td>
                       <td>{resultadoLegible(c.servicio, c.estadoPrueba)}</td>

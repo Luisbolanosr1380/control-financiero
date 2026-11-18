@@ -5,7 +5,8 @@
  * y no se vuelve a facturar. Acá viven los tipos que devuelven las RPC (paquete_resumen / paquete_detalle), el estado
  * EFECTIVO que ve la pantalla (activo / por agotarse / agotado / vence pronto / vencido / cerrado), el umbral por
  * defecto, el espejo TS de `paquete_linea_cubre` (paridad SQL / TS), los textos de banner y badge, los filtros de la
- * lista global y el CSV del detalle.
+ * lista global y el CSV del detalle. 036: un paquete lo pueden usar varios NIT (titular + adicionales): nitsDe, la etiqueta
+ * «Compartido · titular: …» y el subtotal de usadas por NIT.
  */
 
 export type EstadoPaquete = 'activo' | 'agotado' | 'vencido' | 'cerrado';
@@ -25,11 +26,20 @@ export interface Paquete {
   notas: string; creadoPor: string; createdAt: string; updatedAt: string | null;
   cerradoPor: string | null; cerradoMotivo: string | null; cerradoEn: string | null;
   lineas: PaqueteLinea[];
+  /** 036: razón social del titular (la de la factura del anticipo). */
+  razonSocial: string | null;
+  /** 036: NIT ADICIONALES que también consumen (grupo de empresas). `nit` sigue siendo el titular. */
+  nitsAdicionales: NitAdicional[];
+  /** 036: pruebas descontadas vigentes por NIT (titular y adicionales; también de un NIT que ya se quitó y cuyas pruebas se mantuvieron). */
+  usadasPorNit: Record<string, number>;
 }
+export interface NitAdicional { nit: string; nombre: string | null; razonSocial: string | null; agregadoPor: string | null; agregadoEn: string | null }
 export interface ConsumoPaquete {
   id: string; lineaId: string; componenteId: string; fecha: string; revertidoEn: string | null; motivoReversion: string | null;
   fechaResultado: string | null; servicio: string; categoria: string; territorio: string; estadoPrueba: string; situacion: string;
   persona: string; solicitante: string; puesto: string; idExterno: string; expedienteId: string; detalleId: string | null; noFactura: string | null;
+  /** 036: NIT y empresa (razón social) a la que pertenece la prueba. */
+  nit: string; empresa: string;
 }
 export interface PaqueteDetalle { paquete: Paquete; consumos: ConsumoPaquete[] }
 
@@ -48,6 +58,9 @@ export function parsePaquete(raw: unknown): Paquete {
     umbralAviso: n(r.umbral_aviso), retroactivoConfirmado: !!r.retroactivo_confirmado, retroPendientes: n(r.retro_pendientes),
     notas: s(r.notas), creadoPor: s(r.creado_por), createdAt: s(r.created_at), updatedAt: sn(r.updated_at),
     cerradoPor: sn(r.cerrado_por), cerradoMotivo: sn(r.cerrado_motivo), cerradoEn: sn(r.cerrado_en),
+    razonSocial: sn(r.razon_social),
+    nitsAdicionales: (Array.isArray(r.nits_adicionales) ? (r.nits_adicionales as Record<string, unknown>[]) : []).map(x => ({ nit: s(x.nit), nombre: sn(x.nombre), razonSocial: sn(x.razon_social), agregadoPor: sn(x.agregado_por), agregadoEn: sn(x.agregado_en) })).filter(x => x.nit),
+    usadasPorNit: Object.fromEntries(Object.entries((r.usadas_por_nit && typeof r.usadas_por_nit === 'object' ? r.usadas_por_nit : {}) as Record<string, unknown>).map(([k, v]) => [k, n(v)])),
     lineas: lineas.map(l => ({ id: s(l.id), servicio: s(l.servicio), categoria: s(l.categoria), territorio: sn(l.territorio), cantidad: n(l.cantidad), precioUnitario: n(l.precio_unitario), usadas: n(l.usadas), remanente: n(l.remanente), avisoUmbralEn: sn(l.aviso_umbral_en), agotadoEn: sn(l.agotado_en) })),
   };
 }
@@ -57,7 +70,39 @@ export function parseConsumo(raw: unknown): ConsumoPaquete {
     id: s(r.id), lineaId: s(r.linea_id), componenteId: s(r.componente_id), fecha: s(r.fecha), revertidoEn: sn(r.revertido_en), motivoReversion: sn(r.motivo_reversion),
     fechaResultado: sn(r.fecha_resultado), servicio: s(r.servicio), categoria: s(r.categoria), territorio: s(r.territorio), estadoPrueba: s(r.estado_prueba), situacion: s(r.situacion),
     persona: s(r.persona), solicitante: s(r.solicitante), puesto: s(r.puesto), idExterno: s(r.id_externo), expedienteId: s(r.expediente_id), detalleId: sn(r.detalle_id), noFactura: sn(r.no_factura),
+    nit: s(r.nit), empresa: s(r.empresa),
   };
+}
+
+/* ── 036 · un paquete que usan varios NIT ── */
+/** Todos los NIT que consumen del paquete: el titular primero y después los adicionales. Igual que paquete_nits en SQL. */
+export const nitsDe = (p: Pick<Paquete, 'nit' | 'nitsAdicionales'>): string[] => [p.nit, ...(p.nitsAdicionales ?? []).map(x => x.nit).filter(x => x && x !== p.nit)];
+export const esCompartido = (p: Pick<Paquete, 'nitsAdicionales'>): boolean => (p.nitsAdicionales ?? []).length > 0;
+/** Nombre corto de una razón social para etiquetas: «SAGRACO, S.A.» → «SAGRACO». */
+export const nombreCorto = (razon: string | null | undefined): string => String(razon ?? '').replace(/[,\s]+(S\.?\s?A\.?|SOCIEDAD AN[OÓ]NIMA|LTDA\.?|LIMITADA|S\.?\s?R\.?\s?L\.?)\s*\.?\s*$/i, '').trim();
+/** «Compartido · titular: SAGRACO (1083171)»: la etiqueta del paquete visto desde un NIT adicional. */
+export const etiquetaCompartido = (p: Pick<Paquete, 'nit' | 'cliente' | 'razonSocial'>): string => `Compartido · titular: ${nombreCorto(p.razonSocial) || p.cliente || 'NIT'} (${p.nit})`;
+/** Nombre con el que se muestra un NIT del paquete (titular o adicional): razón social, si no el nombre, si no el NIT. */
+export function nombreDeNit(p: Pick<Paquete, 'nit' | 'cliente' | 'razonSocial' | 'nitsAdicionales'>, nit: string): string {
+  if (nit === p.nit) return p.razonSocial || p.cliente || nit;
+  const a = (p.nitsAdicionales ?? []).find(x => x.nit === nit);
+  return a?.razonSocial || a?.nombre || nit;
+}
+/** «1083171 +1» de la lista global: el titular y cuántos más; `title` con los demás. */
+export const tituloNits = (p: Pick<Paquete, 'nit' | 'cliente' | 'razonSocial' | 'nitsAdicionales'>): string => (p.nitsAdicionales ?? []).map(a => `${a.razonSocial || a.nombre || 'sin cliente'} (${a.nit})`).join(' · ');
+export interface SubtotalNit { nit: string; empresa: string; usadas: number; titular: boolean; vigente: boolean }
+/**
+ * Subtotal de pruebas descontadas (vigentes) por NIT: el titular, cada adicional (aunque lleve 0) y, si quedaron pruebas
+ * mantenidas de un NIT que ya se quitó, también ese NIT (`vigente: false`). Titular primero, después por alta.
+ */
+export function subtotalesPorNit(d: PaqueteDetalle): SubtotalNit[] {
+  const p = d.paquete, vig = d.consumos.filter(c => !c.revertidoEn);
+  const cuenta = new Map<string, number>(); const emp = new Map<string, string>();
+  for (const c of vig) { cuenta.set(c.nit, (cuenta.get(c.nit) ?? 0) + 1); if (c.empresa) emp.set(c.nit, c.empresa); }
+  const del = nitsDe(p);
+  const out: SubtotalNit[] = del.map(nit => ({ nit, empresa: nombreDeNit(p, nit) || emp.get(nit) || nit, usadas: cuenta.get(nit) ?? 0, titular: nit === p.nit, vigente: true }));
+  for (const [nit, usadas] of cuenta) if (!del.includes(nit)) out.push({ nit, empresa: emp.get(nit) || nit || 'sin NIT', usadas, titular: false, vigente: false });
+  return out;
 }
 
 /** Umbral de aviso por defecto: el 10 % de la cantidad total o 5, lo que sea mayor (igual que paquete_crear en SQL). */
@@ -141,11 +186,16 @@ export const textoUsadas = (p: Pick<Paquete, 'lineas'>): string => `Usadas ${tot
 const celda = (v: unknown): string => { const x = v === null || v === undefined ? '' : String(v); return /[",;\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
 /** CSV del detalle del paquete: una fila por prueba descontada (y las reversiones), más las líneas al pie. */
 export function csvDetalle(d: PaqueteDetalle): string {
-  const lineas = [['paquete', 'linea', 'persona', 'solicitante', 'puesto', 'expediente', 'fecha_resultado', 'resultado', 'servicio', 'categoria', 'territorio', 'estado_consumo', 'revertido_en', 'motivo_reversion'].join(',')];
+  const lineas = [['paquete', 'linea', 'persona', 'solicitante', 'puesto', 'expediente', 'fecha_resultado', 'resultado', 'servicio', 'categoria', 'territorio', 'estado_consumo', 'revertido_en', 'motivo_reversion', 'nit', 'empresa'].join(',')];
   const nombreLinea = new Map(d.paquete.lineas.map(l => [l.id, etiquetaLinea(l)]));
-  for (const c of d.consumos) lineas.push([d.paquete.correlativo, nombreLinea.get(c.lineaId) ?? c.lineaId, c.persona, c.solicitante, c.puesto, c.idExterno, c.fechaResultado?.slice(0, 10) ?? '', c.estadoPrueba, c.servicio, c.categoria, c.territorio, c.revertidoEn ? 'revertido' : 'descontado', c.revertidoEn?.slice(0, 10) ?? '', c.motivoReversion ?? ''].map(celda).join(','));
+  for (const c of d.consumos) lineas.push([d.paquete.correlativo, nombreLinea.get(c.lineaId) ?? c.lineaId, c.persona, c.solicitante, c.puesto, c.idExterno, c.fechaResultado?.slice(0, 10) ?? '', c.estadoPrueba, c.servicio, c.categoria, c.territorio, c.revertidoEn ? 'revertido' : 'descontado', c.revertidoEn?.slice(0, 10) ?? '', c.motivoReversion ?? '', c.nit, c.empresa].map(celda).join(','));
   lineas.push('');
   lineas.push(['linea', 'cantidad', 'usadas', 'remanente', 'precio_unitario_sin_iva', 'valor_remanente'].join(','));
   for (const l of d.paquete.lineas) lineas.push([etiquetaLinea(l), l.cantidad, l.usadas, l.remanente, l.precioUnitario, Math.round(l.remanente * l.precioUnitario * 100) / 100].map(celda).join(','));
+  if (esCompartido(d.paquete) || subtotalesPorNit(d).length > 1) {
+    lineas.push('');
+    lineas.push(['nit', 'empresa', 'usadas'].join(','));
+    for (const t of subtotalesPorNit(d)) lineas.push([t.nit, t.empresa, t.usadas].map(celda).join(','));
+  }
   return `﻿${lineas.join('\n')}\n`;
 }

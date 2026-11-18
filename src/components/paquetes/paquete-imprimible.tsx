@@ -1,6 +1,6 @@
 import { Q } from '@/lib/utils';
 import { NOMBRE_SERVICIO, resultadoLegible } from '@/lib/facturacion-agenda/situacion';
-import { etiquetaLinea, textoUsadas, totalCantidad, totalRemanente, totalUsadas, type PaqueteDetalle } from '@/lib/paquetes/paquete';
+import { esCompartido, etiquetaLinea, subtotalesPorNit, textoUsadas, totalCantidad, totalRemanente, totalUsadas, type PaqueteDetalle } from '@/lib/paquetes/paquete';
 import { ImprimirBoton } from '@/components/por-facturar/imprimir-boton';
 
 /**
@@ -8,6 +8,7 @@ import { ImprimirBoton } from '@/components/por-facturar/imprimir-boton';
  * paquete (nombre, factura del anticipo, vigencia), «Usadas 63 de 100 · Restan 37», por línea la tabla de pruebas
  * descontadas (persona, solicitante, fecha de resultado, resultado) y el remanente. Mismo formato que el detalle de
  * facturación: letra compacta, filas que no se parten entre hojas, encabezado repetido. Estilos propios + @media print.
+ * 036: columna «Empresa / NIT» en cada prueba y, si el paquete lo usan varias empresas, el subtotal de usadas por NIT.
  */
 const nombreServicio = (s: string) => NOMBRE_SERVICIO[s] ?? (s === 'PSICOMETRICAS' ? 'Psicométricas' : s);
 const fecha = (iso: string | null | undefined) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : '—');
@@ -15,6 +16,8 @@ const fecha = (iso: string | null | undefined) => (iso ? `${iso.slice(8, 10)}/${
 export function PaqueteImprimible({ datos, emisor, hoy }: { datos: PaqueteDetalle; emisor: { nombre: string; nit: string; direccion: string; logoUrl?: string | null }; hoy: string }) {
   const p = datos.paquete;
   const vigentes = datos.consumos.filter(c => !c.revertidoEn);
+  const subtotales = subtotalesPorNit(datos);
+  const compartido = esCompartido(p) || subtotales.length > 1;
   return (
     <main style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#111', maxWidth: 820, margin: '0 auto', padding: '32px 28px', background: '#fff' }} data-imprimible="paquete" data-paquete={p.correlativo}>
       <style>{`
@@ -46,7 +49,8 @@ export function PaqueteImprimible({ datos, emisor, hoy }: { datos: PaqueteDetall
         <div>
           <div className="doc-mute">Cliente</div>
           <div style={{ fontWeight: 700 }}>{p.cliente || '—'}</div>
-          <div>NIT {p.nit}</div>
+          <div>NIT {p.nit}{compartido ? ' · titular del paquete' : ''}</div>
+          {esCompartido(p) && <div className="doc-mute" style={{ marginTop: 4 }} data-tambien-lo-usan>También lo usa{p.nitsAdicionales.length === 1 ? '' : 'n'}: {p.nitsAdicionales.map(a => `${a.razonSocial || a.nombre || 'NIT'} (NIT ${a.nit})`).join(' · ')}</div>}
         </div>
         <div>
           <div className="doc-mute">Paquete</div>
@@ -55,6 +59,19 @@ export function PaqueteImprimible({ datos, emisor, hoy }: { datos: PaqueteDetall
         </div>
       </section>
       <div style={{ fontSize: 15, fontWeight: 700, margin: '6px 0 14px', padding: '8px 10px', border: '1.5px solid #111', display: 'inline-block' }} data-usadas-texto>{textoUsadas(p)}</div>
+      {compartido && (
+        <section className="doc-linea" style={{ marginBottom: 16 }} data-subtotal-nit={subtotales.map(t => `${t.nit}:${t.usadas}`).join(',')}>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 4 }}>Usadas por empresa</div>
+          <table className="doc-tabla">
+            <colgroup><col style={{ width: '56%' }} /><col style={{ width: '24%' }} /><col style={{ width: '20%' }} /></colgroup>
+            <thead><tr><th>Empresa</th><th>NIT</th><th className="num">Usadas</th></tr></thead>
+            <tbody>
+              {subtotales.map(t => <tr key={t.nit}><td>{t.empresa}{t.titular ? <span className="doc-mute"> · titular</span> : !t.vigente ? <span className="doc-mute"> · ya no usa el paquete</span> : null}</td><td>{t.nit || '—'}</td><td className="num">{t.usadas}</td></tr>)}
+              <tr><td colSpan={2}><strong>Total</strong></td><td className="num"><strong>{subtotales.reduce((a, t) => a + t.usadas, 0)}</strong></td></tr>
+            </tbody>
+          </table>
+        </section>
+      )}
 
       {p.lineas.map(l => { const cs = vigentes.filter(c => c.lineaId === l.id); return (
         <section key={l.id} className="doc-linea" style={{ marginBottom: 16 }} data-linea-impresa={l.id}>
@@ -64,9 +81,9 @@ export function PaqueteImprimible({ datos, emisor, hoy }: { datos: PaqueteDetall
           </div>
           {cs.length === 0 ? <div className="doc-mute">Sin pruebas descontadas todavía.</div> : (
             <table className="doc-tabla">
-              <colgroup><col style={{ width: '5%' }} /><col style={{ width: '33%' }} /><col style={{ width: '22%' }} /><col style={{ width: '14%' }} /><col style={{ width: '26%' }} /></colgroup>
-              <thead><tr><th>#</th><th>Persona</th><th>Solicitante</th><th className="num">Resultado el</th><th>Resultado</th></tr></thead>
-              <tbody>{cs.map((c, i) => <tr key={c.id}><td className="num">{i + 1}</td><td>{c.persona || c.idExterno}{c.puesto ? <span className="doc-mute"> · {c.puesto}</span> : null}</td><td>{c.solicitante || '—'}</td><td className="num">{fecha(c.fechaResultado)}</td><td>{resultadoLegible(c.servicio, c.estadoPrueba)}</td></tr>)}</tbody>
+              <colgroup><col style={{ width: '5%' }} /><col style={{ width: '25%' }} /><col style={{ width: '22%' }} /><col style={{ width: '16%' }} /><col style={{ width: '12%' }} /><col style={{ width: '20%' }} /></colgroup>
+              <thead><tr><th>#</th><th>Persona</th><th>Empresa / NIT</th><th>Solicitante</th><th className="num">Resultado el</th><th>Resultado</th></tr></thead>
+              <tbody>{cs.map((c, i) => <tr key={c.id}><td className="num">{i + 1}</td><td>{c.persona || c.idExterno}{c.puesto ? <span className="doc-mute"> · {c.puesto}</span> : null}</td><td data-nit-prueba={c.nit}>{c.empresa || '—'}<div className="doc-mute">NIT {c.nit || '—'}</div></td><td>{c.solicitante || '—'}</td><td className="num">{fecha(c.fechaResultado)}</td><td>{resultadoLegible(c.servicio, c.estadoPrueba)}</td></tr>)}</tbody>
             </table>
           )}
         </section>

@@ -4,14 +4,14 @@
  * PAQUETES PREPAGADOS (034) · lista global /paquetes: todos los paquetes con cliente, líneas, % usado, remanente, valor del
  * remanente (remanente × precio unitario) y vencimiento. Filtros (activos, por agotarse, agotados, vencidos, todos) en la
  * URL. KPI «Pasivo por anticipos»: el valor del remanente de todos los paquetes activos (la contabilidad del ingreso
- * diferido queda fuera: lo decide el CFO aparte).
+ * diferido queda fuera: lo decide el CFO aparte). 036: columna «NIT» con el titular y «+1» si es compartido (los demás en el title).
  */
 import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Q } from '@/lib/utils';
 import { NOMBRE_SERVICIO } from '@/lib/facturacion-agenda/situacion';
-import { BADGE_ESTADO, ETIQUETA_ESTADO, ETIQUETA_FILTRO, FILTROS_PAQUETES, esFiltroPaquetes, estadoEfectivo, etiquetaLinea, pasaFiltro, porcentajeUsado, totalRemanente, valorRemanente, type FiltroPaquetes, type Paquete } from '@/lib/paquetes/paquete';
+import { BADGE_ESTADO, ETIQUETA_ESTADO, ETIQUETA_FILTRO, FILTROS_PAQUETES, esFiltroPaquetes, estadoEfectivo, etiquetaLinea, pasaFiltro, porcentajeUsado, totalRemanente, valorRemanente, esCompartido, tituloNits, type FiltroPaquetes, type Paquete } from '@/lib/paquetes/paquete';
 import { BarraUso } from './paquetes-section';
 
 const nombreServicio = (s: string) => NOMBRE_SERVICIO[s] ?? (s === 'PSICOMETRICAS' ? 'Psicométricas' : s);
@@ -32,7 +32,7 @@ export function PaquetesLista({ paquetes, hoy, disponible }: { paquetes: Paquete
   const pasivo = useMemo(() => Math.round(activos.reduce((a, p) => a + valorRemanente(p), 0) * 100) / 100, [activos]);
   const conteo = (f: FiltroPaquetes) => paquetes.filter(p => pasaFiltro(p, f, hoy)).length;
   const n = q.trim().toLowerCase();
-  const filas = useMemo(() => paquetes.filter(p => pasaFiltro(p, filtro, hoy) && (!n || `${p.correlativo} ${p.nombre} ${p.cliente ?? ''} ${p.nit} ${p.noFactura ?? ''}`.toLowerCase().includes(n))), [paquetes, filtro, hoy, n]);
+  const filas = useMemo(() => paquetes.filter(p => pasaFiltro(p, filtro, hoy) && (!n || `${p.correlativo} ${p.nombre} ${p.cliente ?? ''} ${p.razonSocial ?? ''} ${p.nit} ${p.nitsAdicionales.map(a => `${a.nit} ${a.nombre ?? ''} ${a.razonSocial ?? ''}`).join(' ')} ${p.noFactura ?? ''}`.toLowerCase().includes(n))), [paquetes, filtro, hoy, n]);
 
   return (
     <div className="page">
@@ -56,13 +56,14 @@ export function PaquetesLista({ paquetes, hoy, disponible }: { paquetes: Paquete
         </div>
         <div className="table-wrap" style={{ border: 'none' }}>
           <table className="table" data-lista-paquetes={filas.length}>
-            <thead><tr><th>Paquete</th><th>Cliente</th><th>Líneas</th><th>Usado</th><th className="num">Remanente</th><th className="num">Valor</th><th>Vence</th><th>Estado</th></tr></thead>
+            <thead><tr><th>Paquete</th><th>Cliente</th><th>NIT</th><th>Líneas</th><th>Usado</th><th className="num">Remanente</th><th className="num">Valor</th><th>Vence</th><th>Estado</th></tr></thead>
             <tbody>
-              {filas.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>{paquetes.length ? 'Ningún paquete con ese filtro.' : 'Todavía no hay paquetes: se crean desde Tarifario → cliente → Paquetes.'}</td></tr>}
+              {filas.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: 28, color: 'var(--ink-4)' }}>{paquetes.length ? 'Ningún paquete con ese filtro.' : 'Todavía no hay paquetes: se crean desde Tarifario → cliente → Paquetes.'}</td></tr>}
               {filas.map(p => { const e = estadoEfectivo(p, hoy); return (
                 <tr key={p.id} data-paquete={p.correlativo} data-estado={e}>
                   <td><Link href={`/tarifario/paquetes/${p.id}`} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{p.correlativo}</Link><div className="cell-mute" style={{ fontSize: 11 }}>{p.nombre}{p.noFactura ? ` · ${p.noFactura}` : ' · pendiente de facturar'}</div></td>
-                  <td><Link href={`/tarifario/${encodeURIComponent(p.nit)}`} style={{ color: 'var(--ink)', textDecoration: 'none' }}>{p.cliente || p.nit}</Link><div className="cell-mute num" style={{ fontSize: 11 }}>{p.nit}</div></td>
+                  <td><Link href={`/tarifario/${encodeURIComponent(p.nit)}`} style={{ color: 'var(--ink)', textDecoration: 'none' }}>{p.cliente || p.nit}</Link></td>
+                  <td className="num" style={{ fontSize: 12, whiteSpace: 'nowrap' }} data-nit-titular={p.nit}>{p.nit}{esCompartido(p) && <span className="badge badge-outline" style={{ marginLeft: 6, fontSize: 10, cursor: 'help' }} title={`También lo usa${p.nitsAdicionales.length === 1 ? '' : 'n'}: ${tituloNits(p)}`} data-nits-mas={p.nitsAdicionales.length}>+{p.nitsAdicionales.length}</span>}</td>
                   <td style={{ fontSize: 12 }}>{p.lineas.map(l => <div key={l.id}>{etiquetaLinea(l, nombreServicio)}: <span className="num">{l.remanente}</span> de {l.cantidad}</div>)}</td>
                   <td><BarraUso p={p} /><div className="cell-mute num" style={{ fontSize: 11 }}>{porcentajeUsado(p)} %</div></td>
                   <td className="num cell-strong">{totalRemanente(p)}</td>
