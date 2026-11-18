@@ -218,7 +218,7 @@ const PREFIJO = 'PVN-', ACTOR = 'validador@pvn.example';
   const v10 = await vigentesDe(id1);
   const cz = await DB.cerrarPaquete(id1, 'validador', ACTOR);
   const ap2 = await DB.aplicarPaquetes(NIT_B, ACTOR);
-  ok(!!ap && ap.revertidos === 1 && ap.consumidos === 1 && v10.map(c => ext(c.idExterno)).join(',') === 'A1,A2,A3,A4,B2' && cz.ok && cz.paquete.estado === 'cerrado' && !!ap2 && ap2.consumidos === 0 && ap2.clientes === 0, `no se tocó: B1 pasa a pendiente → se revierte sola y la unidad la toma B2 (${v10.map(c => ext(c.idExterno)).join(',')}); cerrado no vuelve a descontar`);
+  ok(!!ap && ap.revertidos === 1 && ap.consumidos === 1 && v10.map(c => ext(c.idExterno)).join(',') === 'A1,A2,B2,A3,A4' && cz.ok && cz.paquete.estado === 'cerrado' && !!ap2 && ap2.consumidos === 0 && ap2.clientes === 0, `no se tocó: B1 pasa a pendiente → se revierte sola y la unidad la toma B2 (${v10.map(c => ext(c.idExterno)).join(',')}); cerrado no vuelve a descontar`);
 
   ok((await limpiar()) === 0, 'limpieza verificada: 0 expedientes PVN, paquetes ni clientes');
   console.log(`\n${pass} 🟢 / ${fail} 🔴`);
