@@ -16,7 +16,7 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 import { I } from '@/components/common/icons';
 import { usePuede } from '@/components/auth/permisos';
-import { BADGE_ESTADO, ETIQUETA_ESTADO, estadoEfectivo, textoBanner } from '@/lib/paquetes/paquete';
+import { BADGE_ESTADO, ETIQUETA_ESTADO, esCompartido, estadoEfectivo, etiquetaCompartido, textoBanner, tituloNits } from '@/lib/paquetes/paquete';
 import { NOMBRE_SERVICIO } from '@/lib/facturacion-agenda/situacion';
 import { Q } from '@/lib/utils';
 import { crearDetalleAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
@@ -139,6 +139,8 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
           <div className="card-pad" style={{ fontSize: 13, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span><I.Coins size={13} /> <strong>{textoBanner(pq, s => NOMBRE_SERVICIO[s] ?? (s === 'PSICOMETRICAS' ? 'Psicométricas' : s))}</strong></span>
             <span className={'badge ' + BADGE_ESTADO[est]} data-badge-estado={est}>{ETIQUETA_ESTADO[est]}</span>
+            {/* 036: paquete de varios NIT: el banner sale en cada empresa que lo usa */}
+            {datos.nit && pq.nit !== datos.nit ? <span className="badge badge-outline" data-compartido="adicional">{etiquetaCompartido(pq)}</span> : esCompartido(pq) ? <span className="badge badge-outline" data-compartido="titular" title={tituloNits(pq)}>Compartido con {pq.nitsAdicionales.length} empresa{pq.nitsAdicionales.length === 1 ? '' : 's'} más</span> : null}
             <span className="cell-mute" style={{ fontSize: 12 }}>{est === 'vencido' ? 'vencido: no descuenta; extendelo o cerralo en el detalle' : est === 'agotado' ? 'agotado: las siguientes pruebas se facturan a tarifa' : 'cada prueba terminada que calza se descuenta y no se factura'}</span>
             <Link href={`/tarifario/paquetes/${pq.id}`} className="btn btn-ghost" style={{ marginLeft: 'auto', fontSize: 12 }} data-accion="ver-paquete">Detalle del paquete →</Link>
           </div>

@@ -6,6 +6,8 @@
  * aviso, factura del anticipo (buscar por número o «pendiente de facturar»), notas y las líneas (servicio, categoría y
  * territorio con los mismos selectores del tarifario, cantidad y precio unitario propuesto desde la tarifa vigente).
  * Con fecha de inicio en el pasado, «Vista previa» muestra las pruebas ya terminadas que descontaría; el CFO confirma.
+ * 036: «También lo usan» agrega otras empresas del grupo (NIT adicionales); en el tarifario de un NIT adicional el paquete
+ * aparece con la etiqueta «Compartido · titular: SAGRACO (1083171)».
  */
 import Link from 'next/link';
 import { useMemo, useState } from 'react';
@@ -17,9 +19,10 @@ import { usePuede } from '@/components/auth/permisos';
 import { CATEGORIAS, TERRITORIOS, TIPOS_PRUEBA, UNICA, formaPrecio, usaCategoria, usaTerritorio } from '@/lib/tarifario/canon';
 import type { Tarifa } from '@/lib/tarifario/lookup';
 import { NOMBRE_SERVICIO } from '@/lib/facturacion-agenda/situacion';
-import { BADGE_ESTADO, ETIQUETA_ESTADO, estadoEfectivo, etiquetaLinea, porcentajeUsado, totalCantidad, totalRemanente, totalUsadas, umbralPorDefecto, valorRemanente, type Paquete } from '@/lib/paquetes/paquete';
+import { BADGE_ESTADO, ETIQUETA_ESTADO, estadoEfectivo, etiquetaLinea, porcentajeUsado, totalCantidad, totalRemanente, totalUsadas, umbralPorDefecto, valorRemanente, esCompartido, etiquetaCompartido, tituloNits, type Paquete } from '@/lib/paquetes/paquete';
 import { buscarFacturaAnticipoAction, crearPaqueteAction, vistaPreviaPaqueteAction } from '@/app/(app)/paquetes/actions';
-import type { FacturaAnticipo, VistaPreviaLinea } from '@/lib/db/paquetes';
+import type { ClientePaquete, FacturaAnticipo, VistaPreviaLinea } from '@/lib/db/paquetes';
+import { NitsAdicionalesInput } from './nits-adicionales-input';
 
 export const SERVICIO_PSICOMETRICAS = 'PSICOMETRICAS';
 const SERVICIOS = [...TIPOS_PRUEBA.filter(t => t !== 'COMPLETO'), SERVICIO_PSICOMETRICAS];
@@ -64,6 +67,8 @@ export function PaquetesSection({ nit, razonSocial, tarifas, paquetes, hoy }: { 
   const [lineas, setLineas] = useState<LineaForm[]>([nuevaLinea()]);
   const [vista, setVista] = useState<VistaPreviaLinea[] | null>(null);
   const [aplicarRetro, setAplicarRetro] = useState(true);
+  const [adicionales, setAdicionales] = useState<ClientePaquete[]>([]);   // 036: «También lo usan»
+  const nombreNit = (k: string) => (k === nit ? razonSocial || k : adicionales.find(a => a.nit === k)?.razonSocial || k);
   const totalCant = lineas.reduce((a, l) => a + (Number(l.cantidad) || 0), 0);
 
   const lineasInput = () => lineas.map(l => { const d = dims(l.servicio); return { servicio: l.servicio, categoria: d.cat ? l.categoria : UNICA, territorio: d.ter && l.territorio ? l.territorio : null, cantidad: Number(l.cantidad) || 0, precioUnitario: Number(l.precio) || 0 }; });
@@ -86,7 +91,7 @@ export function PaquetesSection({ nit, razonSocial, tarifas, paquetes, hoy }: { 
   };
   const previsualizar = async () => {
     setBusy(true);
-    try { setVista(await vistaPreviaPaqueteAction(nit, inicio, vence || null, lineasInput())); }
+    try { setVista(await vistaPreviaPaqueteAction([nit, ...adicionales.map(a => a.nit)], inicio, vence || null, lineasInput())); }
     finally { setBusy(false); }
   };
   const guardar = async () => {
@@ -94,10 +99,10 @@ export function PaquetesSection({ nit, razonSocial, tarifas, paquetes, hoy }: { 
     if (esRetro && !vista) { await previsualizar(); return; }   // primero la vista previa; el CFO confirma
     setBusy(true);
     try {
-      const r = await crearPaqueteAction({ nit, nombre: nombre.trim(), fechaInicio: inicio, venceEn: vence || null, umbralAviso: umbral ? Number(umbral) : null, noFactura: noFactura.trim() || null, notas: notas.trim() || null, retroactivoConfirmado: esRetro && aplicarRetro, lineas: lineasInput() });
+      const r = await crearPaqueteAction({ nit, nombre: nombre.trim(), fechaInicio: inicio, venceEn: vence || null, umbralAviso: umbral ? Number(umbral) : null, noFactura: noFactura.trim() || null, notas: notas.trim() || null, retroactivoConfirmado: esRetro && aplicarRetro, nitsAdicionales: adicionales.map(a => a.nit), lineas: lineasInput() });
       if (!r.ok) { toast.error(r.error); return; }
       toast.success(`Paquete ${r.correlativo} creado · ${r.aplicado.consumidos} prueba${r.aplicado.consumidos === 1 ? '' : 's'} ya descontada${r.aplicado.consumidos === 1 ? '' : 's'}${r.aplicado.avisos.length ? ` · ${r.aplicado.avisos.map(a => a.aviso === 'agotado' ? 'agotado' : `por agotarse (quedan ${a.remanente})`).join(', ')}` : ''}`);
-      setCreando(false); setNombre(''); setVence(''); setUmbral(''); setNoFactura(''); setFactura(null); setNotas(''); setVista(null);
+      setCreando(false); setNombre(''); setVence(''); setUmbral(''); setNoFactura(''); setFactura(null); setNotas(''); setVista(null); setAdicionales([]);
       router.refresh();
     } finally { setBusy(false); }
   };
@@ -147,16 +152,17 @@ export function PaquetesSection({ nit, razonSocial, tarifas, paquetes, hoy }: { 
             </div>
             <button type="button" className="btn btn-ghost" style={{ fontSize: 12, marginTop: 6 }} onClick={agregarLinea} data-accion="agregar-linea"><I.Plus size={12} /> Otra línea</button>
           </div>
+          <NitsAdicionalesInput titularNit={nit} value={adicionales} onChange={v => { setAdicionales(v); setVista(null); }} disabled={busy} />
           <div className="field" style={{ margin: 0 }}><label className="label">Notas (opcional)</label><input className="input" value={notas} onChange={e => setNotas(e.target.value)} data-campo="notas" /></div>
 
           {esRetro && (
             <div className="card" role="status" style={{ borderColor: 'var(--burnt, #b5651d)' }} data-vista-previa={vista ? vista.reduce((a, v) => a + v.tomaria, 0) : ''}>
               <div className="card-pad" style={{ fontSize: 12.5, display: 'grid', gap: 6 }}>
-                <div>La fecha de inicio está en el pasado: hay pruebas <strong>ya terminadas y sin facturar</strong> desde el {fecha(inicio)} que este paquete descontaría. {!vista && <button type="button" className="btn btn-secondary" style={{ fontSize: 12 }} onClick={() => void previsualizar()} disabled={busy || !valido} data-accion="vista-previa">Ver vista previa</button>}</div>
+                <div>La fecha de inicio está en el pasado: hay pruebas <strong>ya terminadas y sin facturar</strong> desde el {fecha(inicio)}{adicionales.length ? ` de las ${adicionales.length + 1} empresas` : ''} que este paquete descontaría. {!vista && <button type="button" className="btn btn-secondary" style={{ fontSize: 12 }} onClick={() => void previsualizar()} disabled={busy || !valido} data-accion="vista-previa">Ver vista previa</button>}</div>
                 {vista && vista.map(v => (
                   <div key={v.n} data-vista-linea={v.n} data-tomaria={v.tomaria}>
                     <strong>{etiquetaLinea({ servicio: v.servicio, categoria: v.categoria, territorio: v.territorio }, nombreServicio)}</strong>: {v.candidatas} prueba{v.candidatas === 1 ? '' : 's'} terminada{v.candidatas === 1 ? '' : 's'} · descontaría <strong>{v.tomaria}</strong> de {v.cantidad}
-                    {v.pruebas.length > 0 && <div className="cell-mute" style={{ fontSize: 11.5 }}>{v.pruebas.slice(0, v.tomaria).map(p => `${p.persona || p.idExterno} (${fecha(p.fecha)})`).join(' · ')}{v.candidatas > v.tomaria ? ` · las otras ${v.candidatas - v.tomaria} quedan a tarifa` : ''}</div>}
+                    {v.pruebas.length > 0 && <div className="cell-mute" style={{ fontSize: 11.5 }}>{adicionales.length > 0 && <span data-vista-por-nit={Object.entries(v.porNit).map(([k, n]) => `${k}:${n}`).join(',')}>Por empresa: {[nit, ...adicionales.map(a => a.nit)].map(k => `${nombreNit(k)} (${k}): ${v.porNit[k] ?? 0}`).join(' · ')}. </span>}{v.pruebas.slice(0, v.tomaria).map(p => `${p.persona || p.idExterno} (${fecha(p.fecha)}${adicionales.length ? ` · ${p.nit}` : ''})`).join(' · ')}{v.candidatas > v.tomaria ? ` · las otras ${v.candidatas - v.tomaria} quedan a tarifa` : ''}</div>}
                   </div>
                 ))}
                 {vista && <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={aplicarRetro} onChange={e => setAplicarRetro(e.target.checked)} data-campo="aplicar-retro" /> Aplicar el paquete a esas pruebas ya terminadas (si no, solo descuenta las que terminen de ahora en adelante)</label>}
@@ -178,7 +184,9 @@ export function PaquetesSection({ nit, razonSocial, tarifas, paquetes, hoy }: { 
             <tbody>
               {paquetes.map(p => { const e = estadoEfectivo(p, hoy); return (
                 <tr key={p.id} data-paquete={p.correlativo} data-estado={e} data-remanente={totalRemanente(p)}>
-                  <td><Link href={`/tarifario/paquetes/${p.id}`} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{p.correlativo}</Link><div className="cell-mute" style={{ fontSize: 11 }}>{p.nombre}{p.noFactura ? ` · factura ${p.noFactura}` : ' · pendiente de facturar'}</div></td>
+                  <td><Link href={`/tarifario/paquetes/${p.id}`} className="cell-strong" style={{ textDecoration: 'none', color: 'var(--ink)' }}>{p.correlativo}</Link><div className="cell-mute" style={{ fontSize: 11 }}>{p.nombre}{p.noFactura ? ` · factura ${p.noFactura}` : ' · pendiente de facturar'}</div>
+                    {p.nit !== nit ? <span className="badge badge-outline" style={{ fontSize: 10, marginTop: 3 }} data-compartido="adicional" title="Este NIT usa el paquete; lo pagó el titular y a él va la factura del anticipo">{etiquetaCompartido(p)}</span>
+                      : esCompartido(p) ? <span className="badge badge-outline" style={{ fontSize: 10, marginTop: 3 }} data-compartido="titular" title={tituloNits(p)}>Compartido · también lo usa{p.nitsAdicionales.length === 1 ? '' : 'n'}: {p.nitsAdicionales.map(a => a.nit).join(', ')}</span> : null}</td>
                   <td style={{ fontSize: 12 }}>{p.lineas.map(l => <div key={l.id}>{etiquetaLinea(l, nombreServicio)}: <span className="num">{l.remanente}</span> de {l.cantidad}</div>)}</td>
                   <td><BarraUso p={p} /></td>
                   <td className="num cell-strong">{totalRemanente(p)}</td>
@@ -192,7 +200,6 @@ export function PaquetesSection({ nit, razonSocial, tarifas, paquetes, hoy }: { 
           </table>
         </div>
       )}
-      {razonSocial ? null : null}
     </div>
   );
 }

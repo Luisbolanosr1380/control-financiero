@@ -33,7 +33,7 @@ import type { CambioAviso } from '@/lib/facturacion-agenda/aviso';
 import { getTarifario } from './tarifario';
 import { getClientes } from './clientes';
 import { aplicarPaquetes, listarPaquetes } from './paquetes';
-import type { Paquete } from '@/lib/paquetes/paquete';
+import { nitsDe, type Paquete } from '@/lib/paquetes/paquete';
 import { getCentrosCostoActivos, type CentroCosto } from './centros';
 import type { Customer } from '@/lib/types';
 
@@ -655,7 +655,7 @@ export async function vistaPorFacturar(opts: { sinRpc?: boolean } = {}): Promise
   if (!sb) return vacio;
   const [clientes, sync, mapeos, paquetesTodos] = await Promise.all([getClientes(), getSyncEstado(), getMapeos().catch(() => [] as ClienteExterno[]), listarPaquetes().catch(() => [] as Paquete[])]);
   const paquetesPorNit: Record<string, Paquete[]> = {};
-  for (const pq of paquetesTodos) { if (pq.estado === 'cerrado') continue; (paquetesPorNit[pq.nit] ??= []).push(pq); }
+  for (const pq of paquetesTodos) { if (pq.estado === 'cerrado') continue; for (const k of nitsDe(pq)) (paquetesPorNit[k] ??= []).push(pq); }   // 036: el paquete compartido aparece en cada NIT que lo usa
   let r: ResumenRpc | null = null; let enSql = false;
   if (!opts.sinRpc) {
     const { data, error } = await sb.rpc('facturacion_agenda_resumen', { p_fuente: FUENTE });
