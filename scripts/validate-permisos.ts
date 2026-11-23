@@ -288,7 +288,7 @@ function archivosUseServer(dir: string): string[] {
     console.log('\nD3. Usuarios reales migrados (rol efectivo por empresa)');
     const ESPERA: Record<string, { golden: string | null; hit: string | null }> = {
       'luis@goldentalent.org':              { golden: 'admin',    hit: 'admin' },
-      'rcontreras@goldentalent.org':        { golden: 'admin',    hit: 'admin' },
+      'rcontreras@goldentalent.org':        { golden: 'admin',    hit: null },   // admin solo en Golden: no necesita acceso a HIT (CFO, 23-nov-2026)
       'alejandra.dieguez@goldentalent.org': { golden: 'contador', hit: null },
     };
     const { data } = await c.users.getUserList({ limit: 200 });
