@@ -11,7 +11,7 @@ import { supabase } from '@/lib/supabase/client';
 import { rpc } from '@/lib/supabase/writes';
 import { nitComparable } from '@/lib/clientes/nit';
 import { documentoDetalle, transicionValida, type CanalAprobacion, type DetalleFacturacion, type DocumentoDetalle, type EstadoDetalle, type RespuestaDetalle } from '@/lib/facturacion-agenda/detalle';
-import type { ExpedienteLocal } from '@/lib/facturacion-agenda/tipos';
+import { montoEfectivo, montoSinIvaDe, type ExpedienteLocal } from '@/lib/facturacion-agenda/tipos';
 import { emitirFacturaAgenda, listarExpedientesLocal, pruebasDeDetalle, type EmitirResult } from './facturacion-agenda';
 import type { PruebaLocal } from '@/lib/facturacion-agenda/tipos';
 import { getClientes } from './clientes';
@@ -71,6 +71,15 @@ const errorLegible = (m: string): string => {
   if (/EXPEDIENTE_DESCONOCIDO/.test(m)) return 'Algún expediente ya no está en la cola: recargá la pantalla.';
   if (/DETALLE_FACTURADO/.test(m)) return 'Un detalle facturado no se anula: anulá la factura.';
   if (/DETALLE_NO_EXISTE/.test(m)) return 'El detalle no existe.';
+  // 037: precio especial
+  if (/PRUEBA_FACTURADA/.test(m)) return 'La prueba ya está facturada: su precio no se cambia.';
+  if (/PRUEBA_CUBIERTA_POR_PAQUETE/.test(m)) return 'La prueba está cubierta por un paquete prepagado: no se cobra, así que no lleva precio especial.';
+  if (/DETALLE_APROBADO/.test(m)) return 'El detalle ya está aprobado por el cliente: anulá o reabrí el detalle primero.';
+  if (/MONTO_INVALIDO/.test(m)) return 'El precio especial debe ser mayor a 0. Para no cobrar la prueba, quitá la línea del detalle.';
+  if (/MOTIVO_OBLIGATORIO/.test(m)) return 'Escribí el motivo: por qué se cobra distinto a la tarifa.';
+  if (/PRUEBA_SIN_TARIFA/.test(m)) return 'El precio especial se pone sobre una prueba cobrable con tarifa resuelta: primero resolvé la tarifa.';
+  if (/PRUEBA_NO_EXISTE|PRUEBA_CAMBIO/.test(m)) return 'La prueba cambió mientras tanto: recargá la pantalla.';
+  if (/facturacion_componente_ajust|monto_ajustado/.test(m) && /does not exist|Could not find|schema cache/i.test(m)) return 'Falta aplicar la migración 037_precio_especial_prueba en esta base.';
   if (/DETALLE_NO_EDITABLE/.test(m)) return 'Solo se quitan líneas de un detalle en borrador o con observaciones.';
   if (/LINEA_NO_ESTA/.test(m)) return 'Esa prueba ya no está en el detalle.';
   if (/DETALLE_NO_ENVIABLE/.test(m)) return 'Solo se envía un detalle en borrador, enviado o con observaciones.';
@@ -89,7 +98,7 @@ export async function crearDetalle(input: { idsExternos?: string[]; componenteId
   if (!ids.length && input.idsExternos?.length) {
     const exps = await listarExpedientesLocal({ idsExternos: [...new Set(input.idsExternos.map(s => String(s).trim()).filter(Boolean))] });
     // Las pruebas cobrables con precio (también las reservadas: la RPC avisa "otro detalle"); sin factura.
-    ids = exps.flatMap(e => e.pruebas.filter(p => p.situacion === 'cobra' && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 && !p.facturaId).map(p => p.id));
+    ids = exps.flatMap(e => e.pruebas.filter(p => p.situacion === 'cobra' && p.estadoTarifa === 'resuelta' && (montoEfectivo(p) ?? 0) > 0 && !p.facturaId).map(p => p.id));
     if (!ids.length) return { ok: false, error: 'Esos expedientes no tienen pruebas con resultado, precio resuelto y en cola.' };
   }
   if (!ids.length) return { ok: false, error: 'Elegí al menos una prueba.' };
@@ -126,6 +135,8 @@ export interface DetalleCompleto {
   archivos: ArchivoDetalle[];
   /** 031: todos los links (el más nuevo primero; `link` es el primero) y las aperturas (todas las versiones, la más nueva primero). Sin la 031 → []. */
   links: LinkDetalle[]; aperturas: AperturaLink[];
+  /** 037: historial de precios especiales de las pruebas del detalle (el más nuevo primero). Sin la 037 → []. */
+  ajustes: AjustePrecio[];
 }
 
 const rowToRespuesta = (r: Record<string, unknown>): RespuestaDetalle => ({ id: String(r.id), version: Number(r.version), componenteId: String(r.componente_id), decision: r.decision as RespuestaDetalle['decision'], nota: String(r.nota ?? ''), respuestaGolden: String(r.respuesta_golden ?? ''), createdAt: String(r.created_at ?? '') });
@@ -199,10 +210,11 @@ export async function correosDelCliente(nit: string): Promise<string[]> {
 export async function getDetalle(id: string): Promise<DetalleCompleto | null> {
   const detalle = await getDetalleBasico(id); if (!detalle) return null;
   const [pruebas, expedientes, clientes, centros, respuestas, links, envios, correosCliente, aperturas, archivos] = await Promise.all([pruebasDeDetalle(id), listarExpedientesLocal({ detalleId: id }), getClientes(), getCentrosCostoActivos(), respuestasDeDetalle(id), linksDeDetalle(id), enviosDeDetalle(id), correosDelCliente(detalle.nit), aperturasDeDetalle(id), archivosDeDetalle(id, { miniaturas: true })]);
+  const ajustes = await ajustesDePruebas(pruebas.map(p => p.id));
   const link = links[0] ?? null;
   // Una facturada conserva detalle_id en sus pruebas (histórico); una anulada las liberó (la lista queda vacía).
   const c = clientes.find(x => x.activo !== false && nitComparable(x.nit) === detalle.nit) ?? clientes.find(x => nitComparable(x.nit) === detalle.nit);
-  return { detalle, expedientes, pruebas, documento: documentoDetalle(expedientes, pruebas), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '', respuestas, link, links, envios, correosCliente, aperturas, archivos };
+  return { detalle, expedientes, pruebas, documento: documentoDetalle(expedientes, pruebas), clienteNombre: c?.name ?? expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? `NIT ${detalle.nit}`, clienteAppId: c?.id ?? null, centros, empresaNombreExterno: expedientes.find(e => e.empresaNombreExterno)?.empresaNombreExterno ?? '', respuestas, link, links, envios, correosCliente, aperturas, archivos, ajustes };
 }
 
 export async function listarDetalles(f: { nit?: string; estados?: EstadoDetalle[]; limite?: number } = {}): Promise<DetalleFacturacion[]> {
@@ -292,4 +304,66 @@ export async function facturarDetalle(id: string, input: { noFactura: string; fe
   if (fac) await sb.from('detalle_facturacion').update({ factura_id: (fac as { id: string }).id }).eq('id', id);
   const detalle = data ? rowToDetalle(data as Row) : (await getDetalleBasico(id))!;
   return { ...r, detalle };
+}
+
+// ── 037 · PRECIO ESPECIAL POR PRUEBA ────────────────────────────────────────────────────────────
+
+/** 037: una entrada del historial de precios especiales: quién, cuándo, de cuánto a cuánto (sin IVA) y por qué. */
+export interface AjustePrecio {
+  id: string; componenteId: string; detalleId: string | null; detalleVersion: number | null;
+  montoTarifa: number | null; montoAnterior: number | null; montoNuevo: number | null; quitaAjuste: boolean;
+  motivo: string; motivoCliente: boolean; totalAnterior: number | null; totalNuevo: number | null; actor: string; creadoEn: string;
+}
+const numN = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
+const rowToAjuste = (r: Record<string, unknown>): AjustePrecio => ({
+  id: String(r.id), componenteId: String(r.componente_id), detalleId: (r.detalle_id as string | null) ?? null, detalleVersion: numN(r.detalle_version),
+  montoTarifa: numN(r.monto_tarifa), montoAnterior: numN(r.monto_anterior), montoNuevo: numN(r.monto_nuevo), quitaAjuste: r.quita_ajuste === true,
+  motivo: String(r.motivo ?? ''), motivoCliente: r.motivo_cliente === true, totalAnterior: numN(r.total_anterior), totalNuevo: numN(r.total_nuevo), actor: String(r.actor ?? ''), creadoEn: String(r.creado_en ?? ''),
+});
+/** 037: historial de ajustes de un grupo de pruebas (el más nuevo primero). Sin la 037 → []. */
+export async function ajustesDePruebas(componenteIds: readonly string[]): Promise<AjustePrecio[]> {
+  const sb = supabase(); const ids = [...new Set(componenteIds)].filter(x => /^[0-9a-f-]{36}$/i.test(x)); if (!sb || !ids.length) return [];
+  const out: AjustePrecio[] = [];
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = await sb.from('facturacion_componente_ajuste').select('*').in('componente_id', ids.slice(i, i + 150)).order('creado_en', { ascending: false }).limit(1000);
+    if (error) return [];
+    out.push(...((data ?? []) as Record<string, unknown>[]).map(rowToAjuste));
+  }
+  return out.sort((a, b) => b.creadoEn.localeCompare(a.creadoEn));
+}
+
+export interface AjustarPrecioInput {
+  /** null = quitar el precio especial (la prueba vuelve a la tarifa). */
+  monto: number | null;
+  /** Sobre qué está escrito `monto`: con IVA → se guarda round(monto / 1.12, 2). */
+  base?: 'sin_iva' | 'con_iva';
+  motivo?: string;
+  /** El motivo se le muestra al cliente en el PDF y en el link. Sin indicar, lo decide la base (solo «Proceso incompleto…»). */
+  motivoCliente?: boolean | null;
+}
+export type AjustarPrecioResult =
+  | { ok: true; sinCambio: boolean; componenteId: string; montoAnterior: number | null; montoNuevo: number | null; detalle: DetalleFacturacion | null; /** el detalle estaba enviado: subió de versión y hay que reenviarlo */ reenviar: boolean }
+  | { ok: false; error: string };
+
+/**
+ * 037: pone (o quita, con monto null) el precio especial de UNA prueba. Todo lo decide la RPC en una transacción:
+ * rechaza facturada / cubierta por paquete / detalle aprobado, recalcula los totales del detalle vivo y, si estaba
+ * enviado, sube la versión y revoca el link.
+ */
+export async function ajustarPrecioPrueba(componenteId: string, input: AjustarPrecioInput, actor: string): Promise<AjustarPrecioResult> {
+  if (!/^[0-9a-f-]{36}$/i.test(String(componenteId ?? ''))) return { ok: false, error: 'La prueba no existe.' };
+  let sinIva: number | null = null;
+  if (input.monto !== null && input.monto !== undefined) {
+    const m = Number(input.monto);
+    if (!Number.isFinite(m) || m <= 0) return { ok: false, error: 'El precio especial debe ser mayor a 0. Para no cobrar la prueba, quitá la línea del detalle.' };
+    sinIva = montoSinIvaDe(m, input.base === 'con_iva' ? 'con_iva' : 'sin_iva');
+    if (sinIva <= 0) return { ok: false, error: 'El precio especial debe ser mayor a 0.' };
+  }
+  const motivo = String(input.motivo ?? '').replace(/\s+/g, ' ').trim().slice(0, 300);
+  if (sinIva !== null && motivo.length < 3) return { ok: false, error: 'Escribí el motivo: por qué se cobra distinto a la tarifa.' };
+  try {
+    const r = await rpc<{ sin_cambio: boolean; componente: { id: string }; detalle: Row | null; reenviar: boolean; monto_anterior: number | string | null; monto_nuevo: number | string | null }>(
+      'facturacion_componente_ajustar', { p_actor: actor, p_componente_id: componenteId, p_monto_sin_iva: sinIva, p_motivo: motivo || null, p_motivo_cliente: sinIva === null ? null : (input.motivoCliente ?? null) });
+    return { ok: true, sinCambio: r.sin_cambio === true, componenteId, montoAnterior: numN(r.monto_anterior), montoNuevo: numN(r.monto_nuevo), detalle: r.detalle ? rowToDetalle(r.detalle) : null, reenviar: r.reenviar === true };
+  } catch (e) { return { ok: false, error: errorLegible(e instanceof Error ? e.message : String(e)) }; }
 }

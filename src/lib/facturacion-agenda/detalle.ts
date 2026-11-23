@@ -7,7 +7,7 @@
  * "no incluido" y el total refleja solo lo incluido.
  */
 import { dimTexto, precioConIva, round2, totalesFel } from '@/lib/tarifario/canon';
-import type { ExpedienteLocal, PruebaLocal } from './tipos';
+import { montoEfectivo, tienePrecioEspecial, type ExpedienteLocal, type PruebaLocal } from './tipos';
 import { resultadoLegible } from './situacion';
 
 export type EstadoDetalle = 'borrador' | 'enviada' | 'con_observaciones' | 'aprobada' | 'facturada' | 'anulada';
@@ -60,8 +60,10 @@ export interface LineaDetalle {
   idExterno: string; /** 024: la prueba (facturacion_componente.id) */ componenteId: string; persona: string; puesto: string; fechaIngreso: string | null;
   /** 028: quién pidió la evaluación del lado del cliente, normalizado (trim + mayúsculas, como en el filtro); '' si no vino. */ solicitante: string;
   servicio: string; /** 024: resultado legible para el cliente ("Polígrafo — aprobó") */ resultado: string; /** texto auxiliar (vacío en el cobro por prueba) */ componentes: string;
-  categoria: string; territorio: string; /** sin IVA (tarifa) */ monto: number; /** 030: precio con IVA de la prueba (el que va en la factura), = precioConIva(monto) */ montoConIva: number;
+  categoria: string; territorio: string; /** sin IVA: el monto EFECTIVO (037: precio especial o tarifa) */ monto: number; /** 030: precio con IVA de la prueba (el que va en la factura), = precioConIva(monto) */ montoConIva: number;
   incluido: boolean; motivo: string;
+  /** 037: precio especial de la línea (null = se cobra la tarifa): la tarifa que reemplaza (sin IVA y con IVA), el motivo y si el motivo se le muestra al cliente. */
+  precioEspecial: { montoTarifa: number; montoTarifaConIva: number; motivo: string; cliente: boolean; por: string; en: string | null } | null;
 }
 
 /** 030: total = Σ precio con IVA por prueba; subtotal (base) = round2(total / 1.12); iva = total − base (regla FEL). */
@@ -82,12 +84,14 @@ export function documentoDetalle(expedientes: readonly ExpedienteLocal[], prueba
   const porId = new Map(expedientes.map(e => [e.idExterno, e]));
   const lineas: LineaDetalle[] = pruebas.map(p => {
     const e = porId.get(p.idExterno);
-    const incluido = p.situacion === 'cobra' && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 && !!e && !e.eliminado;
+    const efectivo = montoEfectivo(p) ?? 0;   // 037: precio especial o tarifa
+    const incluido = p.situacion === 'cobra' && p.estadoTarifa === 'resuelta' && efectivo > 0 && !!e && !e.eliminado;
     const motivo = incluido ? '' : !e || e.eliminado ? 'eliminado en la Agenda' : p.situacion === 'no_cobra' ? `no se cobra (${p.motivo || 'cerrado'})` : p.situacion === 'pendiente' ? `sin resultado todavía (${p.estadoPrueba || 'pendiente'})` : p.estadoTarifa === 'sin_tarifa' ? 'sin tarifa' : p.estadoTarifa === 'cliente_sin_mapear' ? 'cliente sin mapear' : p.estadoTarifa.startsWith('excluido') ? 'no se factura por este flujo' : 'sin precio';
     return {
       idExterno: p.idExterno, componenteId: p.id, persona: e?.persona || p.idExterno, puesto: e?.puesto ?? '', fechaIngreso: e?.fechaIngreso ?? null, solicitante: String(e?.solicitante ?? '').replace(/\s+/g, ' ').trim().toUpperCase(),
       servicio: p.servicio, resultado: resultadoLegible(p.servicio, p.estadoPrueba), componentes: '',
-      categoria: dimTexto(p.categoria), territorio: dimTexto(p.territorio), monto: incluido ? round2(p.montoCalculado ?? 0) : 0, montoConIva: incluido ? precioConIva(p.montoCalculado ?? 0) : 0, incluido, motivo,
+      categoria: dimTexto(p.categoria), territorio: dimTexto(p.territorio), monto: incluido ? round2(efectivo) : 0, montoConIva: incluido ? precioConIva(efectivo) : 0, incluido, motivo,
+      precioEspecial: tienePrecioEspecial(p) ? { montoTarifa: round2(p.montoCalculado ?? 0), montoTarifaConIva: precioConIva(p.montoCalculado ?? 0), motivo: p.ajusteMotivo ?? '', cliente: !!p.ajusteMotivoCliente, por: p.ajustadoPor ?? '', en: p.ajustadoEn ?? null } : null,
     };
   });
   lineas.sort(ordenLineas);
@@ -96,3 +100,7 @@ export function documentoDetalle(expedientes: readonly ExpedienteLocal[], prueba
   const { base: subtotal, iva, total } = totalesFel(incluidas.map(l => l.monto));
   return { lineas, incluidas, faltantes, subtotal, iva, total };
 }
+
+/** 037: motivos de precio especial que se le muestran al cliente (PDF y link): solo los de tipo cliente, una línea por prueba. */
+export const observacionesPrecioEspecial = (doc: Pick<DocumentoDetalle, 'incluidas'>): Array<{ componenteId: string; persona: string; servicio: string; motivo: string }> =>
+  doc.incluidas.filter(l => l.precioEspecial?.cliente && l.precioEspecial.motivo).map(l => ({ componenteId: l.componenteId, persona: l.persona, servicio: l.resultado || l.servicio, motivo: l.precioEspecial!.motivo }));

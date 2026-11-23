@@ -20,14 +20,15 @@ import { BADGE_ESTADO, ETIQUETA_ESTADO, esCompartido, estadoEfectivo, etiquetaCo
 import { NOMBRE_SERVICIO } from '@/lib/facturacion-agenda/situacion';
 import { Q } from '@/lib/utils';
 import { crearDetalleAction, mapearClienteAction, marcarNoFacturaAction, quitarNoFacturaAction } from '@/app/(app)/por-facturar/actions';
-import { armarFactura, centroPorServicio, enCola, esMitadDeCompleto, facturable, montoFacturable, montoFacturableConIva, pruebaEnCola, pruebasEnCola, pruebasFacturables, pruebasParaFactura, pruebasPendientes } from '@/lib/facturacion-agenda/mapeo';
+import { armarFactura, centroPorServicio, conPrecioEfectivo, enCola, esMitadDeCompleto, facturable, montoFacturable, montoFacturableConIva, pruebaEnCola, pruebasEnCola, pruebasFacturables, pruebasParaFactura, pruebasPendientes } from '@/lib/facturacion-agenda/mapeo';
 import { ETIQUETA_SITUACION, ICONO_SITUACION, resultadoLegible } from '@/lib/facturacion-agenda/situacion';
 import { filtrarExpedientes, mesesDisponibles, mesesResultadoDisponibles, pruebasTerminadasEn, type FiltroCobro } from '@/lib/facturacion-agenda/resumen';
 import { diaGuatemala, ETIQUETA_FUENTE_FECHA } from '@/lib/facturacion-agenda/fecha-resultado';
 import { etiquetaMes } from '@/lib/facturacion-agenda/produccion';
 import { diferidaVigente } from '@/lib/facturacion-agenda/detalle';
 import { SIN_SOLICITANTE, etiquetaCategoria, etiquetaServicio, etiquetaSolicitante, etiquetaTerritorio, expedienteCumple, filtrosDesdeParams, hayFiltrosPrueba, opcionesFiltros, paramsDeFiltros, pruebasQueCumplen, tituloPropuesto, type FiltrosPrueba } from '@/lib/facturacion-agenda/filtros-detalle';
-import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, type ExpedienteLocal, type PruebaLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
+import { ETIQUETA_ESTADO_TARIFA, ETIQUETA_WRITEBACK, montoEfectivo, tienePrecioEspecial, type ExpedienteLocal, type PruebaLocal, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
+import { PrecioEspecialBoton, PrecioEspecialDialogo, PrecioEspecialMonto } from './precio-especial';
 import type { GrupoDetalle } from '@/lib/db/facturacion-agenda';
 import { ReintentarWritebackButton } from './reintentar-writeback-button';
 import { GenerarTarifas } from '@/components/tarifario/generar-tarifas';
@@ -60,6 +61,8 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
   const [titulo, setTitulo] = useState('');
   const [tituloEditado, setTituloEditado] = useState(false);
   const [dirigidoA, setDirigidoA] = useState('');
+  // 037: precio especial de una prueba (lápiz de la línea)
+  const [ajustando, setAjustando] = useState<{ e: ExpedienteLocal; p: PruebaLocal } | null>(null);
   const spRef = useRef(searchParams.toString());
   useEffect(() => { spRef.current = searchParams.toString(); }, [searchParams]);
   const filtrosLista = useMemo(() => ({ ...fp, mes: mes || undefined, mesResultado: mesResultado || undefined, cobro, soloListos }), [fp, mes, mesResultado, cobro, soloListos]);
@@ -95,7 +98,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
   const parciales = exps.filter(e => e.writebackEstado === 'parcial').length;
   const seleccion = useMemo(() => pruebasParaFactura(exps, p => sel.has(p.id)), [exps, sel]);
   const preview = useMemo(() => armarFactura(seleccion, t => centroPorServicio(t, datos.centros)), [seleccion, datos.centros]);
-  const facturablesVisibles = filas.flatMap(e => pruebasVisibles(e).filter(p => pruebaEnCola(p, e) && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0));
+  const facturablesVisibles = filas.flatMap(e => pruebasVisibles(e).filter(p => pruebaEnCola(p, e) && conPrecioEfectivo(p)));
   const todosSel = facturablesVisibles.length > 0 && facturablesVisibles.every(p => sel.has(p.id));
 
   const generarDetalle = async () => {
@@ -193,7 +196,7 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
                 // 024: una fila por PRUEBA del candidato (✅ cobrada · 🟡 por cobrar · ⏳ pendiente · ⛔ no se cobra); sin pruebas calculadas → la fila del expediente como antes.
                 const pruebas = pruebasVisibles(e);
                 if (!pruebas.length) return [<FilaExpediente key={e.idExterno} e={e} p={null} primera puede={puedeFacturar} sel={false} onToggle={() => undefined} />];
-                return pruebas.map((p, i) => <FilaExpediente key={p.id} e={e} p={p} primera={i === 0} puede={puedeFacturar} sel={sel.has(p.id)} onToggle={() => toggle(p.id)} />);
+                return pruebas.map((p, i) => <FilaExpediente key={p.id} e={e} p={p} primera={i === 0} puede={puedeFacturar} sel={sel.has(p.id)} onToggle={() => toggle(p.id)} onPrecio={() => setAjustando({ e, p })} />);
               })}
             </tbody>
           </table>
@@ -214,6 +217,13 @@ export function GrupoDetalleView({ datos, writeback, configurada, montoModo, gen
         </div>
       )}
 
+      {ajustando && (
+        <PrecioEspecialDialogo
+          prueba={{ componenteId: ajustando.p.id, persona: ajustando.e.persona || ajustando.e.idExterno, servicio: resultadoLegible(ajustando.p.servicio, ajustando.p.estadoPrueba), montoTarifa: ajustando.p.montoCalculado ?? 0, actual: tienePrecioEspecial(ajustando.p) ? { monto: ajustando.p.montoAjustado!, motivo: ajustando.p.ajusteMotivo ?? '', cliente: !!ajustando.p.ajusteMotivoCliente } : null }}
+          onClose={() => setAjustando(null)}
+          onHecho={() => { setAjustando(null); router.refresh(); }}
+        />
+      )}
     </div>
   );
 }
@@ -240,8 +250,8 @@ function ServicioCell({ e }: { e: ExpedienteLocal }) {
   );
 }
 
-function FilaExpediente({ e, p, primera, puede, sel, onToggle }: { e: ExpedienteLocal; p: PruebaLocal | null; primera: boolean; puede: boolean; sel: boolean; onToggle: () => void }) {
-  const esFacturable = p ? pruebaEnCola(p, e) && p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 : facturable(e);
+function FilaExpediente({ e, p, primera, puede, sel, onToggle, onPrecio }: { e: ExpedienteLocal; p: PruebaLocal | null; primera: boolean; puede: boolean; sel: boolean; onToggle: () => void; /** 037: abre el modal «Precio especial» de la prueba */ onPrecio?: () => void }) {
+  const esFacturable = p ? pruebaEnCola(p, e) && conPrecioEfectivo(p) : facturable(e);
   const cubierta = p?.cubiertaPor ?? null;   // 034: cubierta por un paquete prepagado: sin checkbox, en gris, fuera de los totales
   const estadoCobro = [e.statusCobroExterno, e.estatusPagoExterno].filter(Boolean).join(' · ') || 'sin estado';
   const cobrada = !!p?.facturaId;
@@ -281,7 +291,7 @@ function FilaExpediente({ e, p, primera, puede, sel, onToggle }: { e: Expediente
       <td className="num col-precio">
         {p
           ? (p.estadoTarifa === 'resuelta' && p.montoCalculado !== null
-              ? <span className="cell-strong" title={p.detalleTarifa || undefined}>{Q(p.montoCalculado)}{p.aprobada === false && <span className="badge badge-warn" style={{ fontSize: 9, marginLeft: 4 }} title="La tarifa no está aprobada en el tarifario">no aprobada</span>}</span>
+              ? <span className="cell-strong" title={p.detalleTarifa || undefined}>{tienePrecioEspecial(p) ? <PrecioEspecialMonto tarifa={p.montoCalculado} nuevo={montoEfectivo(p) ?? 0} motivo={p.ajusteMotivo ?? ''} cliente={!!p.ajusteMotivoCliente} /> : Q(p.montoCalculado)}{puede && onPrecio && p.situacion === 'cobra' && !p.facturaId && !p.cubiertaPor && !p.detalleId && p.montoCalculado > 0 && <PrecioEspecialBoton onClick={onPrecio} tiene={tienePrecioEspecial(p)} />}{p.aprobada === false && <span className="badge badge-warn" style={{ fontSize: 9, marginLeft: 4 }} title="La tarifa no está aprobada en el tarifario">no aprobada</span>}</span>
               : p.situacion === 'cobra'
                 ? <span className={'badge ' + (p.estadoTarifa === 'cliente_sin_mapear' ? 'badge-wine' : p.estadoTarifa.startsWith('excluido') ? 'badge-mute' : 'badge-warn')} style={{ fontSize: 10 }} title={p.detalleTarifa || undefined}>{ETIQUETA_ESTADO_TARIFA[p.estadoTarifa]}</span>
                 : <span className="cell-mute" title={p.motivo}>—</span>)

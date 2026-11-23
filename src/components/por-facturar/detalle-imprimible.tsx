@@ -3,7 +3,7 @@ import { formatearFechaCorta } from '@/lib/utils/fechas';
 import type { DetalleCompleto } from '@/lib/db/detalle-facturacion';
 import { ImprimirBoton } from './imprimir-boton';
 import { huellaCorta } from '@/lib/detalle-link/publico';
-import { ETIQUETA_DECISION_DETALLE } from '@/lib/facturacion-agenda/detalle';
+import { ETIQUETA_DECISION_DETALLE, observacionesPrecioEspecial } from '@/lib/facturacion-agenda/detalle';
 
 /**
  * Documento imprimible (server component): encabezado del emisor y del cliente, correlativo, fecha,
@@ -29,6 +29,9 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
   const firmadoPapel = datos.archivos.find(a => a.vigente) ?? null;
   const paraRevisar = !facturado && d.estado !== 'anulada' && !digital && !firmadoPapel;
   const conCasillas = paraRevisar || digital;
+  // 037: el precio especial sale como el precio de la línea (sin tachar la tarifa); en Observaciones, el motivo SOLO si es de tipo cliente
+  const obsPrecio = observacionesPrecioEspecial(doc);
+  const obsPrecioPorLinea = new Map(obsPrecio.map(o => [o.componenteId, o.motivo] as const));
   return (
     <main style={{ fontFamily: 'Georgia, "Times New Roman", serif', color: '#111', maxWidth: 820, margin: '0 auto', padding: '32px 28px', background: '#fff' }} data-imprimible data-estado={d.estado}>
       <style>{`
@@ -105,7 +108,7 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
               <td>{l.categoria}</td><td className="nowrap">{territorioCorto(l.territorio)}</td>
               {conCasillas && (() => { const r = digital ? respuestas.get(l.componenteId) : undefined; const si = digital && r?.decision === 'aprobado'; const no = digital && !!r && r.decision !== 'aprobado'; return <td className="check" data-casillas data-marcada={si ? 'si' : no ? 'no' : ''}><span className={'cb' + (si ? ' on' : '')} aria-hidden /><span className="cb-lbl">Sí</span><span className={'cb' + (no ? ' on' : '')} aria-hidden /><span className="cb-lbl">No</span></td>; })()}
               <td className="num" data-precio-iva={l.montoConIva}>{Q(l.montoConIva)}</td>
-              {conCasillas && <td className="obs" data-observaciones>{digital ? (respuestas.get(l.componenteId)?.nota ?? '') : ''}</td>}
+              {conCasillas && <td className="obs" data-observaciones data-nota-precio={obsPrecioPorLinea.get(l.componenteId) ?? ''}>{[obsPrecioPorLinea.get(l.componenteId), digital ? respuestas.get(l.componenteId)?.nota : ''].filter(Boolean).join(' · ')}</td>}
             </tr>
           ))}
           {doc.incluidas.length === 0 && <tr><td colSpan={conCasillas ? 10 : 8} style={{ textAlign: 'center', padding: 20, color: '#666' }}>Ningún proceso con precio en este detalle.</td></tr>}
@@ -119,6 +122,12 @@ export function DetalleImprimible({ datos, emisor }: { datos: DetalleCompleto; e
         <section style={{ marginTop: 14, fontSize: 10.5 }} data-faltantes>
           <div style={{ fontWeight: 600, marginBottom: 4 }}>No incluidos en este detalle ({doc.faltantes.length})</div>
           <ul style={{ margin: 0, paddingLeft: 18, color: '#555' }}>{doc.faltantes.map(l => <li key={l.componenteId || l.idExterno}>{l.persona} · {l.resultado || l.servicio} · {l.motivo}</li>)}</ul>
+        </section>
+      )}
+      {obsPrecio.length > 0 && (
+        <section style={{ marginTop: 14, fontSize: 10.5 }} data-observaciones-precio={obsPrecio.length}>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Observaciones</div>
+          <ul style={{ margin: 0, paddingLeft: 18, color: '#333' }}>{obsPrecio.map(o => <li key={o.componenteId}>{o.persona} · {o.servicio}: {o.motivo}</li>)}</ul>
         </section>
       )}
       {d.notas && <section style={{ marginTop: 14, fontSize: 11 }}><strong>Notas:</strong> {d.notas}</section>}

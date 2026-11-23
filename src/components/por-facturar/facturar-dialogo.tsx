@@ -108,7 +108,7 @@ export function FacturarDialogo({ seleccion, centros, cliente, writeback, config
             <table className="table">
               <thead><tr><th>Persona</th><th>Prueba</th><th>Categoría · territorio</th><th className="num">Sin IVA</th></tr></thead>
               <tbody>
-                {seleccion.map(p => <tr key={p.id} data-prueba={p.id}><td>{p.persona || p.idExterno}</td><td>{resultadoLegible(p.servicio, p.estadoPrueba)}</td><td className="cell-mute" style={{ fontSize: 12 }}>{[p.categoria, p.territorio].filter(x => x && x !== 'UNICA').join(' · ') || '—'}</td><td className="num">{Q(p.montoCalculado ?? 0)}</td></tr>)}
+                {seleccion.map(p => <tr key={p.id} data-prueba={p.id}><td>{p.persona || p.idExterno}</td><td>{resultadoLegible(p.servicio, p.estadoPrueba)}</td><td className="cell-mute" style={{ fontSize: 12 }}>{[p.categoria, p.territorio].filter(x => x && x !== 'UNICA').join(' · ') || '—'}</td><td className="num">{Q(p.monto)}</td></tr>)}
               </tbody>
             </table>
           </div>

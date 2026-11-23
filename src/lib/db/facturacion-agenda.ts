@@ -22,7 +22,7 @@ import { indiceAlias, nombreBase, resolverNit } from '@/lib/tarifario/lookup';
 import { obtenerFechaHoyGuatemala } from '@/lib/utils/fechas';
 import { configAgenda } from '@/lib/facturacion-agenda/config';
 import { AgendaApiError, crearAgendaApi, idsDe, resumirCuerpo, type AgendaApi, type LogSaliente } from '@/lib/facturacion-agenda/agenda-api';
-import { antesDelArranque, armarFactura, centroPorServicio, clasificarExpediente, expedienteALocal, facturasDelExpediente, montoParaAgenda, pruebaEnCola, type ContextoPrecio, type PruebaCalculada, type PruebaParaFactura } from '@/lib/facturacion-agenda/mapeo';
+import { antesDelArranque, armarFactura, centroPorServicio, clasificarExpediente, expedienteALocal, facturasDelExpediente, montoParaAgenda, conPrecioEfectivo, pruebaEnCola, pruebaParaFactura, type ContextoPrecio, type PruebaCalculada, type PruebaParaFactura } from '@/lib/facturacion-agenda/mapeo';
 export { facturasDelExpediente };
 import { agruparPorCliente, kpisPorFacturar, parseClave, type GrupoCliente, type KpisPorFacturar } from '@/lib/facturacion-agenda/resumen';
 import { ETIQUETA_WRITEBACK, FUENTE_AGENDA, type ClienteExterno, type EmpresaNoFactura, type ComponentePrecio, type DetalleFacturaExpediente, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type FuenteFechaResultado, type PruebaLocal, type Situacion, type SyncEstado, type WritebackEstado } from '@/lib/facturacion-agenda/tipos';
@@ -64,12 +64,15 @@ interface PruebaRow {
   detalle_id: string | null; factura_id: string | null; no_factura: string | null; facturado_en: string | null; facturado_por: string | null;
   /** 025 */ fecha_resultado?: string | null; fecha_resultado_fuente?: FuenteFechaResultado | null;
   /** 029 */ diferida_hasta?: string | null;
+  /** 037 */ monto_ajustado?: number | string | null; ajuste_motivo?: string | null; ajuste_motivo_cliente?: boolean | null; ajustado_por?: string | null; ajustado_en?: string | null;
 }
 const rowToPrueba = (r: PruebaRow): PruebaLocal => ({
   id: r.id, expedienteId: r.expediente_id, idExterno: r.id_externo, servicio: r.servicio, estadoPrueba: r.estado_prueba ?? '', situacion: r.situacion, motivo: r.motivo ?? '', categoria: r.categoria ?? '', territorio: r.territorio ?? '',
   montoCalculado: num(r.monto_calculado), estadoTarifa: r.estado_tarifa, detalleTarifa: r.detalle_tarifa ?? '', tarifarioId: r.tarifario_id, aprobada: r.aprobada,
   detalleId: r.detalle_id, facturaId: r.factura_id, noFactura: r.no_factura, facturadoEn: r.facturado_en, facturadoPor: r.facturado_por,
   fechaResultado: r.fecha_resultado ?? null, fechaResultadoFuente: r.fecha_resultado_fuente ?? null, diferidaHasta: r.diferida_hasta ?? null, cubiertaPor: null,
+  // 037: precio especial (una base sin la 037 no trae las columnas → sin ajuste)
+  montoAjustado: num(r.monto_ajustado), ajusteMotivo: r.ajuste_motivo ?? '', ajusteMotivoCliente: r.ajuste_motivo_cliente === true, ajustadoPor: r.ajustado_por ?? null, ajustadoEn: r.ajustado_en ?? null,
 });
 const num = (v: number | string | null | undefined): number | null => (v === null || v === undefined ? null : Number(v));
 const txt = (v: string | null | undefined): string => v ?? '';
@@ -572,7 +575,7 @@ const vigenteSql = <T extends Filtrable>(q: T): T => q.eq('terminado', true).eq(
 const ESTADOS: EstadoTarifa[] = ['resuelta', 'sin_tarifa', 'cliente_sin_mapear', 'excluido_psicometrica', 'excluido_no_factura'];
 
 /** Fila de facturacion_componente con su expediente embebido (fallback sin RPC). */
-interface CompJoin { id: string; expediente_id: string; servicio: string; situacion: Situacion; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; detalle_id: string | null; factura_id: string | null; facturacion_expediente: { nit_resuelto: string | null; empresa_id_externo: string | null; empresa_nombre_externo: string | null; estado_tarifa: EstadoTarifa; terminado: boolean; cancelado: boolean; eliminado: boolean; fecha_ingreso: string | null; cobro_megapaca: number | string | null; status_cobro_externo: string | null; estatus_pago_externo: string | null } }
+interface CompJoin { id: string; expediente_id: string; servicio: string; situacion: Situacion; estado_tarifa: EstadoTarifa; monto_calculado: number | string | null; /** 037 */ monto_ajustado?: number | string | null; detalle_id: string | null; factura_id: string | null; facturacion_expediente: { nit_resuelto: string | null; empresa_id_externo: string | null; empresa_nombre_externo: string | null; estado_tarifa: EstadoTarifa; terminado: boolean; cancelado: boolean; eliminado: boolean; fecha_ingreso: string | null; cobro_megapaca: number | string | null; status_cobro_externo: string | null; estatus_pago_externo: string | null } }
 const EXP_EMBED = 'facturacion_expediente!inner(nit_resuelto, empresa_id_externo, empresa_nombre_externo, estado_tarifa, terminado, cancelado, eliminado, fecha_ingreso, cobro_megapaca, status_cobro_externo, estatus_pago_externo)';
 
 /**
@@ -587,7 +590,7 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>, arran
   // Pruebas cobrables sin factura, con su expediente: de acá sale la cola (en memoria: arranque, cobro pendiente, detalle vivo).
   let comps: CompJoin[] = [];
   try {
-    comps = await paginar<CompJoin>(() => sb.from('facturacion_componente').select(`id, expediente_id, servicio, situacion, estado_tarifa, monto_calculado, detalle_id, factura_id, ${EXP_EMBED}`).eq('fuente', FUENTE).eq('situacion', 'cobra').is('factura_id', null).eq('facturacion_expediente.eliminado', false).order('id'), 'cola (pruebas)');
+    comps = await paginar<CompJoin>(() => sb.from('facturacion_componente').select(`*, ${EXP_EMBED}`).eq('fuente', FUENTE).eq('situacion', 'cobra').is('factura_id', null).eq('facturacion_expediente.eliminado', false).order('id'), 'cola (pruebas)');
   } catch (e) { if (!/facturacion_componente/.test(e instanceof Error ? e.message : String(e))) throw e; }
   const detallesVivos = new Set<string>(); const anulados = new Set<string>();
   const idsDet = [...new Set(comps.map(c => c.detalle_id).filter((x): x is string => !!x))];
@@ -609,7 +612,8 @@ async function resumenSinRpc(sb: NonNullable<ReturnType<typeof supabase>>, arran
     const g = grupos.get(nit) ?? { nit_resuelto: nit, empresa_id_externo: e.empresa_id_externo, empresa_nombre_externo: e.empresa_nombre_externo, listos: 0, total_sin_iva: 0, total_con_iva: 0, sin_tarifa: 0, con_megapaca: 0, en_detalle: 0, fecha_mas_antigua: null, pendientes: 0, expedientes: 0 };
     if (g.empresa_id_externo === null || (e.empresa_id_externo && e.empresa_id_externo < g.empresa_id_externo)) { g.empresa_id_externo = e.empresa_id_externo; }
     if (g.empresa_nombre_externo === null || (e.empresa_nombre_externo && e.empresa_nombre_externo < g.empresa_nombre_externo)) g.empresa_nombre_externo = e.empresa_nombre_externo;
-    if (c.estado_tarifa === 'resuelta' && Number(c.monto_calculado ?? 0) > 0) { g.listos++; g.total_sin_iva = Math.round((Number(g.total_sin_iva) + Number(c.monto_calculado)) * 100) / 100; g.total_con_iva = Math.round((Number(g.total_con_iva ?? 0) + precioConIva(Number(c.monto_calculado))) * 100) / 100; }
+    const efectivo = Number(c.monto_ajustado ?? c.monto_calculado ?? 0);   // 037: monto efectivo (precio especial o tarifa)
+    if (c.estado_tarifa === 'resuelta' && efectivo > 0) { g.listos++; g.total_sin_iva = Math.round((Number(g.total_sin_iva) + efectivo) * 100) / 100; g.total_con_iva = Math.round((Number(g.total_con_iva ?? 0) + precioConIva(efectivo)) * 100) / 100; }
     if (c.estado_tarifa === 'sin_tarifa') g.sin_tarifa++;
     (expsPorNit.get(nit) ?? expsPorNit.set(nit, new Set()).get(nit)!).add(c.expediente_id);
     if (Number(e.cobro_megapaca ?? 0) > 0) (megaPorNit.get(nit) ?? megaPorNit.set(nit, new Set()).get(nit)!).add(c.expediente_id);
@@ -861,9 +865,9 @@ export async function emitirFacturaAgenda(input: EmitirInput, actor: string, opt
     const e = porId.get(p0.idExterno);
     const p = e?.pruebas.find(x => x.id === p0.id);
     if (!e || !p) return { ok: false, error: 'Alguna prueba ya no está en el espejo: recargá la pantalla.' };
-    const cobrable = p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0 && pruebaEnCola({ ...p, detalleId: null }, e);
+    const cobrable = conPrecioEfectivo(p) && pruebaEnCola({ ...p, detalleId: null }, e);   // 037: monto efectivo
     if (!cobrable) return { ok: false, error: `${e.persona || e.idExterno} · ${p.servicio}: ${p.facturaId ? `ya está en la factura ${p.noFactura}` : p.situacion !== 'cobra' ? `${p.situacion === 'pendiente' ? 'sin resultado todavía' : 'no se cobra'} (${p.motivo})` : p.estadoTarifa !== 'resuelta' ? 'sin tarifa' : 'el cobro ya no está pendiente en la Agenda'}. Solo se facturan pruebas con resultado, precio y en cola.` };
-    pruebas.push({ id: p.id, idExterno: p.idExterno, servicio: p.servicio, estadoPrueba: p.estadoPrueba, categoria: p.categoria, territorio: p.territorio, montoCalculado: p.montoCalculado, persona: e.persona });
+    pruebas.push(pruebaParaFactura(p, e.persona));
   }
   const nits = new Set(exps.map(e => e.nitResuelto));
   if (nits.size !== 1 || !exps[0].nitResuelto) return { ok: false, error: 'Una factura es de UN cliente: las pruebas elegidas pertenecen a clientes distintos.' };
