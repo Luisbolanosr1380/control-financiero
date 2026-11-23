@@ -20,6 +20,7 @@ import { configCorreo, correosValidos, enviarCorreo } from '@/lib/correo/resend'
 import { esDecision, etiquetaResultadoPublico, mensajePublico, type AperturaPublica, type DetallePublico, type EnvioCliente, type LineaPublica } from '@/lib/detalle-link/publico';
 import { getDetalle, getDetalleBasico, type DetalleCompleto, type LinkDetalle } from './detalle-facturacion';
 import type { DetalleFacturacion } from '@/lib/facturacion-agenda/detalle';
+import { montoEfectivo } from '@/lib/facturacion-agenda/tipos';
 
 /**
  * Lo que se firma: las líneas incluidas del detalle (con su componente), los totales y la versión. Se arma con los
@@ -31,8 +32,8 @@ export function documentoFirmableDe(datos: DetalleCompleto, version: number): Do
   const persona = new Map(datos.expedientes.map(e => [e.idExterno, e.persona ?? '']));
   return {
     correlativo: datos.detalle.correlativo, version, nit: datos.detalle.nit,
-    // 030: el monto firmado es el PRECIO CON IVA de la prueba (el que va en la factura), igual que `detalle_link_contenido`
-    lineas: datos.pruebas.filter(p => incluidas.has(p.id)).map(p => ({ componenteId: p.id, persona: persona.get(p.idExterno) ?? '', servicio: p.servicio, categoria: p.categoria ?? '', territorio: p.territorio ?? '', monto: precioConIva(p.montoCalculado ?? 0) })),
+    // 030: el monto firmado es el PRECIO CON IVA de la prueba (el que va en la factura), igual que `detalle_link_contenido`; 037: del monto EFECTIVO (precio especial o tarifa)
+    lineas: datos.pruebas.filter(p => incluidas.has(p.id)).map(p => ({ componenteId: p.id, persona: persona.get(p.idExterno) ?? '', servicio: p.servicio, categoria: p.categoria ?? '', territorio: p.territorio ?? '', monto: precioConIva(montoEfectivo(p) ?? 0) })),
     subtotal: datos.documento.subtotal, iva: datos.documento.iva, total: datos.documento.total,
   };
 }
@@ -119,7 +120,7 @@ export async function dentroDelLimite(clave: string, limite: number, ventanaSeg 
 interface ContenidoRpc {
   correlativo: string; version: number; estado: string; nit: string; titulo: string | null; dirigido_a: string | null; notas: string | null; cliente: string;
   subtotal: number | string; iva: number | string; total: number | string; respondido_en: string | null; respondido_por_nombre: string | null; respondido_por_cargo: string | null; firma_png: string | null; documento_hash: string | null;
-  lineas: Array<{ componente_id: string; persona: string | null; puesto: string | null; solicitante: string | null; fecha_ingreso: string | null; servicio: string; estado_prueba: string | null; categoria: string | null; territorio: string | null; monto: number | string }>;
+  lineas: Array<{ componente_id: string; persona: string | null; puesto: string | null; solicitante: string | null; fecha_ingreso: string | null; servicio: string; estado_prueba: string | null; categoria: string | null; territorio: string | null; monto: number | string; /** 037: motivo del precio especial, solo si es de tipo cliente */ nota_precio?: string | null }>;
   respuestas: Array<{ componente_id: string; version: number; decision: string; nota: string | null; respuesta_golden: string | null }>;
 }
 interface AperturaRpc { estado: 'invalido' | 'nueva_version' | 'vigente' | 'respondido'; version?: number; expira_en?: string; huella?: string; contenido?: ContenidoRpc }
@@ -159,7 +160,7 @@ export async function abrirLinkPublico(token: string, meta?: MetaPeticion | null
     const p = previas.get(l.componente_id), r = actuales.get(l.componente_id);
     return {
       ref, persona: l.persona ?? '—', puesto: l.puesto ?? '', solicitante: l.solicitante ?? '', fechaIngreso: l.fecha_ingreso, servicio: l.servicio,
-      resultado: etiquetaResultadoPublico(l.servicio, l.estado_prueba), categoria: dim(l.categoria), territorio: dim(l.territorio), monto: n2(l.monto),
+      resultado: etiquetaResultadoPublico(l.servicio, l.estado_prueba), categoria: dim(l.categoria), territorio: dim(l.territorio), monto: n2(l.monto), notaPrecio: String(l.nota_precio ?? '').trim(),
       previa: p && esDecision(p.decision) ? { decision: p.decision, nota: p.nota ?? '', respuestaGolden: p.respuesta_golden ?? '' } : null,
       respuesta: a.estado === 'respondido' && r && esDecision(r.decision) ? { decision: r.decision, nota: r.nota ?? '' } : null,
     };

@@ -90,8 +90,15 @@ export interface PruebaLocal {
   motivo: string;
   categoria: string;
   territorio: string;
-  /** Sin IVA. null si no está resuelta. */
+  /** Sin IVA, DE LA TARIFA. null si no está resuelta. Para cobrar se usa `montoEfectivo(p)`, nunca este campo directo (037). */
   montoCalculado: number | null;
+  /** 037: precio especial de esta prueba, sin IVA (null / ausente = se cobra la tarifa). El sync nunca lo pisa. */
+  montoAjustado?: number | null;
+  /** 037: por qué se cobra distinto a la tarifa, si el motivo se le muestra al cliente (PDF / link), quién y cuándo. */
+  ajusteMotivo?: string;
+  ajusteMotivoCliente?: boolean;
+  ajustadoPor?: string | null;
+  ajustadoEn?: string | null;
   estadoTarifa: EstadoTarifa;
   detalleTarifa: string;
   tarifarioId: string | null;
@@ -241,3 +248,22 @@ export interface DetalleFacturaExpediente {
 
 /** Estados de cobro de la Agenda que siguen "por facturar". El resto ya se resolvió del lado de Golden. */
 export const STATUS_COBRO_POR_FACTURAR = ['', 'PENDIENTE', 'SIN_STATUS'] as const;
+
+/**
+ * 037 · MONTO EFECTIVO de una prueba (sin IVA): el precio especial si lo tiene; si no, la tarifa.
+ * Espejo de `coalesce(monto_ajustado, monto_calculado)` en SQL. Todo lo que cobra (cola, detalle, link, factura,
+ * write-back) pasa por acá.
+ */
+export const montoEfectivo = (p: { montoCalculado: number | null; montoAjustado?: number | null }): number | null => p.montoAjustado ?? p.montoCalculado;
+/** 037: ¿la prueba tiene un precio especial vigente? */
+export const tienePrecioEspecial = (p: { montoAjustado?: number | null }): boolean => p.montoAjustado !== null && p.montoAjustado !== undefined;
+/** 037: motivos sugeridos del precio especial; `cliente` = el motivo se le muestra al cliente en el PDF y en el link. */
+export const MOTIVOS_PRECIO_ESPECIAL: ReadonlyArray<{ texto: string; cliente: boolean }> = [
+  { texto: 'Proceso incompleto: faltó papelería', cliente: true },
+  { texto: 'Precio pactado con el cliente', cliente: false },
+  { texto: 'Cortesía parcial', cliente: false },
+];
+/** 037: por defecto solo los motivos «Proceso incompleto…» son de tipo cliente (misma regla que la RPC cuando no se le indica). */
+export const motivoEsDeCliente = (motivo: string): boolean => /^proceso incompleto/i.test(motivo.trim());
+/** 037: del monto que escribe la persona (sin IVA o con IVA) al monto sin IVA que se guarda: con IVA → round(x / 1.12, 2). */
+export const montoSinIvaDe = (monto: number, base: 'sin_iva' | 'con_iva'): number => Math.round((base === 'con_iva' ? monto / 1.12 : monto) * 100 + Number.EPSILON) / 100;

@@ -20,7 +20,9 @@ export const exigeNota = (d: Decision): boolean => d !== 'aprobado';
 
 export interface LineaPublica {
   ref: string; persona: string; puesto: string; solicitante: string; fechaIngreso: string | null;
-  servicio: string; resultado: string; categoria: string; territorio: string; /** 030: precio CON IVA de la prueba (como en la factura) */ monto: number;
+  servicio: string; resultado: string; categoria: string; territorio: string; /** 030: precio CON IVA de la prueba (como en la factura); 037: ya con el precio especial si lo tiene (sin tachar la tarifa) */ monto: number;
+  /** 037: motivo del precio especial, SOLO si es de tipo cliente (los internos no llegan al navegador). */
+  notaPrecio?: string;
   /** Respuesta previa (versión anterior) y lo que Golden contestó, para la versión corregida. */
   previa?: { decision: Decision; nota: string; respuestaGolden: string } | null;
   /** Respuesta de esta versión (cuando el link ya se respondió: solo lectura). */

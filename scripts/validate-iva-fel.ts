@@ -58,7 +58,7 @@ let semilla = 20261104; const rnd = () => { semilla = (semilla * 1103515245 + 12
   const exps = pruebas.map(E0);
   const doc = D.documentoDetalle(exps, pruebas);
   ok(doc.incluidas.length === 28 && doc.total === 12900 && doc.subtotal === 11517.86 && doc.iva === 1382.14 && doc.incluidas.filter(l => l.montoConIva === 450 && l.monto === 401.79).length === 16 && doc.incluidas.filter(l => l.montoConIva === 475 && l.monto === 424.11).length === 12, `documentoDetalle GTL: 28 líneas con precio con IVA 450 / 475 (16 + 12, en el orden por ingreso / persona del PR #46); total ${doc.total}, base ${doc.subtotal}, IVA ${doc.iva}`);
-  const fac = M.armarFactura(pruebas.map(p => ({ ...p, persona: 'P', resultado: '' })), s => (s === 'POLIGRAFO' ? 'cc-poli' : 'cc-socio'));
+  const fac = M.armarFactura(pruebas.map(p => M.pruebaParaFactura(p, 'P')), s => (s === 'POLIGRAFO' ? 'cc-poli' : 'cc-socio'));
   const lp = fac.lineas.find(l => l.centroCostoId === 'cc-poli')!, ls = fac.lineas.find(l => l.centroCostoId === 'cc-socio')!;
   ok(fac.lineas.length === 2 && lp.total === 7200 && lp.subtotal === 6428.57 && lp.iva === 771.43 && ls.total === 5700 && ls.subtotal === 5089.29 && ls.iva === 610.71 && r2(lp.subtotal + lp.iva) === lp.total && r2(ls.subtotal + ls.iva) === ls.total, `factura por centro de costo: polígrafos ${lp.subtotal} + ${lp.iva} = ${lp.total}; socios ${ls.subtotal} + ${ls.iva} = ${ls.total}`);
   ok(fac.total === 12900 && fac.total === r2(lp.total + ls.total) && fac.subtotal === r2(lp.subtotal + ls.subtotal) && fac.iva === r2(lp.iva + ls.iva), `total de la factura = suma de las líneas = ${fac.total} (base ${fac.subtotal}, IVA ${fac.iva})`);
@@ -81,7 +81,7 @@ let semilla = 20261104; const rnd = () => { semilla = (semilla * 1103515245 + 12
   ok(/where d\.estado in \('borrador', 'enviada', 'aprobada'\)/.test(m30) && !/\b(drop|truncate|delete)\b/i.test(sin30) && !/^\s*(begin|commit)\s*;/im.test(sin30) && /raise notice '030 backfill/.test(m30) && !/revocado_en = now\(\)/.test(sin30), '030: backfill solo de los detalles vivos (facturada y anulada no se tocan), sin drop/delete/commit; cuenta los links vigentes y NO los revoca');
   const imp = rd('src/components/por-facturar/detalle-imprimible.tsx'), cli = rd('src/components/aprobar-detalle/aprobar-detalle-client.tsx'), dv = rd('src/components/por-facturar/detalle-view.tsx');
   ok(/Precio<br \/>IVA incl\./.test(imp) && /Total \(IVA incluido\)/.test(imp) && /Base sin IVA \{Q\(doc\.subtotal\)\} · IVA 12 % \{Q\(doc\.iva\)\}/.test(imp) && /IVA incl\./.test(cli) && /Total \(IVA incluido\)/.test(cli) && /Base sin IVA \{Q\(d\.subtotal\)\} · IVA 12 % \{Q\(d\.iva\)\}/.test(cli) && /<th className="num">Sin IVA<\/th><th className="num"[^>]*>Con IVA<\/th>/.test(dv), 'imprimible y link: columna "Precio / IVA incl." (en dos líneas desde el PR #44), "Total (IVA incluido)" y debajo base + IVA; la vista del detalle muestra las dos columnas');
-  ok(/monto: precioConIva\(p\.montoCalculado \?\? 0\)/.test(rd('src/lib/db/detalle-link.ts')), 'la huella del documento firmado usa el precio con IVA por línea (igual que detalle_link_contenido)');
+  ok(/monto: precioConIva\(montoEfectivo\(p\) \?\? 0\)/.test(rd('src/lib/db/detalle-link.ts')), 'la huella del documento firmado usa el precio con IVA por línea (igual que detalle_link_contenido)');
 
   console.log(`\nC. SQL en ${BASE.toUpperCase()}`);
   const { supabase } = await import('../src/lib/supabase/client');

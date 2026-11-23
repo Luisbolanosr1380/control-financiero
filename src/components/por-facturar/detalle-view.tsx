@@ -39,6 +39,7 @@ import type { EmitirLinkResult } from '@/lib/db/detalle-link';
 import type { DetalleCompleto } from '@/lib/db/detalle-facturacion';
 import { pruebaParaFactura } from '@/lib/facturacion-agenda/mapeo';
 import { FacturarDialogo } from './facturar-dialogo';
+import { PrecioEspecialBoton, PrecioEspecialDialogo, PrecioEspecialMonto } from './precio-especial';
 import { ReintentarWritebackButton } from './reintentar-writeback-button';
 
 interface Props { datos: DetalleCompleto; writeback: boolean; configurada: boolean; montoModo: 'con_iva' | 'sin_iva'; /** 029: hay correo (Resend o mock) y secreto del link en este deploy */ correoConfigurado?: boolean; linkConfigurado?: boolean }
@@ -66,6 +67,14 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
   const observaciones = [...respuestasVigentes.values()].filter(r => r.decision !== 'aprobado');
   const conObs = d.estado === 'con_observaciones';
   const puedeQuitar = puede && (d.estado === 'borrador' || conObs);
+  // 037: precio especial por línea (borrador / enviada / con observaciones; aprobada → anular o reabrir primero)
+  const puedeAjustar = puede && (d.estado === 'borrador' || d.estado === 'enviada' || conObs);
+  const [ajustando, setAjustando] = useState<string | null>(null);
+  const lineaAjustando = ajustando ? doc.lineas.find(l => l.componenteId === ajustando) ?? null : null;
+  const ajustesDetalle = datos.ajustes;
+  // el detalle cambió después de enviado (un precio especial subió la versión) y todavía no se reenvió por link
+  const cambioTrasEnvio = d.estado === 'enviada' && ajustesDetalle.some(a => a.detalleId === d.id && a.detalleVersion === d.version && (!d.enviadaEn || Date.parse(a.creadoEn) > Date.parse(d.enviadaEn))) && !(datos.link && datos.link.version >= d.version && !datos.link.revocadoEn);
+  const personaDe = (componenteId: string) => { const l = doc.lineas.find(x => x.componenteId === componenteId); return l ? `${l.persona} · ${l.resultado || l.servicio}` : 'prueba que ya no está en el detalle'; };
   const [busy, setBusy] = useState(false);
   const [aprobando, setAprobando] = useState(false);
   const [quien, setQuien] = useState('');
@@ -106,6 +115,15 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
             <div style={{ flex: 1, minWidth: 260 }}><strong>Factura {resultado.noFactura}</strong> registrada en financiero. <span className="cell-mute">{resultado.writeback.detalle}</span></div>
             <Link href={`/facturacion/${resultado.facturaAppId}`} className="btn btn-secondary"><I.Receipt size={13} /> Ver factura</Link>
             {['pendiente', 'conflicto', 'error'].includes(resultado.writeback.estado) && <ReintentarWritebackButton noFactura={resultado.noFactura} />}
+          </div>
+        </div>
+      )}
+
+      {cambioTrasEnvio && (
+        <div className="card" role="status" data-cambio-tras-envio={d.version} style={{ borderColor: 'var(--wine)', marginBottom: 14 }}>
+          <div className="card-pad" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+            <div style={{ flex: 1, minWidth: 260 }}><strong>Cambió después de enviado: reenviar.</strong> Un precio especial cambió el total a <strong>{Q(doc.total)}</strong> (versión {d.version}). El link que tiene el cliente ya no sirve para aprobar.</div>
+            {puede && <button className="btn btn-primary" onClick={() => setEnviando(true)} disabled={busy || doc.incluidas.length === 0} data-accion="reenviar-por-cambio"><I.Send size={13} /> Reenviar al cliente</button>}
           </div>
         </div>
       )}
@@ -265,8 +283,8 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
                 <td className="num" style={{ fontSize: 12 }}>{l.fechaIngreso ?? '—'}</td>
                 <td><div>{l.resultado || l.servicio}</div>{l.resultado && l.resultado !== l.servicio ? <div className="cell-mute" style={{ fontSize: 11 }}>{l.servicio}</div> : null}</td>
                 <td>{l.categoria}</td><td>{l.territorio}</td>
-                <td className="num">{l.incluido ? <span>{Q(l.monto)}</span> : <span className="badge badge-warn" style={{ fontSize: 10 }} title="No suma al total">no incluido · {l.motivo}</span>}</td>
-                <td className="num">{l.incluido ? <span className="cell-strong" data-precio-iva={l.montoConIva}>{Q(l.montoConIva)}</span> : <span className="cell-mute">—</span>}</td>
+                <td className="num" data-precio-especial-linea={l.precioEspecial ? 'si' : ''}>{l.incluido ? (l.precioEspecial ? <PrecioEspecialMonto tarifa={l.precioEspecial.montoTarifa} nuevo={l.monto} motivo={l.precioEspecial.motivo} cliente={l.precioEspecial.cliente} /> : <span>{Q(l.monto)}</span>) : <span className="badge badge-warn" style={{ fontSize: 10 }} title="No suma al total">no incluido · {l.motivo}</span>}{puedeAjustar && l.incluido && <PrecioEspecialBoton onClick={() => setAjustando(l.componenteId)} disabled={busy} tiene={!!l.precioEspecial} />}</td>
+                <td className="num">{l.incluido ? <span data-precio-iva={l.montoConIva}>{l.precioEspecial && <s className="cell-mute" style={{ fontSize: 11, marginRight: 5 }} title="Tarifa con IVA">{Q(l.precioEspecial.montoTarifaConIva)}</s>}<span className="cell-strong">{Q(l.montoConIva)}</span></span> : <span className="cell-mute">—</span>}</td>
                 {(respuestasVigentes.size > 0 || puedeQuitar) && (
                   <td style={{ fontSize: 12, minWidth: 220 }}>
                     <RespuestaLinea r={respuestasVigentes.get(l.componenteId) ?? null} />
@@ -301,6 +319,28 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
       </div>
       {d.notas && <div className="card" style={{ marginBottom: 14 }}><div className="card-pad" style={{ fontSize: 13 }}><strong>Notas:</strong> {d.notas}</div></div>}
 
+      {ajustesDetalle.length > 0 && (
+        <div className="card" style={{ marginBottom: 14 }} data-historial-precios={ajustesDetalle.length}>
+          <div className="card-head"><div className="card-title">Precios especiales</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>historial: quién, cuándo, de cuánto a cuánto (sin IVA) y por qué</span></div></div>
+          <div className="table-scroll">
+          <table className="table" style={{ fontSize: 12 }}>
+            <thead><tr><th>Fecha</th><th>Prueba</th><th className="num">De</th><th className="num">A</th><th>Motivo</th><th className="num">Total del detalle</th><th>Por</th></tr></thead>
+            <tbody>{ajustesDetalle.map(a => (
+              <tr key={a.id} data-ajuste={a.componenteId} data-quita={a.quitaAjuste ? 'si' : ''}>
+                <td className="cell-mute" style={{ whiteSpace: 'nowrap' }}>{formatearFechaConHora(a.creadoEn)}</td>
+                <td>{personaDe(a.componenteId)}</td>
+                <td className="num">{a.montoAnterior === null ? '—' : Q(a.montoAnterior)}</td>
+                <td className="num"><strong>{a.montoNuevo === null ? '—' : Q(a.montoNuevo)}</strong>{a.quitaAjuste ? <span className="cell-mute"> · vuelve a la tarifa</span> : null}</td>
+                <td>{a.motivo || <span className="cell-mute">—</span>}{a.motivo && !a.quitaAjuste ? <span className={'badge ' + (a.motivoCliente ? 'badge-outline' : 'badge-mute')} style={{ fontSize: 9, marginLeft: 5 }}>{a.motivoCliente ? 'lo ve el cliente' : 'interno'}</span> : null}</td>
+                <td className="num">{a.detalleId === d.id && a.totalAnterior !== null && a.totalNuevo !== null ? <>{Q(a.totalAnterior)} → {Q(a.totalNuevo)}{a.detalleVersion ? <span className="cell-mute"> · v{a.detalleVersion}</span> : null}</> : <span className="cell-mute">antes de entrar al detalle</span>}</td>
+                <td className="cell-mute">{a.actor}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+          </div>
+        </div>
+      )}
+
       {(datos.envios.length > 0 || datos.aperturas.length > 0) && (
         <div className="card" style={{ marginBottom: 14 }} data-bitacora-envios>
           <div className="card-head"><div className="card-title">Envíos y aperturas</div><div className="card-actions"><span className="cell-mute" style={{ fontSize: 11 }}>bitácora: fecha, a quién, versión y resultado del proveedor; cada apertura del link con dispositivo, navegador y red (abierto ≠ leído)</span></div></div>
@@ -314,6 +354,13 @@ export function DetalleView({ datos, writeback, configurada, montoModo, correoCo
         </div>
       )}
 
+      {lineaAjustando && (
+        <PrecioEspecialDialogo
+          prueba={{ componenteId: lineaAjustando.componenteId, persona: lineaAjustando.persona, servicio: lineaAjustando.resultado || lineaAjustando.servicio, montoTarifa: lineaAjustando.precioEspecial ? lineaAjustando.precioEspecial.montoTarifa : lineaAjustando.monto, actual: lineaAjustando.precioEspecial ? { monto: lineaAjustando.monto, motivo: lineaAjustando.precioEspecial.motivo, cliente: lineaAjustando.precioEspecial.cliente } : null, enDetalleEnviado: d.estado === 'enviada' }}
+          onClose={() => setAjustando(null)}
+          onHecho={() => { setAjustando(null); router.refresh(); }}
+        />
+      )}
       {subiendoFirmado && (
         <SubirFirmadoDialogo datos={datos} reemplazaId={subiendoFirmado.reemplazaId} busy={busy} setBusy={setBusy} onClose={() => setSubiendoFirmado(null)}
           onListo={(msg) => { setSubiendoFirmado(null); toast.success(msg); router.refresh(); }} />

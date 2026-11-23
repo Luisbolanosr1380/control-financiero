@@ -23,7 +23,7 @@
 import { canonCategoria, canonTipoPrueba, formaPrecio, normalizarTexto, precioConIva, round2, totalesFel, usaCategoria } from '@/lib/tarifario/canon';
 import { resolverTarifa, type Tarifa } from '@/lib/tarifario/lookup';
 import { nitComparable } from '@/lib/clientes/nit';
-import { ESTADOS_EXCLUIDOS, STATUS_COBRO_POR_FACTURAR, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type FuenteFechaResultado, type PruebaLocal, type Situacion } from './tipos';
+import { ESTADOS_EXCLUIDOS, STATUS_COBRO_POR_FACTURAR, montoEfectivo, type ComponentePrecio, type EstadoTarifa, type ExpedienteAgenda, type ExpedienteLocal, type FuenteFechaResultado, type PruebaLocal, type Situacion } from './tipos';
 import { resultadoLegible, servicioPorEstado, situacionDePruebas } from './situacion';
 import { fechaResultadoDe, fechasResultadoDeAgenda } from './fecha-resultado';
 
@@ -203,8 +203,10 @@ export function pruebaEnCola(p: Pick<PruebaLocal, 'servicio' | 'situacion' | 'fa
 /** 034: pruebas cubiertas por un paquete prepagado (consumo vigente): se muestran aparte, fuera de los totales por facturar. */
 export const pruebasCubiertas = (e: Pick<ExpedienteLocal, 'pruebas'>): PruebaLocal[] => e.pruebas.filter(p => !!p.cubiertaPor);
 export const pruebasEnCola = <T extends ExpedienteCola>(e: T): T['pruebas'] => e.pruebas.filter(p => pruebaEnCola(p, e));
-/** Pruebas que se pueden facturar hoy: en cola, con precio resuelto > 0. */
-export const pruebasFacturables = <T extends ExpedienteCola>(e: T): T['pruebas'] => pruebasEnCola(e).filter(p => p.estadoTarifa === 'resuelta' && (p.montoCalculado ?? 0) > 0);
+/** 037: la prueba tiene precio para cobrar: tarifa resuelta y monto EFECTIVO > 0 (igual que `estado_tarifa = 'resuelta' and coalesce(monto_ajustado, monto_calculado, 0) > 0` en SQL). */
+export const conPrecioEfectivo = (p: Pick<PruebaLocal, 'estadoTarifa' | 'montoCalculado' | 'montoAjustado'>): boolean => p.estadoTarifa === 'resuelta' && (montoEfectivo(p) ?? 0) > 0;
+/** Pruebas que se pueden facturar hoy: en cola, con precio resuelto > 0 (037: monto efectivo). */
+export const pruebasFacturables = <T extends ExpedienteCola>(e: T): T['pruebas'] => pruebasEnCola(e).filter(conPrecioEfectivo);
 /** Pruebas que esperan resultado (informativo). */
 export const pruebasPendientes = (e: Pick<ExpedienteLocal, 'pruebas'>): PruebaLocal[] => e.pruebas.filter(p => p.situacion === 'pendiente' && !p.facturaId);
 
@@ -221,9 +223,9 @@ export const conPrecio = (e: ExpedienteCola): boolean => pruebasFacturables(e).l
 /** Se puede meter en un detalle nuevo (las reservadas en otro detalle ya no cuentan como en cola). */
 export const facturable = (e: ExpedienteCola): boolean => conPrecio(e);
 /** Monto sin IVA cobrable hoy del expediente (suma de sus pruebas facturables). */
-export const montoFacturable = (e: ExpedienteCola): number => round2(pruebasFacturables(e).reduce((s, p) => s + (p.montoCalculado ?? 0), 0));
+export const montoFacturable = (e: ExpedienteCola): number => round2(pruebasFacturables(e).reduce((s, p) => s + (montoEfectivo(p) ?? 0), 0));
 /** 030: lo mismo con IVA, como lo verá la factura: suma de los precios con IVA de cada prueba (no conIva de la suma). */
-export const montoFacturableConIva = (e: ExpedienteCola): number => round2(pruebasFacturables(e).reduce((s, p) => s + precioConIva(p.montoCalculado ?? 0), 0));
+export const montoFacturableConIva = (e: ExpedienteCola): number => round2(pruebasFacturables(e).reduce((s, p) => s + precioConIva(montoEfectivo(p) ?? 0), 0));
 
 /** Un expediente de la Agenda → la fila que se guarda (sin id ni timestamps). */
 export function expedienteALocal(exp: ExpedienteAgenda, c: Clasificacion): Omit<ExpedienteLocal, 'id' | 'facturaId' | 'facturaAppId' | 'noFactura' | 'facturadoEn' | 'facturadoPor' | 'writebackEstado' | 'writebackDetalle' | 'writebackEn' | 'cobroWritebackEstado' | 'cobroWritebackDetalle' | 'detalleId' | 'updatedAt' | 'pruebas'> & { pruebas: PruebaLocal[]; pruebasFirma: string } {
@@ -299,15 +301,15 @@ export function centroPorServicio(tipoPrueba: string, centros: readonly CentroCo
 export interface LineaFactura { centroCostoId: string; subtotal: number; iva: number; total: number }
 export interface DetalleFactura { idExterno: string; componenteId: string; tipoPrueba: string; categoria: string; territorio: string; monto: number; centroCostoId: string; persona: string; /** 024: "Polígrafo — aprobó" */ resultado: string }
 /** 024: una prueba elegida para facturar, con los datos del expediente que necesita la factura. */
-export interface PruebaParaFactura extends Pick<PruebaLocal, 'id' | 'idExterno' | 'servicio' | 'estadoPrueba' | 'categoria' | 'territorio' | 'montoCalculado'> { persona: string }
+export interface PruebaParaFactura extends Pick<PruebaLocal, 'id' | 'idExterno' | 'servicio' | 'estadoPrueba' | 'categoria' | 'territorio'> { /** 037: monto EFECTIVO sin IVA (precio especial o tarifa) */ monto: number; persona: string }
 
 /** Una prueba cualquiera (p. ej. reservada en un detalle) con la persona, lista para armar la factura. */
-export const pruebaParaFactura = (p: PruebaLocal, persona: string): PruebaParaFactura => ({ id: p.id, idExterno: p.idExterno, servicio: p.servicio, estadoPrueba: p.estadoPrueba, categoria: p.categoria, territorio: p.territorio, montoCalculado: p.montoCalculado, persona });
+export const pruebaParaFactura = (p: PruebaLocal, persona: string): PruebaParaFactura => ({ id: p.id, idExterno: p.idExterno, servicio: p.servicio, estadoPrueba: p.estadoPrueba, categoria: p.categoria, territorio: p.territorio, monto: round2(montoEfectivo(p) ?? 0), persona });
 
 /** Pruebas facturables de una lista de expedientes, con la persona (lo que entra al detalle / a la factura). */
 export function pruebasParaFactura(expedientes: readonly ExpedienteLocal[], filtro?: (p: PruebaLocal) => boolean): PruebaParaFactura[] {
   const out: PruebaParaFactura[] = [];
-  for (const e of expedientes) for (const p of pruebasFacturables(e)) if (!filtro || filtro(p)) out.push({ id: p.id, idExterno: p.idExterno, servicio: p.servicio, estadoPrueba: p.estadoPrueba, categoria: p.categoria, territorio: p.territorio, montoCalculado: p.montoCalculado, persona: e.persona });
+  for (const e of expedientes) for (const p of pruebasFacturables(e)) if (!filtro || filtro(p)) out.push({ id: p.id, idExterno: p.idExterno, servicio: p.servicio, estadoPrueba: p.estadoPrueba, categoria: p.categoria, territorio: p.territorio, monto: round2(montoEfectivo(p) ?? 0), persona: e.persona });
   return out;
 }
 
@@ -322,7 +324,7 @@ export function armarFactura(pruebas: readonly PruebaParaFactura[], centroDe: (t
   for (const p of pruebas) {
     const cc = centroDe(p.servicio);
     if (!cc) sinCentro.add(p.servicio);
-    detalle.push({ idExterno: p.idExterno, componenteId: p.id, tipoPrueba: p.servicio, categoria: p.categoria, territorio: p.territorio, monto: round2(Number(p.montoCalculado ?? 0)), centroCostoId: cc ?? '', persona: p.persona, resultado: resultadoLegible(p.servicio, p.estadoPrueba) });
+    detalle.push({ idExterno: p.idExterno, componenteId: p.id, tipoPrueba: p.servicio, categoria: p.categoria, territorio: p.territorio, monto: round2(Number(p.monto ?? 0)), centroCostoId: cc ?? '', persona: p.persona, resultado: resultadoLegible(p.servicio, p.estadoPrueba) });
   }
   // 030 (regla FEL): por centro de costo, el total es la suma de los precios con IVA de sus pruebas, la base es
   // total / 1.12 y el IVA va por resta; el total de la factura es la suma de las líneas.
@@ -345,7 +347,7 @@ export function facturasDelExpediente(e: Pick<ExpedienteLocal, 'pruebas' | 'noFa
   const cub = e.pruebas.filter(p => !!p.cubiertaPor).sort((a, b) => (a.cubiertaPor!.fecha ?? '').localeCompare(b.cubiertaPor!.fecha ?? '') || a.servicio.localeCompare(b.servicio));
   const numeros = [...new Set([...fact.map(p => p.noFactura!), ...cub.map(p => (p.cubiertaPor!.noFactura && p.cubiertaPor!.noFactura.trim() ? `${p.cubiertaPor!.noFactura.trim()} (${p.cubiertaPor!.correlativo})` : p.cubiertaPor!.correlativo))])];
   if (!numeros.length) return { numero: e.noFactura ?? '', montoSinIva: e.montoCalculado ?? 0 };
-  return { numero: numeros.join(' / '), montoSinIva: Math.round((fact.reduce((s, p) => s + (p.montoCalculado ?? 0), 0) + cub.reduce((s, p) => s + (p.cubiertaPor!.precioUnitario ?? 0), 0)) * 100) / 100 };
+  return { numero: numeros.join(' / '), montoSinIva: Math.round((fact.reduce((s, p) => s + (montoEfectivo(p) ?? 0), 0) + cub.reduce((s, p) => s + (p.cubiertaPor!.precioUnitario ?? 0), 0)) * 100) / 100 };
 }
 
 /** Monto que se escribe de vuelta a la Agenda por expediente: con IVA (como lo registra Golden hoy) o sin IVA. */

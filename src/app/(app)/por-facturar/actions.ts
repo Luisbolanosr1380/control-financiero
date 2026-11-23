@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 import { autorizar, exigir } from '@/lib/auth/guard';
-import { anularDetalle, crearDetalle, facturarDetalle, marcarAprobada, marcarEnviada, type DetalleResult, type FacturarDetalleResult, editarEncabezadoDetalle, quitarLineaDetalle, responderNotaDetalle } from '@/lib/db/detalle-facturacion';
+import { anularDetalle, crearDetalle, facturarDetalle, marcarAprobada, marcarEnviada, type DetalleResult, type FacturarDetalleResult, editarEncabezadoDetalle, quitarLineaDetalle, responderNotaDetalle, ajustarPrecioPrueba, type AjustarPrecioInput, type AjustarPrecioResult } from '@/lib/db/detalle-facturacion';
 import { emitirLinkDetalle, revocarLinkDetalle, type EmitirLinkResult } from '@/lib/db/detalle-link';
 import { confirmarSubida, prepararSubida, quitarArchivo, type ArchivoDeclarado, type ConfirmarInput, type ConfirmarResult, type PrepararResult } from '@/lib/db/detalle-archivo';
 import { headers } from 'next/headers';
@@ -233,4 +233,16 @@ export async function quitarArchivoFirmadoAction(archivoId: string, motivo: stri
   const r = await quitarArchivo(archivoId, motivo, permiso.email);
   if (r.ok) revalidatePath('/por-facturar', 'layout');
   return r.ok ? { ok: true } : r;
+}
+
+/**
+ * 037: precio especial de UNA prueba (monto sin IVA o con IVA + motivo obligatorio); `monto: null` lo quita.
+ * Permiso facturar_agenda (admin y contador). Si la prueba está en un detalle enviado, sube de versión y hay que reenviarlo.
+ */
+export async function ajustarPrecioPruebaAction(componenteId: string, input: AjustarPrecioInput): Promise<AjustarPrecioResult> {
+  const permiso = await autorizar('facturar_agenda');
+  if (!permiso.ok) return { ok: false, error: permiso.error };
+  const r = await ajustarPrecioPrueba(componenteId, { monto: input?.monto ?? null, base: input?.base, motivo: input?.motivo, motivoCliente: input?.motivoCliente ?? null }, permiso.email);
+  if (r.ok) revalidatePath('/por-facturar', 'layout');
+  return r;
 }

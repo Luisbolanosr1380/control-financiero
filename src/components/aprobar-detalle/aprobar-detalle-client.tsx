@@ -138,6 +138,7 @@ function Formulario({ detalle: d, token, onRespondido }: { detalle: DetallePubli
                   <span>{l.resultado}</span>{l.categoria ? <span>· {l.categoria}</span> : null}{l.territorio ? <span>· {l.territorio}</span> : null}
                   {l.solicitante ? <span>· solicitó {l.solicitante}</span> : null}{l.fechaIngreso ? <span>· ingreso {fecha(l.fechaIngreso)}</span> : null}
                 </div>
+                {l.notaPrecio ? <div className="ad-nota-precio" data-nota-precio><span className="ad-mute">Observación:</span> {l.notaPrecio}</div> : null}
                 {l.previa && (
                   <div className="ad-previa" data-previa>
                     <div><span className="ad-mute">En la versión anterior marcaste</span> <strong>{ETIQUETA_DECISION[l.previa.decision]}</strong>{l.previa.nota ? <>: <em>{l.previa.nota}</em></> : null}</div>
@@ -226,6 +227,7 @@ function SoloLectura({ detalle: d, recien }: { detalle: DetallePublico; recien?:
             <li key={l.ref} className={'ad-linea' + (l.respuesta && l.respuesta.decision !== 'aprobado' ? ' ad-linea-obs' : '')} data-linea={l.ref} data-decision={l.respuesta?.decision ?? ''}>
               <div className="ad-linea-cab"><div className="ad-persona"><span className="ad-num">{i + 1}.</span> <strong>{l.persona}</strong>{l.puesto ? <span className="ad-mute"> · {l.puesto}</span> : null}</div><div className="ad-monto">{Q(l.monto)} <span className="ad-mute">IVA incl.</span></div></div>
               <div className="ad-linea-datos"><span>{l.resultado}</span>{l.categoria ? <span>· {l.categoria}</span> : null}{l.territorio ? <span>· {l.territorio}</span> : null}</div>
+              {l.notaPrecio ? <div className="ad-nota-precio" data-nota-precio><span className="ad-mute">Observación:</span> {l.notaPrecio}</div> : null}
               <div className="ad-respuesta"><strong>{l.respuesta ? ETIQUETA_DECISION[l.respuesta.decision] : '—'}</strong>{l.respuesta?.nota ? <>: <em>{l.respuesta.nota}</em></> : null}</div>
             </li>
           ))}
@@ -276,6 +278,7 @@ const CSS = `
 .ad-datos { display: grid; gap: 2px; font-size: 14px; }
 .ad-mute { color: #666; }
 .ad-notas { margin-top: 8px; font-size: 13px; }
+.ad-nota-precio { margin-top: 4px; font-size: 12.5px; }
 .ad-barra { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; font-size: 13px; margin-bottom: 10px; }
 .ad-acciones { display: flex; gap: 6px; flex-wrap: wrap; }
 .ad-btn { background: #fff; border: 1px solid #c9c4b8; border-radius: 6px; padding: 8px 12px; font-size: 14px; cursor: pointer; color: #111; min-height: 40px; }
